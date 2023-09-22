@@ -1,12 +1,9 @@
-#!/usr/bin/python
-
 """
-Main runnable module.
+Module for readers, lexers, and parsers as well as their components.
 """
 
 import os
 import collections
-import optparse
 import logging
 import re
 
@@ -16,85 +13,11 @@ from .filters import *
 from .tokens import *
 
 
-options = None
-num_failed_cases = 5
-
-
 LOG = logging.getLogger('avocado.' + __name__)
 
 
-class StrReader(object):
-
-    """
-    Preprocess an input string for easy reading.
-    """
-
-    def __init__(self, s):
-        """
-        Initialize the reader.
-
-        :param s: The string to parse.
-        """
-        self.filename = "<string>"
-        self._lines = []
-        self._line_index = 0
-        self._stored_line = None
-        for linenum, line in enumerate(s.splitlines()):
-            line = line.rstrip().expandtabs()
-            stripped_line = line.lstrip()
-            indent = len(line) - len(stripped_line)
-            if (not stripped_line or
-                    stripped_line.startswith("#") or
-                    stripped_line.startswith("//")):
-                continue
-            self._lines.append((stripped_line, indent, linenum + 1))
-
-    def get_next_line(self, prev_indent):
-        """
-        Get the next line in the current block.
-
-        :param prev_indent: The indentation level of the previous block.
-        :return: (line, indent, linenum), where indent is the line's
-            indentation level.  If no line is available, (None, -1, -1) is
-            returned.
-        """
-        if self._stored_line:
-            ret = self._stored_line
-            self._stored_line = None
-            return ret
-        if self._line_index >= len(self._lines):
-            return None, -1, -1
-        line, indent, linenum = self._lines[self._line_index]
-        if indent <= prev_indent:
-            return None, indent, linenum
-        self._line_index += 1
-        return line, indent, linenum
-
-    def set_next_line(self, line, indent, linenum):
-        """
-        Make the next call to get_next_line() return the given line instead of
-        the real next line.
-        """
-        line = line.strip()
-        if line:
-            self._stored_line = line, indent, linenum
-
-
-class FileReader(StrReader):
-
-    """
-    Preprocess an input file for easy reading.
-    """
-
-    def __init__(self, filename):
-        """
-        Initialize the reader.
-
-        :parse filename: The name of the input file.
-        """
-        with open(filename) as f:
-            StrReader.__init__(self, f.read())
-        self.filename = filename
+tokens_oper_re = [r"\=", r"\+\=", r"\<\=", r"\~\=", r"\?\=", r"\?\+\=", r"\?\<\="]
+_ops_exp = re.compile(r"|".join(tokens_oper_re))
 
 
 class Label(object):
@@ -186,14 +109,82 @@ class Node(object):
                 child.dump(indent + 3, recurse)
 
 
+class StrReader(object):
+
+    """
+    Preprocess an input string for easy reading.
+    """
+
+    def __init__(self, s):
+        """
+        Initialize the reader.
+
+        :param s: The string to parse.
+        """
+        self.filename = "<string>"
+        self._lines = []
+        self._line_index = 0
+        self._stored_line = None
+        for linenum, line in enumerate(s.splitlines()):
+            line = line.rstrip().expandtabs()
+            stripped_line = line.lstrip()
+            indent = len(line) - len(stripped_line)
+            if (not stripped_line or
+                    stripped_line.startswith("#") or
+                    stripped_line.startswith("//")):
+                continue
+            self._lines.append((stripped_line, indent, linenum + 1))
+
+    def get_next_line(self, prev_indent):
+        """
+        Get the next line in the current block.
+
+        :param prev_indent: The indentation level of the previous block.
+        :return: (line, indent, linenum), where indent is the line's
+            indentation level.  If no line is available, (None, -1, -1) is
+            returned.
+        """
+        if self._stored_line:
+            ret = self._stored_line
+            self._stored_line = None
+            return ret
+        if self._line_index >= len(self._lines):
+            return None, -1, -1
+        line, indent, linenum = self._lines[self._line_index]
+        if indent <= prev_indent:
+            return None, indent, linenum
+        self._line_index += 1
+        return line, indent, linenum
+
+    def set_next_line(self, line, indent, linenum):
+        """
+        Make the next call to get_next_line() return the given line instead of
+        the real next line.
+        """
+        line = line.strip()
+        if line:
+            self._stored_line = line, indent, linenum
+
+
+class FileReader(StrReader):
+
+    """
+    Preprocess an input file for easy reading.
+    """
+
+    def __init__(self, filename):
+        """
+        Initialize the reader.
+
+        :parse filename: The name of the input file.
+        """
+        with open(filename) as f:
+            StrReader.__init__(self, f.read())
+        self.filename = filename
+
+
 spec_iden = "_-"
 spec_oper = "+<?~"
-
-
-tokens_oper_re = [r"\=", r"\+\=", r"\<\=", r"\~\=", r"\?\=", r"\?\+\=", r"\?\<\="]
-
-
-_ops_exp = re.compile(r"|".join(tokens_oper_re))
 
 
 class Lexer(object):
@@ -567,6 +558,9 @@ def parse_filter(lexer, tokens):
         or_filters.append([con_filter])
         con_filter = []
     return or_filters
+
+
+num_failed_cases = 5
 
 
 class Parser(object):
@@ -1052,7 +1046,7 @@ class Parser(object):
                                          lexer.line))
             raise
 
-    def get_dicts(self, node=None, ctx=[], content=[], shortname=[], dep=[]):
+    def get_dicts(self, node=None, ctx=[], content=[], shortname=[], dep=[], skipdups=True):
         """
         Process 'join' entry, unpack join filter for node.
 
@@ -1075,13 +1069,6 @@ class Parser(object):
                 join a a
         """
         node = node or self.node
-
-        if options is not None:
-            # This file was invoked through cmdline
-            skipdups = options.skipdups
-        else:
-            # This file was invoked as Python module
-            skipdups = True
 
         # Keep track to know who is a parent generator
         parent = False
@@ -1326,36 +1313,6 @@ class Parser(object):
             yield d
 
 
-def print_dicts_default(options, dicts):
-    """Print dictionaries in the default mode"""
-    for count, dic in enumerate(dicts):
-        if options.fullname:
-            print("dict %4d:  %s" % (count + 1, dic["name"]))
-        else:
-            print("dict %4d:  %s" % (count + 1, dic["shortname"]))
-        if options.contents:
-            keys = list(dic.keys())
-            keys.sort()
-            for key in keys:
-                print("    %s = %s" % (key, dic[key]))
-
-
-# pylint: disable=W0613
-def print_dicts_repr(options, dicts):
-    import pprint
-    print("[")
-    for dic in dicts:
-        print("%s," % (pprint.pformat(dic)))
-    print("]")
-
-
-def print_dicts(options, dicts):
-    if options.repr_mode:
-        print_dicts_repr(options, dicts)
-    else:
-        print_dicts_default(options, dicts)
-
-
 def convert_data_size(size, default_sufix='B'):
     """
     Convert data size from human readable units to an int of arbitrary size.
@@ -1428,46 +1385,3 @@ def postfix_parse(dic):
             tmp_dict[tmp_key] = dic[key]
     for key in tmp_dict:
         dic[key] = tmp_dict[key]
-
-
-if __name__ == "__main__":
-    parser = optparse.OptionParser('usage: %prog [options] filename '
-                                   '[extra code] ...\n\nExample:\n\n    '
-                                   '%prog tests.cfg "only my_set" "no qcow2"')
-    parser.add_option("-v", "--verbose", dest="debug", action="store_true",
-                      help="include debug messages in console output")
-    parser.add_option("-f", "--fullname", dest="fullname", action="store_true",
-                      help="show full dict names instead of short names")
-    parser.add_option("-c", "--contents", dest="contents", action="store_true",
-                      help="show dict contents")
-    parser.add_option("-r", "--repr", dest="repr_mode", action="store_true",
-                      help="output parsing results Python format")
-    parser.add_option("-d", "--defaults", dest="defaults", action="store_true",
-                      help="use only default variant of variants if there"
-                           " is some")
-    parser.add_option("-e", "--expand", dest="expand", type="string",
-                      help="list of vartiant which should be expanded when"
-                           " defaults is enabled.  \"name, name, name\"")
-    parser.add_option("-s", "--skip-dups", dest="skipdups", default=True, action="store_false",
-                      help="Don't drop variables with different suffixes and same val")
-
-    options, args = parser.parse_args()
-    if not args:
-        parser.error("filename required")
-
-    if options.debug:
-        LOG.setLevel(logging.DEBUG)
-
-    expand = []
-    if options.expand:
-        expand = [x.strip() for x in options.expand.split(",")]
-    c = Parser(args[0], defaults=options.defaults, expand_defaults=expand,
-               debug=options.debug)
-    for s in args[1:]:
-        c.parse_string(s)
-
-    if options.debug:
-        c.node.dump(0, True)
-
-    dicts = c.get_dicts()
-    print_dicts(options, dicts)

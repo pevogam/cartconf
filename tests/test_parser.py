@@ -10,7 +10,7 @@ basedir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if os.path.isdir(os.path.join(basedir, 'cartconf')):
     sys.path.append(basedir)
 
-from cartconf import cartesian_config
+from cartconf import parser
 
 
 testdir = os.path.dirname(__file__)
@@ -41,16 +41,16 @@ class CartesianConfigTest(unittest.TestCase):
         # generate, debug, and edit
         dumpdata = eval(df.read())
 
-        p = cartesian_config.Parser(configpath)
+        p = parser.Parser(configpath)
         self._checkDictionaries(p, dumpdata)
 
     def _checkStringConfig(self, string, reference):
-        p = cartesian_config.Parser()
+        p = parser.Parser()
         p.parse_string(string)
         self._checkDictionaries(p, reference)
 
     def _checkStringDump(self, string, dump, defaults=False):
-        p = cartesian_config.Parser(defaults=defaults)
+        p = parser.Parser(defaults=defaults)
         p.parse_string(string)
 
         self._checkDictionaries(p, dump)
@@ -266,7 +266,7 @@ class CartesianConfigTest(unittest.TestCase):
                               ],
                               True)
 
-        self.assertRaises(cartesian_config.ParserError,
+        self.assertRaises(parser.ParserError,
                           self._checkStringDump, """
                 variants tests [default=system2]:
                   - system1:
@@ -525,7 +525,7 @@ class CartesianConfigTest(unittest.TestCase):
                               True)
 
     def testError1(self):
-        self.assertRaises(cartesian_config.ParserError,
+        self.assertRaises(parser.ParserError,
                           self._checkStringDump, """
                 variants tests:
                   wait:
@@ -542,7 +542,7 @@ class CartesianConfigTest(unittest.TestCase):
                           True)
 
     def testMissingInclude(self):
-        self.assertRaises(cartesian_config.MissingIncludeError,
+        self.assertRaises(parser.MissingIncludeError,
                           self._checkStringDump, """
                 include xxxxxxxxx/xxxxxxxxxxx
                 """,
@@ -805,7 +805,7 @@ class CartesianConfigTest(unittest.TestCase):
                               True)
 
     def testSyntaxErrors(self):
-        self.assertRaises(cartesian_config.LexerError,
+        self.assertRaises(parser.LexerError,
                           self._checkStringDump, """
                 variants tests$:
                   - system1:
@@ -822,7 +822,7 @@ class CartesianConfigTest(unittest.TestCase):
                           [],
                           True)
 
-        self.assertRaises(cartesian_config.LexerError,
+        self.assertRaises(parser.LexerError,
                           self._checkStringDump, """
                 variants tests [defaul$$$$t=system1]:
                   - system1:
@@ -830,7 +830,7 @@ class CartesianConfigTest(unittest.TestCase):
                           [],
                           True)
 
-        self.assertRaises(cartesian_config.ParserError,
+        self.assertRaises(parser.ParserError,
                           self._checkStringDump, """
                 variants tests [default=system1] wrong:
                   - system1:
@@ -838,28 +838,28 @@ class CartesianConfigTest(unittest.TestCase):
                           [],
                           True)
 
-        self.assertRaises(cartesian_config.ParserError,
+        self.assertRaises(parser.ParserError,
                           self._checkStringDump, """
                 only xxx...yyy
                 """,
                           [],
                           True)
 
-        self.assertRaises(cartesian_config.ParserError,
+        self.assertRaises(parser.ParserError,
                           self._checkStringDump, """
                 only xxx..,yyy
                 """,
                           [],
                           True)
 
-        self.assertRaises(cartesian_config.ParserError,
+        self.assertRaises(parser.ParserError,
                           self._checkStringDump, """
                 aaabbbb.ddd
                 """,
                           [],
                           True)
 
-        self.assertRaises(cartesian_config.ParserError,
+        self.assertRaises(parser.ParserError,
                           self._checkStringDump, """
                 aaa.bbb:
                   variants test:
@@ -868,7 +868,7 @@ class CartesianConfigTest(unittest.TestCase):
                           [],
                           True)
 
-        self.assertRaises(cartesian_config.ParserError,
+        self.assertRaises(parser.ParserError,
                           self._checkStringDump, """
                 variants test [sss = bbb:
                      -sss:
@@ -876,7 +876,7 @@ class CartesianConfigTest(unittest.TestCase):
                           [],
                           True)
 
-        self.assertRaises(cartesian_config.ParserError,
+        self.assertRaises(parser.ParserError,
                           self._checkStringDump, """
                 variants test [default]:
                      -sss:
@@ -884,7 +884,7 @@ class CartesianConfigTest(unittest.TestCase):
                           [],
                           True)
 
-        self.assertRaises(cartesian_config.ParserError,
+        self.assertRaises(parser.ParserError,
                           self._checkStringDump, """
                 variants test [default] ddd:
                      -sss:
@@ -892,7 +892,7 @@ class CartesianConfigTest(unittest.TestCase):
                           [],
                           True)
 
-        self.assertRaises(cartesian_config.ParserError,
+        self.assertRaises(parser.ParserError,
                           self._checkStringDump, """
                 variants test [default] ddd
                 """,
@@ -992,20 +992,20 @@ class CartesianConfigTest(unittest.TestCase):
 
         self._checkStringDump(f, [], True)
 
-        lexer = cartesian_config.Lexer(cartesian_config.StrReader(f))
+        lexer = parser.Lexer(parser.StrReader(f))
         lexer.set_prev_indent(-1)
-        lexer.get_next_check([cartesian_config.LIndent])
-        lexer.get_next_check([cartesian_config.LOnly])
-        p_filter = cartesian_config.parse_filter(lexer, lexer.rest_line())
+        lexer.get_next_check([parser.LIndent])
+        lexer.get_next_check([parser.LOnly])
+        p_filter = parser.parse_filter(lexer, lexer.rest_line())
         self.assertEqual(p_filter,
-                         [[[cartesian_config.Label("xxx"),
-                            cartesian_config.Label("yyy")],
-                           [cartesian_config.Label("xxx", "333"),
-                            cartesian_config.Label("aaa")]],
-                          [[cartesian_config.Label("ddd")]],
-                          [[cartesian_config.Label("eeee")]],
-                          [[cartesian_config.Label("rrr"),
-                            cartesian_config.Label("aaa")]]],
+                         [[[parser.Label("xxx"),
+                            parser.Label("yyy")],
+                           [parser.Label("xxx", "333"),
+                            parser.Label("aaa")]],
+                          [[parser.Label("ddd")]],
+                          [[parser.Label("eeee")]],
+                          [[parser.Label("rrr"),
+                            parser.Label("aaa")]]],
                          "Failed to parse filter.")
 
     def testJoinSubstitution(self):
