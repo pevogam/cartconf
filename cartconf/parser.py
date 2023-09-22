@@ -81,8 +81,7 @@ class Label(object):
 
 class Node(object):
     __slots__ = ["var_name", "name", "filename", "dep", "content", "children",
-                 "labels", "append_to_shortname", "failed_cases", "default",
-                 "q_dict"]
+                 "labels", "append_to_shortname", "failed_cases", "default"]
 
     def __init__(self):
         self.var_name = []
@@ -96,15 +95,16 @@ class Node(object):
         self.failed_cases = collections.deque()
         self.default = False
 
-    def dump(self, indent, recurse=False):
-        print("%s%s" % (" " * indent, self.name))
-        print("%s%s" % (" " * indent, self.var_name))
-        print("%s%s" % (" " * indent, self))
-        print("%s%s" % (" " * indent, self.content))
-        print("%s%s" % (" " * indent, self.failed_cases))
+    def dump(self, indent: int, recurse: bool = False):
+        dump_str = ""
+        dump_str += "%sname: %s\n" % (" " * indent, self.name)
+        dump_str += "%svariable name: %s\n" % (" " * indent, self.var_name)
+        dump_str += "%scontent: %s\n" % (" " * indent, self.content)
+        dump_str += "%sfailed cases: %s\n" % (" " * indent, self.failed_cases)
         if recurse:
             for child in self.children:
-                child.dump(indent + 3, recurse)
+                dump_str += child.dump(indent + 3, recurse)
+        return dump_str
 
 
 class StrReader(object):
@@ -1246,7 +1246,7 @@ class Parser(object):
 
         node = node or self.node
         # if self.debug:    #Print dict on which is working now.
-        #    node.dump(0)
+        #    print(node.dump(0))
         # Update dep
         for d in node.dep:
             for dd in d:

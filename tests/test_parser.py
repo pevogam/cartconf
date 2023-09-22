@@ -17,7 +17,15 @@ testdir = os.path.dirname(__file__)
 testdatadir = os.path.join(testdir, 'data')
 
 
-class CartesianConfigTest(unittest.TestCase):
+class NodeTest(unittest.TestCase):
+
+    def test_dump(self):
+        node = parser.Node()
+        empty_dumped_str = node.dump(0)
+        self.assertRegex(empty_dumped_str, "name:.*\nvariable name:.*\ncontent:.*\nfailed cases:.*\n")
+
+
+class ParserTest(unittest.TestCase):
 
     def _checkDictionaries(self, parser, reference):
         result = list(parser.get_dicts())
