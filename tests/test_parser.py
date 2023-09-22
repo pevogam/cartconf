@@ -18,7 +18,45 @@ testdir = os.path.dirname(__file__)
 testdatadir = os.path.join(testdir, 'data')
 
 
-class CartesianConfigTest(unittest.TestCase):
+class NodeTest(unittest.TestCase):
+
+    def test_initialization(self):
+        node = parser.Node()
+        self.assertEqual(node.var_name, [])
+        self.assertEqual(node.name, [])
+        self.assertEqual(node.filename, "")
+        self.assertEqual(node.dep, [])
+        self.assertEqual(node.content, [])
+        self.assertEqual(node.children, [])
+        self.assertEqual(node.labels, set())
+        self.assertFalse(node.append_to_shortname)
+        self.assertEqual(node.failed_cases, collections.deque())
+        self.assertFalse(node.default)
+
+    def test_dump(self):
+        node = parser.Node()
+        empty_dumped_str = node.dump(0)
+        self.assertRegex(empty_dumped_str, r"name:.*\nvariable name:.*\ncontent:.*\nfailed cases:.*\n")
+
+        node.name = ["test_name"]
+        node.var_name = ["test_var_name"]
+        node.content = ["test_content"]
+        node.failed_cases.append("test_failed_case")
+        dump_str = node.dump(2)
+        expected_str = "  name: ['test_name']\n  variable name: ['test_var_name']\n  content: ['test_content']\n  failed cases: deque(['test_failed_case'])\n"
+        self.assertEqual(dump_str, expected_str)
+
+    def test_dump_with_recurse(self):
+        parent_node = parser.Node()
+        child_node = parser.Node()
+        child_node.name = ["child_name"]
+        parent_node.children.append(child_node)
+        dump_str = parent_node.dump(0, recurse=True)
+        expected_str = "name: []\nvariable name: []\ncontent: []\nfailed cases: deque([])\n   name: ['child_name']\n   variable name: []\n   content: []\n   failed cases: deque([])\n"
+        self.assertEqual(dump_str, expected_str)
+
+
+class ParserTest(unittest.TestCase):
 
     def _compare_parser_dictionaries(self, parser: parser.Parser, reference: dict[str, str]) -> None:
         """Check if the parser dictionaries match reference ones."""
