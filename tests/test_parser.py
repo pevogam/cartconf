@@ -123,7 +123,7 @@ class CartesianConfigTest(unittest.TestCase):
                      - long:
                         time = short_time
                      - short: long
-                        time = logn_time
+                        time = long_time
               - test2:
                    run = "test1"
 
@@ -160,7 +160,7 @@ class CartesianConfigTest(unittest.TestCase):
                                    'run': 'wait',
                                    'shortname': 'linux.wait.short',
                                    'tests': 'wait',
-                                   'time': 'logn_time',
+                                   'time': 'long_time',
                                    'virt_system': 'linux'},
                                   {'_name_map_file': {'<string>': '(host_os=linux).(virt_system=linux).(tests=test2)'},
                                    '_short_name_map_file': {'<string>': 'linux.linux.test2'},
@@ -192,7 +192,7 @@ class CartesianConfigTest(unittest.TestCase):
                                    'run': 'wait',
                                    'shortname': 'linux.windows.wait.short',
                                    'tests': 'wait',
-                                   'time': 'logn_time',
+                                   'time': 'long_time',
                                    'virt_system': 'windows'},
                                   {'_name_map_file': {'<string>': '(host_os=linux).(virt_system=windows).(tests=test2)'},
                                    '_short_name_map_file': {'<string>': 'linux.windows.test2'},
@@ -216,7 +216,7 @@ class CartesianConfigTest(unittest.TestCase):
                      - long:
                         time = short_time
                      - short: long
-                        time = logn_time
+                        time = long_time
               - test2:
                    run = "test1"
 
@@ -251,7 +251,7 @@ class CartesianConfigTest(unittest.TestCase):
                                    'run': 'wait',
                                    'shortname': 'wait.short',
                                    'tests': 'wait',
-                                   'time': 'logn_time',
+                                   'time': 'long_time',
                                    'virt_system': 'linux'},
                                   {'_name_map_file': {'<string>': '(host_os=windows).(virt_system=linux).(tests=test2)'},
                                    '_short_name_map_file': {'<string>': 'windows.linux.test2'},
@@ -283,7 +283,7 @@ class CartesianConfigTest(unittest.TestCase):
                      - long:
                         time = short_time
                      - short: long
-                        time = logn_time
+                        time = long_time
               - test2:
                    run = "test1"
             """,
@@ -303,7 +303,7 @@ class CartesianConfigTest(unittest.TestCase):
                                    'run': 'wait',
                                    'shortname': 'wait.short',
                                    'tests': 'wait',
-                                   'time': 'logn_time'},
+                                   'time': 'long_time'},
                                   {'_name_map_file': {'<string>': '(tests=test2)'},
                                    '_short_name_map_file': {'<string>': 'test2'},
                                    'dep': [],
@@ -322,7 +322,7 @@ class CartesianConfigTest(unittest.TestCase):
                      - long:
                         time = short_time
                      - short: long
-                        time = logn_time
+                        time = long_time
               - test2:
                    run = "test1"
 
@@ -493,7 +493,7 @@ class CartesianConfigTest(unittest.TestCase):
                      - long:
                         time = short_time
                      - short: long
-                        time = logn_time
+                        time = long_time
               - test2:
                    run = "test1"
 
@@ -523,23 +523,6 @@ class CartesianConfigTest(unittest.TestCase):
                                    'tests': 'test2'},
                               ],
                               True)
-
-    def testError1(self):
-        self.assertRaises(parser.ParserError,
-                          self._checkStringDump, """
-                variants tests:
-                  wait:
-                       run = "wait"
-                       variants:
-                         - long:
-                            time = short_time
-                         - short: long
-                            time = logn_time
-                  - test2:
-                       run = "test1"
-                """,
-                          [],
-                          True)
 
     def testMissingInclude(self):
         self.assertRaises(parser.MissingIncludeError,
@@ -677,7 +660,7 @@ class CartesianConfigTest(unittest.TestCase):
                      - long:
                         time = short_time
                      - short: long
-                        time = logn_time
+                        time = long_time
               - test2:
                    run = "test1"
 
@@ -700,7 +683,7 @@ class CartesianConfigTest(unittest.TestCase):
                                    'run': 'wait',
                                    'shortname': 'wait.short',
                                    'tests': 'wait',
-                                   'time': 'logn_time'},
+                                   'time': 'long_time'},
                                   {'_name_map_file': {'<string>': '(tests=test2)'},
                                    '_short_name_map_file': {'<string>': 'test2'},
                                    'aaa': '1',
@@ -766,7 +749,7 @@ class CartesianConfigTest(unittest.TestCase):
                      - long:
                         time = short_time
                      - short: long
-                        time = logn_time
+                        time = long_time
               - test2:
                    run = "test1"
 
@@ -793,7 +776,7 @@ class CartesianConfigTest(unittest.TestCase):
                                    'run': 'wait',
                                    'shortname': 'wait.short',
                                    'tests': 'wait',
-                                   'time': 'logn_time'},
+                                   'time': 'long_time'},
                                   {'_name_map_file': {'<string>': '(tests=test2)'},
                                    '_short_name_map_file': {'<string>': 'test2'},
                                    'dep': [],
@@ -899,6 +882,22 @@ class CartesianConfigTest(unittest.TestCase):
                           [],
                           True)
 
+        self.assertRaises(parser.ParserError,
+                          self._checkStringDump, """
+                variants tests:
+                  wait:
+                       run = "wait"
+                       variants:
+                         - long:
+                            time = short_time
+                         - short: long
+                            time = long_time
+                  - test2:
+                       run = "test1"
+                """,
+                          [],
+                          True)
+
     def testComplicatedFilter(self):
         self._checkStringDump("""
             variants tests:
@@ -908,7 +907,7 @@ class CartesianConfigTest(unittest.TestCase):
                      - long:
                         time = short_time
                      - short: long
-                        time = logn_time
+                        time = long_time
                         only (host_os=linux), ( guest_os =    linux  )
               - test2:
                    run = "test1"
