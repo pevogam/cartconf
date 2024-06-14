@@ -1,1 +1,10 @@
 */__pycache__
+
+
+# Added by cargo
+Cargo.lock
+target/
+*.so
+
+# Needed by maturin
+.env/
