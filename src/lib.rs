@@ -1,5 +1,8 @@
 use pyo3::prelude::*;
 
+mod tokens;
+use crate::tokens::Tokens;
+
 #[cfg(test)]
 mod tests {
     use super::*; // bring the module under test into scope
@@ -24,6 +27,11 @@ fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
 /// A Python module implemented in Rust.
 #[pymodule]
 fn cartconf(m: &Bound<'_, PyModule>) -> PyResult<()> {
+
+    let tokens_module = PyModule::new(m.py(), "tokens")?;
+    tokens_module.add_class::<Tokens>()?;
+
+    m.add_submodule(&tokens_module)?;
     m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
     Ok(())
 }

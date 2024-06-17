@@ -7,11 +7,19 @@ import os
 import re
 from typing import Any
 
+# python imports
 from .exceptions import ParserError
 from .constants import reserved_keys
 from .utils import drop_suffixes
 
+# rust imports
+# TODO: cannot import in a more natural way, see
+# https://github.com/PyO3/pyo3/issues/759
+# from .cartconf.tokens import Tokens
+from .cartconf import tokens
 
+
+Tokens = tokens.Tokens
 match_substitute = re.compile(r"\$\{(.+?)\}")
 
 
@@ -137,114 +145,28 @@ class LString(LIdentifier):
     identifier = "String re(.+)"
 
 
-class LColon(Token):
-    __slots__ = []
-    identifier = ":"
-
-
-class LVariants(Token):
-    __slots__ = []
-    identifier = "variants"
-
-
-class LDot(Token):
-    __slots__ = []
-    identifier = "."
-
-
-class LVariant(Token):
-    __slots__ = []
-    identifier = "-"
-
-
-class LDefault(Token):
-    __slots__ = []
-    identifier = "@"
-
-
-class LOnly(Token):
-    __slots__ = []
-    identifier = "only"
-
-
-class LSuffix(Token):
-    __slots__ = []
-    identifier = "suffix"
-
-
-class LJoin(Token):
-    __slots__ = []
-    identifier = "join"
-
-
-class LNo(Token):
-    __slots__ = []
-    identifier = "no"
-
-
-class LCond(Token):
-    __slots__ = []
-    identifier = ""
-
-
-class LNotCond(Token):
-    __slots__ = []
-    identifier = "!"
-
-
-class LOr(Token):
-    __slots__ = []
-    identifier = ","
-
-
-class LAnd(Token):
-    __slots__ = []
-    identifier = ".."
-
-
-class LCoc(Token):
-    __slots__ = []
-    identifier = "."
-
-
-class LComa(Token):
-    __slots__ = []
-    identifier = ","
-
-
-class LLBracket(Token):
-    __slots__ = []
-    identifier = "["
-
-
-class LRBracket(Token):
-    __slots__ = []
-    identifier = "]"
-
-
-class LLRBracket(Token):
-    __slots__ = []
-    identifier = "("
-
-
-class LRRBracket(Token):
-    __slots__ = []
-    identifier = ")"
-
-
-class LRegExpStart(Token):
-    __slots__ = []
-    identifier = "${"
-
-
-class LRegExpStop(Token):
-    __slots__ = []
-    identifier = "}"
-
-
-class LInclude(Token):
-    __slots__ = []
-    identifier = "include"
+LColon = Tokens.LColon
+LVariants = Tokens.LVariants
+LDot = Tokens.LDot
+LVariant = Tokens.LVariant
+LDefault = Tokens.LDefault
+LOnly = Tokens.LOnly
+LSuffix = Tokens.LSuffix
+LJoin = Tokens.LJoin
+LNo = Tokens.LNo
+LCond = Tokens.LCond
+LNotCond = Tokens.LNotCond
+LOr = Tokens.LOr
+LAnd = Tokens.LAnd
+LCoc = Tokens.LCoc
+LComa = Tokens.LComa
+LLBracket = Tokens.LLBracket
+LRBracket = Tokens.LRBracket
+LLRBracket = Tokens.LLRBracket
+LRRBracket = Tokens.LRRBracket
+LRegExpStart = Tokens.LRegExpStart
+LRegExpStop = Tokens.LRegExpStop
+LInclude = Tokens.LInclude
 
 
 class LOperators(Token):
