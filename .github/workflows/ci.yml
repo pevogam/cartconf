@@ -1,7 +1,10 @@
 ---
 name: CartConf CI
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   tests:
@@ -20,15 +23,17 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Run isolation tests
-        run: python3 -m unittest tests/test_*
-
       - name: Install requirements
         run: |
+          python -m venv .env && source .env/bin/activate
           pip install -r requirements_pip.txt
-          pip install -e .
+          maturin develop --release
+
+      - name: Run isolation tests
+        run: |
+          python -m unittest tests/test_*
 
       - name: Run integration tests
         run: |
           ./parse.py -c tests/example.cfg "aaa=bbb" "c=d" "only a" "only 1"
-          avocado variants -C tests/example.cfg -o aaa=bbb c=d --only a 1
+          ./.env/bin/avocado variants -C tests/example.cfg -o aaa=bbb c=d --only a 1
