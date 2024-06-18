@@ -2,6 +2,17 @@ use std::fmt;
 
 use pyo3::prelude::*;
 
+trait HasIdentifier {
+    fn identifier(&self) -> &str;
+}
+
+// PartialEq +
+trait TokenEq :  HasIdentifier {
+    fn eq(&self, other: &Self) -> bool {
+        self.identifier() == other.identifier()
+    }
+}
+
 #[pyclass]
 pub struct Token {
     identifier: String,
@@ -15,6 +26,15 @@ impl Token {
     }
 }
 
+impl HasIdentifier for Token {
+    fn identifier(&self) -> &str {
+        &self.identifier
+    }
+}
+
+impl TokenEq for Token {}
+//impl Eq for Token {}
+
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.identifier)
@@ -27,13 +47,10 @@ impl fmt::Debug for Token {
     }
 }
 
-impl PartialEq for Token {
-    fn eq(&self, other: &Self) -> bool {
-        self.identifier == other.identifier
-    }
+#[pyclass]
+pub struct LIndent {
+    identifier: String,
 }
-
-impl Eq for Token {}
 
 #[cfg(test)]
 mod tests {
