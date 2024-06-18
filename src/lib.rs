@@ -2,6 +2,7 @@ use pyo3::prelude::*;
 
 mod tokens;
 use crate::tokens::Token;
+use crate::tokens::mul_as_string;
 
 #[cfg(test)]
 mod tests {
@@ -30,6 +31,7 @@ fn cartconf(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     let tokens_module = PyModule::new(m.py(), "tokens")?;
     tokens_module.add_class::<Token>()?;
+    tokens_module.add_function(wrap_pyfunction!(mul_as_string, m)?)?;
 
     m.add_submodule(&tokens_module)?;
     m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;

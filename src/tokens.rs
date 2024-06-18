@@ -2,6 +2,14 @@ use std::fmt;
 
 use pyo3::prelude::*;
 
+pub fn mul(a: usize, b: usize) -> usize {
+    a * b
+}
+#[pyfunction]
+pub fn mul_as_string(a: usize, b: usize) -> PyResult<String> {
+    Ok((mul(a, b)).to_string())
+}
+
 #[derive(Eq)]
 struct Identifiable {
     identifier: String,
