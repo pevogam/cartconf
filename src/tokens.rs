@@ -2,55 +2,72 @@ use std::fmt;
 
 use pyo3::prelude::*;
 
-trait HasIdentifier {
-    fn identifier(&self) -> &str;
-}
-
-// PartialEq +
-trait TokenEq :  HasIdentifier {
-    fn eq(&self, other: &Self) -> bool {
-        self.identifier() == other.identifier()
-    }
-}
-
-#[pyclass]
-pub struct Token {
+#[derive(Eq)]
+struct Identifiable {
     identifier: String,
 }
 
-impl Token {
-    fn new() -> Self {
-        Token {
-            identifier: "".to_string(),
-        }
+impl PartialEq for Identifiable {
+    fn eq(&self, other: &Self) -> bool {
+        self.identifier == other.identifier
     }
 }
 
-impl HasIdentifier for Token {
-    fn identifier(&self) -> &str {
-        &self.identifier
-    }
-}
-
-impl TokenEq for Token {}
-//impl Eq for Token {}
-
-impl fmt::Display for Token {
+impl fmt::Display for Identifiable {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.identifier)
     }
 }
 
-impl fmt::Debug for Token {
+impl fmt::Debug for Identifiable {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.identifier)
     }
 }
 
-#[pyclass]
-pub struct LIndent {
-    identifier: String,
+macro_rules! wrap_identifiable {
+    {$name:ty} => {
+        impl PartialEq for $name {
+            fn eq(&self, other: &Self) -> bool {
+                self.identifiable == other.identifiable
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                self.identifiable.fmt(f)
+            }
+        }
+
+        impl fmt::Debug for $name {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                self.identifiable.fmt(f)
+            }
+        }
+    }
 }
+
+#[pyclass]
+#[derive(Eq)]
+pub struct Token {
+    identifiable: Identifiable,
+}
+wrap_identifiable!(Token);
+impl Token {
+    fn new() -> Self {
+        Token {
+            identifiable: Identifiable { identifier: "".to_string() },
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Eq)]
+pub struct LIndent {
+    identifiable: Identifiable,
+    length: i32,
+}
+wrap_identifiable!(LIndent);
 
 #[cfg(test)]
 mod tests {
@@ -58,7 +75,7 @@ mod tests {
 
     #[test]
     fn test_display() {
-        let t1 = Token {
+        let t1 = Identifiable {
             identifier: "abc".to_string(),
         };
         assert_eq!(format!("{}", t1), "abc");
@@ -66,7 +83,7 @@ mod tests {
 
     #[test]
     fn test_debug() {
-        let t1 = Token {
+        let t1 = Identifiable {
             identifier: "xyz".to_string(),
         };
         assert_eq!(format!("{:?}", t1), format!("{:?}", "xyz"));
@@ -74,19 +91,19 @@ mod tests {
 
     #[test]
     fn test_equality() {
-        let t1 = Token {
+        let t1 = Identifiable {
             identifier: "abc".to_string(),
         };
-        let t2 = Token {
+        let t2 = Identifiable {
             identifier: "abc".to_string(),
         };
-        let t3 = Token {
+        let t3 = Identifiable {
             identifier: "abc".to_string(),
         };
-        let t4 = Token {
+        let t4 = Identifiable {
             identifier: "def".to_string(),
         };
-        let t5 = Token {
+        let t5 = Identifiable {
             identifier: "abe".to_string(),
         };
         // reflexivity of Eq
