@@ -23,62 +23,35 @@ _ops_exp = re.compile(r"|".join(tokens_oper_re))
 class Label(object):
     __slots__ = ["name", "var_name", "long_name", "hash_val", "hash_var"]
 
-    def __init__(self, name, next_name=None):
-        if next_name is None:
-            self.name = name
-            self.var_name = None
-        else:
-            self.name = next_name
-            self.var_name = name
-
-        if self.var_name is None:
-            self.long_name = "%s" % (self.name)
-        else:
-            self.long_name = "(%s=%s)" % (self.var_name, self.name)
-
+    def __init__(self, name: str, next_name: str = None) -> None:
+        self.name = next_name if next_name else name
+        self.var_name = name if next_name else None
+        self.long_name = f"({self.var_name}={self.name})" if self.var_name else f"{self.name}"
         self.hash_val = self.hash_name()
-        self.hash_var = None
-        if self.var_name:
-            self.hash_var = self.hash_variant()
+        self.hash_var = self.hash_variant() if self.var_name else None
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.long_name
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.long_name
 
-    def __eq__(self, o):
-        """
-        The comparison is asymmetric due to optimization.
-        """
-        if o.var_name:
-            if self.long_name == o.long_name:
-                return True
-        else:
-            if self.name == o.name:
-                return True
-        return False
+    def __eq__(self, o: "Label") -> bool:
+        """The comparison is asymmetric due to optimization."""
+        return self.long_name == o.long_name if o.var_name else self.name == o.name
 
-    def __ne__(self, o):
-        """
-        The comparison is asymmetric due to optimization.
-        """
-        if o.var_name:
-            if self.long_name != o.long_name:
-                return True
-        else:
-            if self.name != o.name:
-                return True
-        return False
+    def __ne__(self, o: "Label") -> bool:
+        """The comparison is asymmetric due to optimization."""
+        return self.long_name != o.long_name if o.var_name else self.name != o.name
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return self.hash_val
 
-    def hash_name(self):
-        return sum([i + 1 * ord(x) for i, x in enumerate(self.name)])
+    def hash_name(self) -> int:
+        return sum((i + 1) * ord(x) for i, x in enumerate(self.name))
 
-    def hash_variant(self):
-        return sum([i + 1 * ord(x) for i, x in enumerate(str(self))])
+    def hash_variant(self) -> int:
+        return sum((i + 1) * ord(x) for i, x in enumerate(str(self)))
 
 
 class Node(object):

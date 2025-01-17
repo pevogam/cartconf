@@ -18,6 +18,82 @@ testdir = os.path.dirname(__file__)
 testdatadir = os.path.join(testdir, 'data')
 
 
+class LabelTest(unittest.TestCase):
+
+    def test_initialization(self):
+        label = parser.Label("test")
+        self.assertEqual(label.name, "test")
+        self.assertIsNone(label.var_name)
+        self.assertEqual(label.long_name, "test")
+        self.assertIsNotNone(label.hash_val)
+        self.assertIsNone(label.hash_var)
+
+        label_with_var = parser.Label("test", "var")
+        self.assertEqual(label_with_var.name, "var")
+        self.assertEqual(label_with_var.var_name, "test")
+        self.assertEqual(label_with_var.long_name, "(test=var)")
+        self.assertIsNotNone(label_with_var.hash_val)
+        self.assertIsNotNone(label_with_var.hash_var)
+
+    def test_str(self):
+        label = parser.Label("test")
+        self.assertEqual(str(label), "test")
+
+        label_with_var = parser.Label("test", "var")
+        self.assertEqual(str(label_with_var), "(test=var)")
+
+    def test_repr(self):
+        label = parser.Label("test")
+        self.assertEqual(repr(label), "test")
+
+        label_with_var = parser.Label("test", "var")
+        self.assertEqual(repr(label_with_var), "(test=var)")
+
+    def test_eq(self):
+        label1 = parser.Label("test")
+        label2 = parser.Label("test")
+        label3 = parser.Label("test", "var")
+        label4 = parser.Label("test", "var")
+
+        self.assertTrue(label1 == label2)
+        self.assertFalse(label1 == label3)
+        self.assertFalse(label4 == label1)
+        self.assertTrue(label3 == label4)
+
+    def test_ne(self):
+        label1 = parser.Label("test")
+        label2 = parser.Label("test")
+        label3 = parser.Label("test", "var")
+        label4 = parser.Label("test", "var")
+
+        self.assertFalse(label1 != label2)
+        self.assertTrue(label1 != label3)
+        self.assertTrue(label4 != label1)
+        self.assertFalse(label3 != label4)
+
+    def test_hash(self):
+        label1 = parser.Label("test")
+        label2 = parser.Label("test")
+        label3 = parser.Label("test", "var")
+        label4 = parser.Label("test", "var")
+
+        self.assertEqual(hash(label1), label1.hash_name())
+        self.assertEqual(hash(label1), label1.hash_val)
+        self.assertEqual(hash(label3), label3.hash_name())
+        self.assertEqual(hash(label3), label3.hash_val)
+        self.assertIsNone(label1.hash_var)
+        self.assertEqual(label3.hash_var, label3.hash_variant())
+
+        self.assertEqual(label1.hash_name(), label2.hash_name())
+        self.assertEqual(label1.hash_variant(), label2.hash_variant())
+        self.assertNotEqual(label1.hash_name(), label3.hash_name())
+        self.assertNotEqual(label1.hash_variant(), label3.hash_variant())
+        self.assertEqual(label3.hash_name(), label4.hash_name())
+        self.assertEqual(label3.hash_variant(), label4.hash_variant())
+
+        self.assertGreater(label3.hash_variant(), label3.hash_name())
+
+
 class NodeTest(unittest.TestCase):
 
     def test_initialization(self):
