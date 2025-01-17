@@ -5,6 +5,7 @@ import os
 import gzip
 import sys
 import collections
+import tempfile
 
 # simple magic for using scripts within a source tree
 basedir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -130,6 +131,85 @@ class NodeTest(unittest.TestCase):
         dump_str = parent_node.dump(0, recurse=True)
         expected_str = "name: []\nvariable name: []\ncontent: []\nfailed cases: deque([])\n   name: ['child_name']\n   variable name: []\n   content: []\n   failed cases: deque([])\n"
         self.assertEqual(dump_str, expected_str)
+
+
+class StrReaderTest(unittest.TestCase):
+
+    def test_initialization(self):
+        s = "line1\nline2\n  line3\n"
+        reader = parser.StrReader(s)
+        self.assertEqual(reader.filename, "<string>")
+        self.assertEqual(len(reader._lines), 3)
+        self.assertEqual(reader._lines[0], ("line1", 0, 1))
+        self.assertEqual(reader._lines[1], ("line2", 0, 2))
+        self.assertEqual(reader._lines[2], ("line3", 2, 3))
+
+    def test_initialization_comments(self):
+        s = "line1\nline2\n#line3\n  line4\n//line5\nline6\n"
+        reader = parser.StrReader(s)
+        self.assertEqual(reader.filename, "<string>")
+        self.assertEqual(len(reader._lines), 4)
+        self.assertEqual(reader._lines[0], ("line1", 0, 1))
+        self.assertEqual(reader._lines[1], ("line2", 0, 2))
+        self.assertEqual(reader._lines[2], ("line4", 2, 4))
+        self.assertEqual(reader._lines[3], ("line6", 0, 6))
+
+    def test_initialization_tabs(self):
+        s = "line1\nline2  \n  line3	\n"
+        reader = parser.StrReader(s)
+        self.assertEqual(reader.filename, "<string>")
+        self.assertEqual(len(reader._lines), 3)
+        self.assertEqual(reader._lines[0], ("line1", 0, 1))
+        self.assertEqual(reader._lines[1], ("line2", 0, 2))
+        self.assertEqual(reader._lines[2], ("line3", 2, 3))
+
+    def test_get_next_line(self):
+        s = "line1\nline2\n  line3\n"
+        reader = parser.StrReader(s)
+        line, indent, linenum = reader.get_next_line(-1)
+        self.assertEqual(line, "line1")
+        self.assertEqual(indent, 0)
+        self.assertEqual(linenum, 1)
+        line, indent, linenum = reader.get_next_line(-1)
+        self.assertEqual(line, "line2")
+        self.assertEqual(indent, 0)
+        self.assertEqual(linenum, 2)
+        line, indent, linenum = reader.get_next_line(-1)
+        self.assertEqual(line, "line3")
+        self.assertEqual(indent, 2)
+        self.assertEqual(linenum, 3)
+        line, indent, linenum = reader.get_next_line(-1)
+        self.assertEqual(line, None)
+        self.assertEqual(indent, -1)
+        self.assertEqual(linenum, -1)
+
+    def test_set_next_line(self):
+        s = "line1\nline2\n  line3\n"
+        reader = parser.StrReader(s)
+        reader.set_next_line("new line", 1, 4)
+        line, indent, linenum = reader.get_next_line(-1)
+        self.assertEqual(line, "new line")
+        self.assertEqual(indent, 1)
+        self.assertEqual(linenum, 4)
+        line, indent, linenum = reader.get_next_line(-1)
+        self.assertEqual(line, "line1")
+        self.assertEqual(indent, 0)
+        self.assertEqual(linenum, 1)
+
+
+class FileReaderTest(unittest.TestCase):
+
+    def test_initialization(self):
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(b"line1\nline2\n  line3\n")
+            temp_file.flush()
+            temp_file_name = temp_file.name
+            reader = parser.FileReader(temp_file_name)
+        self.assertEqual(reader.filename, temp_file_name)
+        self.assertEqual(len(reader._lines), 3)
+        self.assertEqual(reader._lines[0], ("line1", 0, 1))
+        self.assertEqual(reader._lines[1], ("line2", 0, 2))
+        self.assertEqual(reader._lines[2], ("line3", 2, 3))
 
 
 class ParserTest(unittest.TestCase):

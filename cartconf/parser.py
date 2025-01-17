@@ -82,12 +82,11 @@ class Node(object):
 
 
 class StrReader(object):
-
     """
     Preprocess an input string for easy reading.
     """
 
-    def __init__(self, s):
+    def __init__(self, s: str) -> None:
         """
         Initialize the reader.
 
@@ -101,18 +100,16 @@ class StrReader(object):
             line = line.rstrip().expandtabs()
             stripped_line = line.lstrip()
             indent = len(line) - len(stripped_line)
-            if (not stripped_line or
-                    stripped_line.startswith("#") or
-                    stripped_line.startswith("//")):
+            if not stripped_line or stripped_line.startswith(("#", "//")):
                 continue
             self._lines.append((stripped_line, indent, linenum + 1))
 
-    def get_next_line(self, prev_indent):
+    def get_next_line(self, prev_indent: int) -> tuple[str | None, int, int]:
         """
         Get the next line in the current block.
 
         :param prev_indent: The indentation level of the previous block.
-        :return: (line, indent, linenum), where indent is the line's
+        :returns: (line, indent, linenum), where indent is the line's
             indentation level.  If no line is available, (None, -1, -1) is
             returned.
         """
@@ -128,7 +125,7 @@ class StrReader(object):
         self._line_index += 1
         return line, indent, linenum
 
-    def set_next_line(self, line, indent, linenum):
+    def set_next_line(self, line: str, indent: int, linenum: int) -> None:
         """
         Make the next call to get_next_line() return the given line instead of
         the real next line.
@@ -139,19 +136,18 @@ class StrReader(object):
 
 
 class FileReader(StrReader):
-
     """
     Preprocess an input file for easy reading.
     """
 
-    def __init__(self, filename):
+    def __init__(self, filename: str) -> None:
         """
         Initialize the reader.
 
         :parse filename: The name of the input file.
         """
         with open(filename) as f:
-            StrReader.__init__(self, f.read())
+            super().__init__(f.read())
         self.filename = filename
 
 
