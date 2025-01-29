@@ -6,6 +6,7 @@ import os
 import collections
 import logging
 import re
+from typing import Generator
 
 from .exceptions import *
 from .utils import drop_suffixes
@@ -144,7 +145,7 @@ class FileReader(StrReader):
         """
         Initialize the reader.
 
-        :parse filename: The name of the input file.
+        :param filename: name of the input file
         """
         with open(filename) as f:
             super().__init__(f.read())
@@ -157,7 +158,12 @@ spec_oper = "+<?~"
 
 class Lexer(object):
 
-    def __init__(self, reader):
+    def __init__(self, reader: StrReader | FileReader) -> None:
+        """
+        Initialize the lexer.
+
+        :param reader: file or string reader to get lines from
+        """
         self.reader = reader
         self.filename = reader.filename
         self.line = None
@@ -169,16 +175,24 @@ class Lexer(object):
         self.prev_indent = 0
         self.fast = False
 
-    def set_prev_indent(self, prev_indent):
+    def set_prev_indent(self, prev_indent: int) -> None:
         self.prev_indent = prev_indent
 
-    def set_fast(self):
+    def set_fast(self) -> None:
         self.fast = True
 
-    def set_strict(self):
+    def set_strict(self) -> None:
         self.fast = False
 
-    def match(self, line, pos):
+    def match(self, line: str, pos: int) -> Generator[Token, None, None]:
+        """
+        Generate tokens from a string line in order of matching.
+
+        :param line: line to parse from
+        :param pos: position in the line to start parsing from
+        :returns: iterator of tokens that were read
+        :raises: :py:class:`LexerError` if unexpected character is found
+        """
         l0 = line[0]
         chars = ""
         m = None
@@ -307,7 +321,14 @@ class Lexer(object):
             chars = ""
         yield LEndL()
 
-    def get_lexer(self):
+    def get_lexer(self) -> Generator[Token, None, None]:
+        """
+        Generate tokens from a multi-line reader in order of matching.
+
+        :returns: iterator of tokens that were read
+
+        ..warning:: This generator will never terminate and needs checks for end tokens.
+        """
         cr = self.reader
         indent = 0
         while True:
@@ -322,104 +343,166 @@ class Lexer(object):
             for token in self.match(self.line, 0):
                 yield token
 
-    def get_until_gen(self, end_tokens=None):
-        if end_tokens is None:
-            end_tokens = [LEndL]
+    def get_until_gen(self, end_tokens: list[type] = None) -> Generator[Token, None, None]:
+        """
+        Generate tokens from a multi-line reader terminating at a list of end tokens.
+
+        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
+        :returns: iterator of tokens that were read
+        """
+        end_tokens = end_tokens or [LEndL]
         token = next(self.generator)
         while type(token) not in end_tokens:
             yield token
             token = next(self.generator)
         yield token
 
-    def get_until(self, end_tokens=None):
-        if end_tokens is None:
-            end_tokens = [LEndL]
+    def get_until(self, end_tokens: list[type] = None) -> list[Token]:
+        """
+        Get a full list of tokens from a multi-line reader terminating at a list of end tokens.
+
+        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
+        :returns: list of tokens that were read
+        """
+        end_tokens = end_tokens or [LEndL]
         return [x for x in self.get_until_gen(end_tokens)]
 
-    def flush_until(self, end_tokens=None):
-        if end_tokens is None:
-            end_tokens = [LEndL]
+    def flush_until(self, end_tokens: list[type] = None) -> None:
+        """
+        Skip all tokens until any in a list of end tokens.
+
+        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
+        """
+        end_tokens = end_tokens or [LEndL]
         for _ in self.get_until_gen(end_tokens):
             pass
 
-    def get_until_check(self, lType, end_tokens=None):
+    def get_until_check(self, allowed_tokens: list[type], end_tokens: list[type] = None) -> list[Token]:
         """
-        Read tokens from iterator until get end_tokens or type of token not
-        match ltype
+        Get a full list of tokens from acceptable ones terminating at a list of end ones.
 
-        :param lType: List of allowed tokens
-        :param end_tokens: List of tokens for end reading
-        :return: List of readed tokens.
+        :param allowed_tokens: list of allowed tokens
+        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
+        :returns: list of tokens that were read
+        :raises: :py:class:`ParserError` if unexpected token is found
         """
-        if end_tokens is None:
-            end_tokens = [LEndL]
+        end_tokens = end_tokens or [LEndL]
         tokens = []
-        lType = lType + end_tokens
+        allowed_tokens = allowed_tokens + end_tokens
         for token in self.get_until_gen(end_tokens):
-            if type(token) in lType:
+            if type(token) in allowed_tokens:
                 tokens.append(token)
             else:
-                raise ParserError("Expected %s got %s" % (lType, type(token)),
+                raise ParserError("Expected %s got %s" % (allowed_tokens, type(token)),
                                   self.line, self.filename, self.linenum)
         return tokens
 
-    def get_until_no_white(self, end_tokens=None):
+    def get_until_no_white(self, end_tokens: list[type] = None) -> list[Token]:
         """
-        Read tokens from iterator until get one of end_tokens and strip LWhite
+        Get a full list of tokens terminating at a list of end tokens and strip white space ones.
 
-        :param end_tokens:  List of tokens for end reading
-        :return: List of readed tokens.
+        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
+        :returns: list of tokens that were read
         """
-        if end_tokens is None:
-            end_tokens = [LEndL]
+        end_tokens = end_tokens or [LEndL]
         return [x for x in self.get_until_gen(end_tokens) if not isinstance(x, LWhite)]
 
-    def rest_line_gen(self):
+    def rest_line_gen(self) -> Generator[Token, None, None]:
+        """
+        Generate tokens from the rest of the line terminating only at an end-of-line token.
+        :returns: iterator of tokens that were read
+
+        :returns: iterator of tokens that were read
+        """
         token = next(self.generator)
         while not isinstance(token, LEndL):
             yield token
             token = next(self.generator)
 
-    def rest_line(self):
+    def rest_line(self) -> list[Token]:
+        """
+        Get a full list of tokens from the rest of the line terminating only at an end-of-line token.
+
+        :returns: list of tokens that were read
+        """
         return [x for x in self.rest_line_gen()]
 
-    def rest_line_no_white(self):
+    def rest_line_no_white(self) -> list[Token]:
+        """
+        Get a full list of tokens from the rest of the line and strip white space ones.
+
+        :returns: list of tokens that were read
+        """
         return [x for x in self.rest_line_gen() if not isinstance(x, LWhite)]
 
-    def rest_line_as_LString(self):
-        self.rest_as_string = True
-        lstr = next(self.generator)
-        next(self.generator)
-        return lstr
+    def rest_line_as_string_token(self) -> LString:
+        """
+        Get a string token from the rest of the line.
 
-    def get_next_check(self, lType):
+        :returns: rest of the line as a string token
+        :raises: :py:class:`ParserError` if the remaining token is not a string token
+            followed by an end-of-line token
+        """
+        self.rest_as_string = True
+        remainder_string = next(self.generator)
+        if type(remainder_string) != LString:
+            raise ParserError("Expected string, got %s" % type(remainder_string))
+        # skip the end-of-line token
+        end_of_line = next(self.generator)
+        if type(end_of_line) != LEndL:
+            raise ParserError("Expected end-of-line, got %s" % type(end_of_line))
+        return remainder_string
+
+    def get_next_check(self, allowed_tokens: list[type]) -> tuple[type, Token]:
+        """
+        Get the next token and throw an error if it is not acceptable.
+
+        :param allowed_tokens: list of allowed tokens
+        :returns: the next acceptable token and its type
+        :raises: :py:class:`ParserError` if token is not acceptable
+        """
         token = next(self.generator)
-        if type(token) in lType:
+        if type(token) in allowed_tokens:
             return type(token), token
         else:
             raise ParserError("Expected %s got ['%s']=[%s]" %
-                              ([x.identifier for x in lType],
+                              ([x.identifier for x in allowed_tokens],
                                token.identifier, token),
                               self.line, self.filename, self.linenum)
 
-    def get_next_check_nw(self, lType):
+    def get_next_check_no_white(self, allowed_tokens: list[type]) -> tuple[type, Token]:
+        """
+        Get the next acceptable token and strip white space tokens.
+
+        :param allowed_tokens: list of allowed tokens
+        :returns: the next acceptable token and its type
+        :raises: :py:class:`ParserError` if token is not acceptable
+        """
         token = next(self.generator)
         while isinstance(token, LWhite):
             token = next(self.generator)
-        if type(token) in lType:
+        if type(token) in allowed_tokens:
             return type(token), token
         else:
             raise ParserError("Expected %s got ['%s']" %
-                              ([x.identifier for x in lType],
+                              ([x.identifier for x in allowed_tokens],
                                token.identifier),
                               self.line, self.filename, self.linenum)
 
-    def check_token(self, token, lType):
-        if type(token) in lType:
+    def check_token(self, token: Token, allowed_tokens: list[type]) -> tuple[type, Token]:
+        """
+        Check that a token is acceptable (among the allowed ones).
+
+        :param token: token to check
+        :param allowed_tokens: list of allowed tokens
+        :returns: the acceptable token and its type
+        :raises: :py:class:`ParserError` if token is not acceptable
+        """
+        if type(token) in allowed_tokens:
             return type(token), token
         else:
             raise ParserError("Expected %s got ['%s']" %
-                              ([x.identifier for x in lType],
+                              ([x.identifier for x in allowed_tokens],
                                token.identifier),
                               self.line, self.filename, self.linenum)
 
@@ -715,7 +798,7 @@ class Parser(object):
                         #    xxx.yyy.(aaa=bbb):
                         identifier = [token] + identifier[:-1]
                         cfilter = parse_filter(lexer, identifier + [LEndL()])
-                        next_line = lexer.rest_line_as_LString()
+                        next_line = lexer.rest_line_as_string_token()
                         if next_line != "":
                             lexer.reader.set_next_line(next_line, indent + 1,
                                                        lexer.linenum)
@@ -749,16 +832,16 @@ class Parser(object):
                     while True:
                         lexer.set_prev_indent(var_indent)
                         # Get token from lexer and check syntax.
-                        typet, token = lexer.get_next_check_nw([LIdentifier,
-                                                                LDefault,
-                                                                LIndent,
-                                                                LEndBlock])
+                        typet, token = lexer.get_next_check_no_white([LIdentifier,
+                                                                      LDefault,
+                                                                      LIndent,
+                                                                      LEndBlock])
                         if typet == LEndBlock:
                             break
 
                         if typet == LIndent:
-                            lexer.get_next_check_nw([LVariant])
-                            typet, token = lexer.get_next_check_nw(
+                            lexer.get_next_check_no_white([LVariant])
+                            typet, token = lexer.get_next_check_no_white(
                                 [LIdentifier,
                                  LDefault])
 
@@ -886,9 +969,9 @@ class Parser(object):
                                                   lexer.linenum)
                             var_name = tokens[0]
                         elif vtypet == LLBracket:  # [
-                            _, ident = lexer.get_next_check_nw([LIdentifier])
-                            typet, _ = lexer.get_next_check_nw([LSet,
-                                                                LRBracket])
+                            _, ident = lexer.get_next_check_no_white([LIdentifier])
+                            typet, _ = lexer.get_next_check_no_white([LSet,
+                                                                      LRBracket])
                             if typet == LRBracket:  # [xxx]
                                 if ident not in meta:
                                     meta[ident] = []
@@ -907,7 +990,7 @@ class Parser(object):
                                                       lexer.filename,
                                                       lexer.linenum)
 
-                        tokens = lexer.get_next_check_nw(varianst_allowed_in)
+                        tokens = lexer.get_next_check_no_white(varianst_allowed_in)
                         vtypet = type(tokens[-1])
 
                     if "default" in meta:
@@ -923,7 +1006,7 @@ class Parser(object):
                         raise ParserError("Syntax ERROR expected \":\"",
                                           lexer.line, lexer.filename,
                                           lexer.linenum)
-                    lexer.get_next_check_nw([LEndL])
+                    lexer.get_next_check_no_white([LEndL])
                     allowed = variants_allowed
                     var_indent = indent
 
@@ -964,7 +1047,7 @@ class Parser(object):
                 elif typet == LInclude:
                     # Parse:
                     #    include relative file patch to working directory.
-                    path = lexer.rest_line_as_LString()
+                    path = lexer.rest_line_as_string_token()
                     filename = os.path.expanduser(path)
                     if (isinstance(lexer.reader, FileReader) and
                             not os.path.isabs(filename)):
@@ -982,8 +1065,8 @@ class Parser(object):
                 elif typet == LDel:
                     # Parse:
                     #    del operand
-                    _, to_del = lexer.get_next_check_nw([LIdentifier])
-                    lexer.get_next_check_nw([LEndL])
+                    _, to_del = lexer.get_next_check_no_white([LIdentifier])
+                    lexer.get_next_check_no_white([LEndL])
                     token.set_operands(to_del, None)
 
                     pre_dict = apply_predict(lexer, node, pre_dict)
@@ -996,7 +1079,7 @@ class Parser(object):
                     lfilter = parse_filter(lexer,
                                            lexer.get_until_no_white(
                                                [LColon, LEndL])[:-1])
-                    next_line = lexer.rest_line_as_LString()
+                    next_line = lexer.rest_line_as_string_token()
                     if next_line != "":
                         lexer.reader.set_next_line(next_line, indent + 1,
                                                    lexer.linenum)

@@ -212,6 +212,212 @@ class FileReaderTest(unittest.TestCase):
         self.assertEqual(reader._lines[2], ("line3", 2, 3))
 
 
+class LexerTest(unittest.TestCase):
+
+    def setUp(self):
+        self.sample_text = "variants: test\n  only test\n  no test\n  join test\n  suffix test\n  include test\n  del test\n  !test\n"
+        self.reader = parser.StrReader(self.sample_text)
+        self.lexer = parser.Lexer(self.reader)
+
+    def test_initialization(self):
+        self.assertEqual(self.lexer.reader, self.reader)
+        self.assertEqual(self.lexer.filename, self.reader.filename)
+        self.assertIsNone(self.lexer.line)
+        self.assertEqual(self.lexer.linenum, 0)
+        self.assertFalse(self.lexer.ignore_white)
+        self.assertFalse(self.lexer.rest_as_string)
+        self.assertEqual(self.lexer.match_func_index, 0)
+        self.assertIsNotNone(self.lexer.generator)
+        self.assertEqual(self.lexer.prev_indent, 0)
+        self.assertFalse(self.lexer.fast)
+
+    def test_set_prev_indent(self):
+        self.lexer.set_prev_indent(4)
+        self.assertEqual(self.lexer.prev_indent, 4)
+
+    def test_set_fast(self):
+        self.lexer.set_fast()
+        self.assertTrue(self.lexer.fast)
+
+    def test_set_strict(self):
+        self.lexer.set_strict()
+        self.assertFalse(self.lexer.fast)
+
+    def test_match(self):
+        line = "only test"
+        tokens = list(self.lexer.match(line, 0))
+        self.assertIsInstance(tokens[0], parser.LOnly)
+        self.assertIsInstance(tokens[1], parser.LIdentifier)
+
+    def test_get_lexer(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        generator = self.lexer.get_lexer()
+        token = next(generator)
+        self.assertIsInstance(token, parser.LIndent)
+        token = next(generator)
+        self.assertIsInstance(token, parser.LVariants)
+        token = next(generator)
+        self.assertIsInstance(token, parser.LColon)
+        token = next(generator)
+        self.assertIsInstance(token, parser.LWhite)
+        self.assertEqual(token, "")
+        token = next(generator)
+        self.assertIsInstance(token, parser.LIdentifier)
+        self.assertEqual(token, "test")
+
+    def test_get_until_gen(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        tokens = list(self.lexer.get_until_gen([parser.LOnly]))
+        self.assertIsInstance(tokens[0], parser.LIndent)
+        self.assertIsInstance(tokens[1], parser.LVariants)
+        self.assertIsInstance(tokens[2], parser.LColon)
+        self.assertIsInstance(tokens[3], parser.LWhite)
+        self.assertIsInstance(tokens[4], parser.LIdentifier)
+        self.assertIsInstance(tokens[5], parser.LEndL)
+        self.assertIsInstance(tokens[6], parser.LIndent)
+        self.assertIsInstance(tokens[7], parser.LOnly)
+
+    def test_get_until(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        tokens = self.lexer.get_until([parser.LOnly])
+        self.assertIsInstance(tokens[0], parser.LIndent)
+        self.assertIsInstance(tokens[1], parser.LVariants)
+        self.assertIsInstance(tokens[2], parser.LColon)
+        self.assertIsInstance(tokens[3], parser.LWhite)
+        self.assertIsInstance(tokens[4], parser.LIdentifier)
+        self.assertIsInstance(tokens[5], parser.LEndL)
+        self.assertIsInstance(tokens[6], parser.LIndent)
+        self.assertIsInstance(tokens[7], parser.LOnly)
+
+    def test_flush_until(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        self.lexer.flush_until([parser.LOnly])
+        token = next(self.lexer.generator)
+        self.assertIsInstance(token, parser.LIdentifier)
+        self.assertEqual(token, "test")
+
+    def test_get_until_check(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        tokens = self.lexer.get_until_check(
+            [
+                parser.LIndent,
+                parser.LVariants,
+                parser.LColon,
+                parser.LWhite,
+                parser.LIdentifier,
+                parser.LEndL,
+            ],
+            [parser.LOnly],
+        )
+        self.assertIsInstance(tokens[0], parser.LIndent)
+        self.assertIsInstance(tokens[1], parser.LVariants)
+        self.assertIsInstance(tokens[2], parser.LColon)
+        self.assertIsInstance(tokens[3], parser.LIdentifier)
+        self.assertIsInstance(tokens[4], parser.LIdentifier)
+        self.assertIsInstance(tokens[5], parser.LEndL)
+        self.assertIsInstance(tokens[6], parser.LIndent)
+        self.assertIsInstance(tokens[7], parser.LOnly)
+
+        with self.assertRaises(parser.ParserError):
+            self.lexer.get_until_check(
+                [parser.LColon],
+                [parser.LOnly],
+            )
+
+    def test_get_until_no_white(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        tokens = self.lexer.get_until_no_white([parser.LOnly])
+        self.assertIsInstance(tokens[0], parser.LIndent)
+        self.assertIsInstance(tokens[1], parser.LVariants)
+        self.assertIsInstance(tokens[2], parser.LColon)
+        self.assertIsInstance(tokens[3], parser.LIdentifier)
+        self.assertIsInstance(tokens[4], parser.LEndL)
+        self.assertIsInstance(tokens[5], parser.LIndent)
+        self.assertIsInstance(tokens[6], parser.LOnly)
+
+    def test_rest_line_gen(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        tokens = list(self.lexer.rest_line_gen())
+        self.assertIsInstance(tokens[0], parser.LIndent)
+        self.assertIsInstance(tokens[1], parser.LVariants)
+        self.assertIsInstance(tokens[2], parser.LColon)
+        self.assertIsInstance(tokens[3], parser.LIdentifier)
+
+    def test_rest_line(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        tokens = self.lexer.rest_line()
+        self.assertIsInstance(tokens[0], parser.LIndent)
+        self.assertIsInstance(tokens[1], parser.LVariants)
+        self.assertIsInstance(tokens[2], parser.LColon)
+        self.assertIsInstance(tokens[3], parser.LIdentifier)
+
+    def test_rest_line_no_white(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        tokens = self.lexer.rest_line_no_white()
+        self.assertIsInstance(tokens[0], parser.LIndent)
+        self.assertIsInstance(tokens[1], parser.LVariants)
+        self.assertIsInstance(tokens[2], parser.LColon)
+        # no white space token here
+        self.assertIsInstance(tokens[3], parser.LIdentifier)
+
+    def test_rest_line_as_string_token(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        next(self.lexer.generator)  # indent
+        next(self.lexer.generator)  # variant
+        next(self.lexer.generator)  # colon
+        token = self.lexer.rest_line_as_string_token()
+        self.assertIsInstance(token, parser.LString)
+        self.assertEqual(token, "test")
+
+        # only compatible line endings are possible
+        with self.assertRaises(parser.ParserError):
+            self.lexer.rest_line_as_string_token()
+
+    def test_get_next_check(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        token_type, token = self.lexer.get_next_check([parser.LIndent])
+        self.assertEqual(token_type, parser.LIndent)
+        self.assertIsInstance(token, parser.LIndent)
+
+        with self.assertRaises(parser.ParserError):
+            self.lexer.get_next_check([parser.LIndent])
+
+    def test_get_next_check_nw(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        token_type, token = self.lexer.get_next_check_no_white([parser.LIndent])
+        self.assertEqual(token_type, parser.LIndent)
+        self.assertIsInstance(token, parser.LIndent)
+
+        self.lexer.get_next_check_no_white([parser.LVariants])
+        self.lexer.get_next_check_no_white([parser.LColon])
+        # no white space token here
+        self.lexer.get_next_check_no_white([parser.LIdentifier])
+        self.lexer.get_next_check_no_white([parser.LEndL])
+
+    def test_check_token(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        token = parser.LIdentifier("test")
+        token_type, checked_token = self.lexer.check_token(token, [parser.LIdentifier])
+        self.assertEqual(token_type, parser.LIdentifier)
+        self.assertEqual(checked_token, token)
+
+        with self.assertRaises(parser.ParserError):
+            self.lexer.check_token(token, [parser.LIndent])
+
+
 class ParserTest(unittest.TestCase):
 
     def _compare_parser_dictionaries(self, parser: parser.Parser, reference: dict[str, str]) -> None:
