@@ -20,7 +20,8 @@ testdatadir = os.path.join(testdir, 'data')
 
 class CartesianConfigTest(unittest.TestCase):
 
-    def _check_dictionaries(self, parser, reference):
+    def _compare_parser_dictionaries(self, parser: parser.Parser, reference: dict[str, str]) -> None:
+        """Check if the parser dictionaries match reference ones."""
         result = list(parser.get_dicts())
         # as the dictionary list is very large, test each item individually:
         self.assertEqual(len(result), len(reference))
@@ -29,8 +30,8 @@ class CartesianConfigTest(unittest.TestCase):
             self.assertEqual(resdict.get('name'), refdict.get('name'))
             self.assertEqual(resdict, refdict)
 
-    def _check_config_dump(self, config, dump):
-        """Check if the parser output matches a config file dump"""
+    def _compare_config_dump(self, config: str, dump: str) -> None:
+        """Check if the parsed dictionaries from a config match dumped ones."""
         configpath = os.path.join(testdatadir, config)
         dumppath = os.path.join(testdatadir, dump)
 
@@ -40,20 +41,16 @@ class CartesianConfigTest(unittest.TestCase):
             dumpdata = eval(df.read())
 
         p = parser.Parser(configpath)
-        self._check_dictionaries(p, dumpdata)
+        self._compare_parser_dictionaries(p, dumpdata)
 
-    def _check_string_config(self, string, reference):
-        p = parser.Parser()
-        p.parse_string(string)
-        self._check_dictionaries(p, reference)
-
-    def _check_string_dump(self, string, dump, defaults=False):
+    def _compare_string_config(self, string: str, reference: dict[str, str], defaults: bool = False) -> None:
+        """Check if the parsed dictionaries from a string match reference ones."""
         p = parser.Parser(defaults=defaults)
         p.parse_string(string)
-        self._check_dictionaries(p, dump)
+        self._compare_parser_dictionaries(p, reference)
 
     def test_simple_variant(self):
-        self._check_string_config("""
+        self._compare_string_config("""
             c = abc
             variants:
                 - a:
@@ -79,7 +76,7 @@ class CartesianConfigTest(unittest.TestCase):
             ])
 
     def test_filter_mixing(self):
-        self._check_string_dump("""
+        self._compare_string_config("""
             variants:
                 - unknown_qemu:
                 - rhel64:
@@ -112,7 +109,7 @@ class CartesianConfigTest(unittest.TestCase):
             ])
 
     def test_name_variant(self):
-        self._check_string_dump("""
+        self._compare_string_config("""
             variants tests: # All tests in configuration
               - wait:
                    run = "wait"
@@ -204,7 +201,7 @@ class CartesianConfigTest(unittest.TestCase):
             ])
 
     def test_defaults(self):
-        self._check_string_dump("""
+        self._compare_string_config("""
             variants tests:
               - wait:
                    run = "wait"
@@ -263,7 +260,7 @@ class CartesianConfigTest(unittest.TestCase):
             True)
 
         self.assertRaises(parser.ParserError,
-                          self._check_string_dump, """
+                          self._compare_string_config, """
                 variants tests [default=system2]:
                   - system1:
                 """,
@@ -271,7 +268,7 @@ class CartesianConfigTest(unittest.TestCase):
                           True)
 
     def test_del(self):
-        self._check_string_dump("""
+        self._compare_string_config("""
             variants tests:
               - wait:
                    run = "wait"
@@ -310,7 +307,7 @@ class CartesianConfigTest(unittest.TestCase):
             ],
             True)
 
-        self._check_string_dump("""
+        self._compare_string_config("""
             variants tests:
               - wait:
                    run = "wait"
@@ -350,7 +347,7 @@ class CartesianConfigTest(unittest.TestCase):
             True)
 
     def test_suffix_join_del(self):
-        self._check_string_dump("""
+        self._compare_string_config("""
             variants:
                 - x:
                   foo = x
@@ -481,7 +478,7 @@ class CartesianConfigTest(unittest.TestCase):
             ],
             True)
 
-        self._check_string_dump("""
+        self._compare_string_config("""
             variants tests:
               - wait:
                    run = "wait"
@@ -522,14 +519,14 @@ class CartesianConfigTest(unittest.TestCase):
 
     def test_missing_include(self):
         self.assertRaises(parser.MissingIncludeError,
-                          self._check_string_dump, """
+                          self._compare_string_config, """
                 include xxxxxxxxx/xxxxxxxxxxx
                 """,
                           [],
                           True)
 
     def test_variable_assignment(self):
-        self._check_string_dump("""
+        self._compare_string_config("""
             variants tests:
               -system1:
                     var = 1
@@ -571,7 +568,7 @@ class CartesianConfigTest(unittest.TestCase):
             True)
 
     def test_variable_lazy_assignment(self):
-        self._check_string_dump("""
+        self._compare_string_config("""
             arg1 = ~balabala
             variants:
                 - base_content:
@@ -648,7 +645,7 @@ class CartesianConfigTest(unittest.TestCase):
             True)
 
     def test_condition(self):
-        self._check_string_dump("""
+        self._compare_string_config("""
             variants tests [meta1]:
               - wait:
                    run = "wait"
@@ -691,7 +688,7 @@ class CartesianConfigTest(unittest.TestCase):
                  'tests': 'test2'},
             ],
             True)
-        self._check_string_dump("""
+        self._compare_string_config("""
             variants:
                 - a:
                     foo = foo
@@ -737,7 +734,7 @@ class CartesianConfigTest(unittest.TestCase):
             True)
 
     def test_negative_condition(self):
-        self._check_string_dump("""
+        self._compare_string_config("""
             variants tests [meta1]:
               - wait:
                    run = "wait"
@@ -785,7 +782,7 @@ class CartesianConfigTest(unittest.TestCase):
 
     def test_syntax_errors(self):
         self.assertRaises(parser.LexerError,
-                          self._check_string_dump, """
+                          self._compare_string_config, """
                 variants tests$:
                   - system1:
                         var = 1
@@ -802,7 +799,7 @@ class CartesianConfigTest(unittest.TestCase):
                           True)
 
         self.assertRaises(parser.LexerError,
-                          self._check_string_dump, """
+                          self._compare_string_config, """
                 variants tests [defaul$$$$t=system1]:
                   - system1:
                 """,
@@ -810,7 +807,7 @@ class CartesianConfigTest(unittest.TestCase):
                           True)
 
         self.assertRaises(parser.ParserError,
-                          self._check_string_dump, """
+                          self._compare_string_config, """
                 variants tests [default=system1] wrong:
                   - system1:
                 """,
@@ -818,28 +815,28 @@ class CartesianConfigTest(unittest.TestCase):
                           True)
 
         self.assertRaises(parser.ParserError,
-                          self._check_string_dump, """
+                          self._compare_string_config, """
                 only xxx...yyy
                 """,
                           [],
                           True)
 
         self.assertRaises(parser.ParserError,
-                          self._check_string_dump, """
+                          self._compare_string_config, """
                 only xxx..,yyy
                 """,
                           [],
                           True)
 
         self.assertRaises(parser.ParserError,
-                          self._check_string_dump, """
+                          self._compare_string_config, """
                 aaabbbb.ddd
                 """,
                           [],
                           True)
 
         self.assertRaises(parser.ParserError,
-                          self._check_string_dump, """
+                          self._compare_string_config, """
                 aaa.bbb:
                   variants test:
                      -sss:
@@ -848,7 +845,7 @@ class CartesianConfigTest(unittest.TestCase):
                           True)
 
         self.assertRaises(parser.ParserError,
-                          self._check_string_dump, """
+                          self._compare_string_config, """
                 variants test [sss = bbb:
                      -sss:
                 """,
@@ -856,7 +853,7 @@ class CartesianConfigTest(unittest.TestCase):
                           True)
 
         self.assertRaises(parser.ParserError,
-                          self._check_string_dump, """
+                          self._compare_string_config, """
                 variants test [default]:
                      -sss:
                 """,
@@ -864,7 +861,7 @@ class CartesianConfigTest(unittest.TestCase):
                           True)
 
         self.assertRaises(parser.ParserError,
-                          self._check_string_dump, """
+                          self._compare_string_config, """
                 variants test [default] ddd:
                      -sss:
                 """,
@@ -872,14 +869,14 @@ class CartesianConfigTest(unittest.TestCase):
                           True)
 
         self.assertRaises(parser.ParserError,
-                          self._check_string_dump, """
+                          self._compare_string_config, """
                 variants test [default] ddd
                 """,
                           [],
                           True)
 
         self.assertRaises(parser.ParserError,
-                          self._check_string_dump, """
+                          self._compare_string_config, """
                 variants tests:
                   wait:
                        run = "wait"
@@ -895,7 +892,7 @@ class CartesianConfigTest(unittest.TestCase):
                           True)
 
     def test_complicated_filter(self):
-        self._check_string_dump("""
+        self._compare_string_config("""
             variants tests:
               - wait:
                    run = "wait"
@@ -985,7 +982,7 @@ class CartesianConfigTest(unittest.TestCase):
 
         f = "only xxx.yyy..(xxx=333).aaa, ddd (eeee) rrr.aaa"
 
-        self._check_string_dump(f, [], True)
+        self._compare_string_config(f, [], True)
 
         lexer = parser.Lexer(parser.StrReader(f))
         lexer.set_prev_indent(-1)
@@ -1004,7 +1001,7 @@ class CartesianConfigTest(unittest.TestCase):
                          "Failed to parse filter.")
 
     def test_join_substitution(self):
-        self._check_string_dump("""
+        self._compare_string_config("""
             key0 = "Baz"
             variants:
                 - one:
