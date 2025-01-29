@@ -1388,7 +1388,7 @@ class ParserTest(unittest.TestCase):
         lexer.set_prev_indent(-1)
         lexer.get_next_check([parser.LIndent])
         lexer.get_next_check([parser.LOnly])
-        p_filter = parser.parse_filter(lexer, lexer.rest_line())
+        p_filter = parser.Parser.parse_filter(lexer, lexer.rest_line())
         self.assertEqual(p_filter,
                          [[[parser.Label("xxx"),
                             parser.Label("yyy")],

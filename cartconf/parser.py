@@ -9,16 +9,12 @@ import re
 from typing import Generator
 
 from .exceptions import *
-from .utils import drop_suffixes
+from .utils import drop_suffixes, postfix_parse
 from .filters import *
 from .tokens import *
 
 
 LOG = logging.getLogger('avocado.' + __name__)
-
-
-tokens_oper_re = [r"\=", r"\+\=", r"\<\=", r"\~\=", r"\?\=", r"\?\+\=", r"\?\<\="]
-_ops_exp = re.compile(r"|".join(tokens_oper_re))
 
 
 class Label(object):
@@ -152,11 +148,12 @@ class FileReader(StrReader):
         self.filename = filename
 
 
-spec_iden = "_-"
-spec_oper = "+<?~"
-
-
 class Lexer(object):
+
+    tokens_oper_re = [r"\=", r"\+\=", r"\<\=", r"\~\=", r"\?\=", r"\?\+\=", r"\?\<\="]
+    _ops_exp = re.compile(r"|".join(tokens_oper_re))
+    spec_iden = "_-"
+    spec_oper = "+<?~"
 
     def __init__(self, reader: StrReader | FileReader) -> None:
         """
@@ -245,7 +242,7 @@ class Lexer(object):
 
         if self.fast and pos == 0:  # due to refexp
             cind = line[pos:].find(":")
-            m = _ops_exp.search(line[pos:])
+            m = Lexer._ops_exp.search(line[pos:])
 
         oper = ""
         token = None
@@ -261,9 +258,9 @@ class Lexer(object):
         else:
             li = enumerate(line[pos:], pos)
             for pos, char in li:
-                if char.isalnum() or char in spec_iden:    # alfanum+_-
+                if char.isalnum() or char in Lexer.spec_iden:    # alfanum+_-
                     chars += char
-                elif char in spec_oper:     # <+?=~
+                elif char in Lexer.spec_oper:     # <+?=~
                     if chars:
                         yield LIdentifier(chars)
                         oper = ""
@@ -279,7 +276,7 @@ class Lexer(object):
                                 if not self.ignore_white:
                                     yield LWhite()
                                 break
-                    if char.isalnum() or char in spec_iden:
+                    if char.isalnum() or char in Lexer.spec_iden:
                         chars += char
                     elif char == "=":
                         if oper in tokens_oper:
@@ -301,7 +298,7 @@ class Lexer(object):
                         yield LString(chars)
                     elif char == "#":
                         break
-                    elif char in spec_oper:
+                    elif char in Lexer.spec_oper:
                         oper += char
                     else:
                         raise LexerError("Unexpected character %s on"
@@ -507,115 +504,10 @@ class Lexer(object):
                               self.line, self.filename, self.linenum)
 
 
-def next_nw(gener):
-    token = next(gener)
-    while isinstance(token, LWhite):
-        token = next(gener)
-    return token
-
-
-def cmd_tokens(tokens1, tokens2):
-    for x, y in list(zip(tokens1, tokens2)):
-        if x != y:
-            return False
-    else:
-        return True
-
-
-def apply_predict(lexer, node, pre_dict):
-    predict = LApplyPreDict().set_operands(None, pre_dict)
-    node.content += [(lexer.filename, lexer.linenum, predict)]
-    return {}
-
-
-def parse_filter(lexer, tokens):
-    """
-    :return: Parsed filter
-    """
-    or_filters = []
-    tokens = iter(tokens + [LEndL()])
-    typet, token = lexer.check_token(next(tokens), [LIdentifier, LLRBracket,
-                                                    LEndL, LWhite])
-    and_filter = []
-    con_filter = []
-    dots = 1
-    while typet not in [LEndL]:
-        if typet in [LIdentifier, LLRBracket]:        # join    identifier
-            if typet == LLRBracket:    # (xxx=ttt)
-                _, ident = lexer.check_token(next_nw(tokens),
-                                             [LIdentifier])  # (iden
-                typet, _ = lexer.check_token(next_nw(tokens),
-                                             [LSet, LRRBracket])  # =
-                if typet == LRRBracket:  # (xxx)
-                    token = Label(str(ident))
-                elif typet == LSet:    # (xxx = yyyy)
-                    _, value = lexer.check_token(next_nw(tokens),
-                                                 [LIdentifier, LString])
-                    lexer.check_token(next_nw(tokens), [LRRBracket])
-                    token = Label(str(ident), str(value))
-            else:
-                token = Label(token)
-            if dots == 1:
-                con_filter.append(token)
-            elif dots == 2:
-                and_filter.append(con_filter)
-                con_filter = [token]
-            elif dots == 0 or dots > 2:
-                raise ParserError("Syntax Error expected \".\" between"
-                                  " Identifier.", lexer.line, lexer.filename,
-                                  lexer.linenum)
-
-            dots = 0
-        elif typet == LDot:         # xxx.xxxx or xxx..xxxx
-            dots += 1
-        elif typet in [LComa, LWhite]:
-            if dots > 0:
-                raise ParserError("Syntax Error expected identifier between"
-                                  " \".\" and \",\".", lexer.line,
-                                  lexer.filename, lexer.linenum)
-            if and_filter:
-                if con_filter:
-                    and_filter.append(con_filter)
-                    con_filter = []
-                or_filters.append(and_filter)
-                and_filter = []
-            elif con_filter:
-                or_filters.append([con_filter])
-                con_filter = []
-            elif typet == LIdentifier:
-                or_filters.append([[Label(token)]])
-            else:
-                raise ParserError("Syntax Error expected \",\" between"
-                                  " Identifier.", lexer.line, lexer.filename,
-                                  lexer.linenum)
-            dots = 1
-            token = next(tokens)
-            while isinstance(token, LWhite):
-                token = next(tokens)
-            typet, token = lexer.check_token(token, [LIdentifier,
-                                                     LComa, LDot,
-                                                     LLRBracket, LEndL])
-            continue
-        typet, token = lexer.check_token(next(tokens), [LIdentifier, LComa,
-                                                        LDot, LLRBracket,
-                                                        LEndL, LWhite])
-    if and_filter:
-        if con_filter:
-            and_filter.append(con_filter)
-            con_filter = []
-        or_filters.append(and_filter)
-        and_filter = []
-    if con_filter:
-        or_filters.append([con_filter])
-        con_filter = []
-    return or_filters
-
-
-num_failed_cases = 5
-
-
 class Parser(object):
     # pylint: disable=W0102
+
+    num_failed_cases = 5
 
     def __init__(self, filename=None, defaults=False, expand_defaults=[],
                  debug=False):
@@ -702,6 +594,96 @@ class Parser(object):
         self.assignments.append(string)
         self.parse_string(string)
 
+    @staticmethod
+    def parse_filter(lexer, tokens):
+        """
+        :return: Parsed filter
+        """
+        or_filters = []
+        tokens = iter(tokens + [LEndL()])
+        typet, token = lexer.check_token(next(tokens), [LIdentifier, LLRBracket,
+                                                        LEndL, LWhite])
+        and_filter = []
+        con_filter = []
+        dots = 1
+
+        def next_nw(gener):
+            token = next(gener)
+            while isinstance(token, LWhite):
+                token = next(gener)
+            return token
+
+        while typet not in [LEndL]:
+            if typet in [LIdentifier, LLRBracket]:        # join    identifier
+                if typet == LLRBracket:    # (xxx=ttt)
+                    _, ident = lexer.check_token(next_nw(tokens),
+                                                [LIdentifier])  # (iden
+                    typet, _ = lexer.check_token(next_nw(tokens),
+                                                [LSet, LRRBracket])  # =
+                    if typet == LRRBracket:  # (xxx)
+                        token = Label(str(ident))
+                    elif typet == LSet:    # (xxx = yyyy)
+                        _, value = lexer.check_token(next_nw(tokens),
+                                                    [LIdentifier, LString])
+                        lexer.check_token(next_nw(tokens), [LRRBracket])
+                        token = Label(str(ident), str(value))
+                else:
+                    token = Label(token)
+                if dots == 1:
+                    con_filter.append(token)
+                elif dots == 2:
+                    and_filter.append(con_filter)
+                    con_filter = [token]
+                elif dots == 0 or dots > 2:
+                    raise ParserError("Syntax Error expected \".\" between"
+                                    " Identifier.", lexer.line, lexer.filename,
+                                    lexer.linenum)
+
+                dots = 0
+            elif typet == LDot:         # xxx.xxxx or xxx..xxxx
+                dots += 1
+            elif typet in [LComa, LWhite]:
+                if dots > 0:
+                    raise ParserError("Syntax Error expected identifier between"
+                                    " \".\" and \",\".", lexer.line,
+                                    lexer.filename, lexer.linenum)
+                if and_filter:
+                    if con_filter:
+                        and_filter.append(con_filter)
+                        con_filter = []
+                    or_filters.append(and_filter)
+                    and_filter = []
+                elif con_filter:
+                    or_filters.append([con_filter])
+                    con_filter = []
+                elif typet == LIdentifier:
+                    or_filters.append([[Label(token)]])
+                else:
+                    raise ParserError("Syntax Error expected \",\" between"
+                                    " Identifier.", lexer.line, lexer.filename,
+                                    lexer.linenum)
+                dots = 1
+                token = next(tokens)
+                while isinstance(token, LWhite):
+                    token = next(tokens)
+                typet, token = lexer.check_token(token, [LIdentifier,
+                                                        LComa, LDot,
+                                                        LLRBracket, LEndL])
+                continue
+            typet, token = lexer.check_token(next(tokens), [LIdentifier, LComa,
+                                                            LDot, LLRBracket,
+                                                            LEndL, LWhite])
+        if and_filter:
+            if con_filter:
+                and_filter.append(con_filter)
+                con_filter = []
+            or_filters.append(and_filter)
+            and_filter = []
+        if con_filter:
+            or_filters.append([con_filter])
+            con_filter = []
+        return or_filters
+
     def _parse(self, lexer, node=None, prev_indent=-1):
         if not node:
             node = self.node
@@ -733,6 +715,18 @@ class Parser(object):
         #     1. Escape multiply suffix operators
         #     2. Affect all elements in current block
         suffix = None
+
+        def cmd_tokens(tokens1, tokens2):
+            for x, y in list(zip(tokens1, tokens2)):
+                if x != y:
+                    return False
+            else:
+                return True
+
+        def apply_predict(lexer, node, pre_dict):
+            predict = LApplyPreDict().set_operands(None, pre_dict)
+            node.content += [(lexer.filename, lexer.linenum, predict)]
+            return {}
 
         try:
             while True:
@@ -797,7 +791,7 @@ class Parser(object):
                         # Parse:
                         #    xxx.yyy.(aaa=bbb):
                         identifier = [token] + identifier[:-1]
-                        cfilter = parse_filter(lexer, identifier + [LEndL()])
+                        cfilter = Parser.parse_filter(lexer, identifier + [LEndL()])
                         next_line = lexer.rest_line_as_string_token()
                         if next_line != "":
                             lexer.reader.set_next_line(next_line, indent + 1,
@@ -869,7 +863,7 @@ class Parser(object):
                         tokens = None
                         if not isinstance(token, LEndL):
                             tokens = [token] + lexer.get_until([LEndL])
-                            deps = parse_filter(lexer, tokens)
+                            deps = Parser.parse_filter(lexer, tokens)
                         else:
                             deps = []
 
@@ -1013,7 +1007,7 @@ class Parser(object):
                 elif typet in [LNo, LOnly]:
                     # Parse:
                     #    only/no (filter=text)..aaa.bbb, xxxx
-                    lfilter = parse_filter(lexer, lexer.rest_line())
+                    lfilter = Parser.parse_filter(lexer, lexer.rest_line())
 
                     pre_dict = apply_predict(lexer, node, pre_dict)
                     if typet == LOnly:
@@ -1027,7 +1021,7 @@ class Parser(object):
                     # Parse:
                     #    join (filter=text)..aaa.bbb, xxxx
                     # syntax is the same as for No/Only filters
-                    lfilter = parse_filter(lexer, lexer.rest_line())
+                    lfilter = Parser.parse_filter(lexer, lexer.rest_line())
 
                     pre_dict = apply_predict(lexer, node, pre_dict)
 
@@ -1076,9 +1070,9 @@ class Parser(object):
                 elif typet == LNotCond:
                     # Parse:
                     #    !xxx.yyy.(aaa=bbb): vvv
-                    lfilter = parse_filter(lexer,
-                                           lexer.get_until_no_white(
-                                               [LColon, LEndL])[:-1])
+                    lfilter = Parser.parse_filter(lexer,
+                                                  lexer.get_until_no_white(
+                                                     [LColon, LEndL])[:-1])
                     next_line = lexer.rest_line_as_string_token()
                     if next_line != "":
                         lexer.reader.set_next_line(next_line, indent + 1,
@@ -1294,7 +1288,7 @@ class Parser(object):
             node.failed_cases.appendleft((ctx, ctx_set,
                                           new_external_filters,
                                           new_internal_filters))
-            if len(node.failed_cases) > num_failed_cases:
+            if len(node.failed_cases) > Parser.num_failed_cases:
                 node.failed_cases.pop()
 
         node = node or self.node
@@ -1362,77 +1356,3 @@ class Parser(object):
                 op.apply_to_dict(d)
             postfix_parse(d)
             yield d
-
-
-def convert_data_size(size, default_sufix='B'):
-    """
-    Convert data size from human readable units to an int of arbitrary size.
-
-    :param size: Human readable data size representation (string).
-    :param default_sufix: Default sufix used to represent data.
-    :return: Int with data size in the appropriate order of magnitude.
-    """
-    orders = {'B': 1,
-              'K': 1024,
-              'M': 1024 * 1024,
-              'G': 1024 * 1024 * 1024,
-              'T': 1024 * 1024 * 1024 * 1024,
-              }
-
-    order = re.findall("([BbKkMmGgTt])", size[-1])
-    if not order:
-        size += default_sufix
-        order = [default_sufix]
-
-    return int(float(size[0:-1]) * orders[order[0].upper()])
-
-
-def compare_string(str1, str2):
-    """
-    Compare two int string and return -1, 0, 1.
-    It can compare two memory value even in sufix
-
-    :param str1: The first string
-    :param str2: The second string
-
-    :Return: Return -1, when str1<  str2
-                     0, when str1 = str2
-                     1, when str1>  str2
-    """
-    order1 = re.findall("([BbKkMmGgTt])", str1)
-    order2 = re.findall("([BbKkMmGgTt])", str2)
-    if order1 or order2:
-        value1 = convert_data_size(str1, "M")
-        value2 = convert_data_size(str2, "M")
-    else:
-        value1 = int(str1)
-        value2 = int(str2)
-    if value1 < value2:
-        return -1
-    elif value1 == value2:
-        return 0
-    else:
-        return 1
-
-
-def postfix_parse(dic):
-    tmp_dict = {}
-    for key in dic:
-        # Bypass the case that use tuple as key value
-        if isinstance(key, tuple):
-            continue
-        if key.endswith("_max"):
-            tmp_key = key.split("_max")[0]
-            if (tmp_key not in dic or
-                    compare_string(dic[tmp_key], dic[key]) > 0):
-                tmp_dict[tmp_key] = dic[key]
-        elif key.endswith("_min"):
-            tmp_key = key.split("_min")[0]
-            if (tmp_key not in dic or
-                    compare_string(dic[tmp_key], dic[key]) < 0):
-                tmp_dict[tmp_key] = dic[key]
-        elif key.endswith("_fixed"):
-            tmp_key = key.split("_fixed")[0]
-            tmp_dict[tmp_key] = dic[key]
-    for key in tmp_dict:
-        dic[key] = tmp_dict[key]
