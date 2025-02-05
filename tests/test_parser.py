@@ -420,6 +420,135 @@ class LexerTest(unittest.TestCase):
 
 class ParserTest(unittest.TestCase):
 
+    def setUp(self):
+        self.parser = parser.Parser()
+
+    def test_initialization(self):
+        self.assertIsInstance(self.parser.node, parser.Node)
+        self.assertFalse(self.parser.debug)
+        self.assertFalse(self.parser.defaults)
+        self.assertEqual(self.parser.expand_defaults, [])
+        self.assertIsNone(self.parser.filename)
+        self.assertEqual(self.parser.only_filters, [])
+        self.assertEqual(self.parser.no_filters, [])
+        self.assertEqual(self.parser.assignments, [])
+        self.assertTrue(self.parser.parent_generator)
+
+    def test_parse_file(self):
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(b"variants:\n  - test:\n")
+            temp_file.flush()
+            temp_file_name = temp_file.name
+            self.parser.parse_file(temp_file_name)
+        self.assertEqual(self.parser.node.name, [])
+        self.assertEqual(self.parser.node.content, [])
+        self.assertEqual(len(self.parser.node.children), 1)
+        self.assertEqual(self.parser.node.children[0].name,
+                         [parser.Label("test")])
+        for c in self.parser.node.children[0].content:
+            self.assertEqual(c[0], temp_file_name)
+        self.assertEqual(self.parser.filename, temp_file_name)
+
+    def test_parse_string(self):
+        test_string = "variants:\n  - test:\n"
+        self.parser.parse_string(test_string)
+        self.assertEqual(self.parser.node.name, [])
+        self.assertEqual(self.parser.node.content, [])
+        self.assertEqual(len(self.parser.node.children), 1)
+        self.assertEqual(self.parser.node.children[0].name,
+                         [parser.Label("test")])
+        for content_stage in self.parser.node.children[0].content:
+            self.assertEqual(content_stage[0], "<string>")
+        self.assertIsNone(self.parser.filename)
+
+    def test_only_filter(self):
+        self.parser.only_filter("test_variant")
+        self.assertIn("only test_variant", self.parser.only_filters)
+        self.assertEqual(self.parser.node.name, [])
+        last_content = self.parser.node.content[-1]
+        self.assertIn("test_variant", str(last_content[2]))
+
+    def test_no_filter(self):
+        self.parser.no_filter("test_variant")
+        self.assertIn("no test_variant", self.parser.no_filters)
+        self.assertEqual(self.parser.node.name, [])
+        last_content = self.parser.node.content[-1]
+        self.assertIn("test_variant", str(last_content[2]))
+
+    def test_assign(self):
+        self.parser.assign("key", "value")
+        self.assertIn("key = value", self.parser.assignments)
+        self.assertEqual(self.parser.node.name, [])
+        last_content = self.parser.node.content[-1]
+        self.assertIn("'key': 'value'", str(last_content[2]))
+
+    def test_parse_filter(self):
+        lexer = parser.Lexer(parser.StrReader("test.value"))
+        lexer.set_prev_indent(-1)
+        tokens = lexer.get_until([parser.LEndL])
+        filters = parser.Parser.parse_filter(lexer, tokens[1:])
+        self.assertEqual(len(filters), 1)
+        self.assertEqual(len(filters[0]), 1)
+        self.assertEqual(len(filters[0][0]), 2)
+        self.assertEqual(filters[0][0][0].name, "test")
+        self.assertEqual(filters[0][0][1].name, "value")
+
+    def test_parse_filter_complicated(self):
+        f = "only xxx.yyy..(xxx=333).aaa, ddd (eeee) rrr.aaa"
+        self._compare_string_config(f, [], True)
+        lexer = parser.Lexer(parser.StrReader(f))
+        lexer.set_prev_indent(-1)
+        lexer.get_next_check([parser.LIndent])
+        lexer.get_next_check([parser.LOnly])
+        p_filter = parser.Parser.parse_filter(lexer, lexer.rest_line())
+        self.assertEqual(p_filter,
+                         [[[parser.Label("xxx"),
+                            parser.Label("yyy")],
+                           [parser.Label("xxx", "333"),
+                            parser.Label("aaa")]],
+                          [[parser.Label("ddd")]],
+                          [[parser.Label("eeee")]],
+                          [[parser.Label("rrr"),
+                            parser.Label("aaa")]]],
+                         "Failed to parse filter.")
+
+    def test_get_dicts(self):
+        self.parser.parse_string("variants:\n  - test:\n    key = value\n")
+        dicts = list(self.parser.get_dicts())
+        self.assertEqual(len(dicts), 1)
+        self.assertEqual(dicts[0]["name"], "test")
+        self.assertEqual(dicts[0]["key"], "value")
+
+    def test_get_dicts_plain(self):
+        self.parser.parse_string("variants:\n  - test:\n    key = value\n")
+        dicts = list(self.parser.get_dicts_plain())
+        self.assertEqual(len(dicts), 1)
+        self.assertEqual(dicts[0]["name"], "test")
+        self.assertEqual(dicts[0]["key"], "value")
+
+    def test_get_dicts_joined(self):
+        self.parser.parse_string("variants:\n  - test:\n    key = value\n    join test\n")
+        dicts = list(self.parser.get_dicts())
+        self.assertEqual(len(dicts), 1)
+        self.assertEqual(dicts[0]["name"], "test")
+        self.assertEqual(dicts[0]["key"], "value")
+
+    def test_join_names(self):
+        name1 = "test1.subtest1"
+        name2 = "test1.subtest2"
+        combined_name = self.parser.join_names(name1, name2)
+        self.assertEqual(combined_name, "test1.subtest1.subtest2")
+
+    def test_join_filters(self):
+        self.parser.parse_string("variants:\n  - test1:\n    key1 = value1\n  - test2:\n    key2 = value2\n")
+        onlys = [(self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("test1")]]], "test1")),
+                 (self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("test2")]]], "test2"))]
+        dicts = list(self.parser.join_filters(onlys))
+        self.assertEqual(len(dicts), 1)
+        self.assertEqual(dicts[0]["name"], "test1.test2")
+        self.assertEqual(dicts[0]["key1"], "value1")
+        self.assertEqual(dicts[0]["key2"], "value2")
+
     def _compare_parser_dictionaries(self, parser: parser.Parser, reference: dict[str, str]) -> None:
         """Check if the parser dictionaries match reference ones."""
         result = list(parser.get_dicts())
@@ -1379,26 +1508,6 @@ class ParserTest(unittest.TestCase):
                  'tests': 'test2'},
             ],
             True)
-
-        f = "only xxx.yyy..(xxx=333).aaa, ddd (eeee) rrr.aaa"
-
-        self._compare_string_config(f, [], True)
-
-        lexer = parser.Lexer(parser.StrReader(f))
-        lexer.set_prev_indent(-1)
-        lexer.get_next_check([parser.LIndent])
-        lexer.get_next_check([parser.LOnly])
-        p_filter = parser.Parser.parse_filter(lexer, lexer.rest_line())
-        self.assertEqual(p_filter,
-                         [[[parser.Label("xxx"),
-                            parser.Label("yyy")],
-                           [parser.Label("xxx", "333"),
-                            parser.Label("aaa")]],
-                          [[parser.Label("ddd")]],
-                          [[parser.Label("eeee")]],
-                          [[parser.Label("rrr"),
-                            parser.Label("aaa")]]],
-                         "Failed to parse filter.")
 
     def test_join_substitution(self):
         self._compare_string_config("""
