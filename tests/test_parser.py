@@ -604,6 +604,55 @@ class ParserTest(unittest.TestCase):
                  'x': 'vb'},
             ])
 
+    def test_variant_product(self):
+        self._compare_string_config("""
+            c = abc
+            variants:
+                - a:
+                    x = va
+                - b:
+                    x = vb
+            variants:
+                - 1:
+                    y = w1
+                - 2:
+                    y = w2
+            """,
+            [
+                {'_name_map_file': {'<string>': '1.a'},
+                 '_short_name_map_file': {'<string>': '1.a'},
+                 'c': 'abc',
+                 'dep': [],
+                 'name': '1.a',
+                 'shortname': '1.a',
+                 'x': 'va',
+                 'y': 'w1'},
+                {'_name_map_file': {'<string>': '1.b'},
+                 '_short_name_map_file': {'<string>': '1.b'},
+                'c': 'abc',
+                 'dep': [],
+                 'name': '1.b',
+                 'shortname': '1.b',
+                 'x': 'vb',
+                 'y': 'w1'},
+                {'_name_map_file': {'<string>': '2.a'},
+                 '_short_name_map_file': {'<string>': '2.a'},
+                 'c': 'abc',
+                 'dep': [],
+                 'name': '2.a',
+                 'shortname': '2.a',
+                 'x': 'va',
+                 'y': 'w2'},
+                {'_name_map_file': {'<string>': '2.b'},
+                '_short_name_map_file': {'<string>': '2.b'},
+                 'c': 'abc',
+                 'dep': [],
+                 'name': '2.b',
+                 'shortname': '2.b',
+                 'x': 'vb',
+                 'y': 'w2'},
+            ])
+
     def test_filter_mixing(self):
         self._compare_string_config("""
             variants:
@@ -637,7 +686,7 @@ class ParserTest(unittest.TestCase):
                  'shortname': 'testB.nokvm.unknown_qemu'},
             ])
 
-    def test_name_variant(self):
+    def test_named_variants(self):
         self._compare_string_config("""
             variants tests: # All tests in configuration
               - wait:
@@ -729,7 +778,7 @@ class ParserTest(unittest.TestCase):
                  'virt_system': 'windows'},
             ])
 
-    def test_defaults(self):
+    def test_variant_defaults(self):
         self._compare_string_config("""
             variants tests:
               - wait:
@@ -742,7 +791,7 @@ class ParserTest(unittest.TestCase):
               - test2:
                    run = "test1"
 
-            variants virt_system [ default=  linux ]:
+            variants virt_system [ default=linux ]:
               - linux:
               - @windows:
 
