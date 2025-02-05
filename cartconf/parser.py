@@ -509,11 +509,20 @@ class Parser(object):
 
     num_failed_cases = 5
 
-    def __init__(self, filename=None, defaults=False, expand_defaults=[],
-                 debug=False):
+    def __init__(self, filename: str = None, defaults: bool = False,
+                 expand_defaults: list[str] = None, debug: bool = False) -> None:
+        """
+        Initialize the parser.
+
+        :param filename: file path to parse from
+        :param defaults: whether to use default variants
+        :param expand_defaults: list of default variants to expand
+        :param debug: whether to enable debug logging
+        """
         self.node = Node()
         self.debug = debug
         self.defaults = defaults
+        expand_defaults = expand_defaults or []
         self.expand_defaults = [LIdentifier(x) for x in expand_defaults]
 
         self.filename = filename
@@ -524,11 +533,11 @@ class Parser(object):
         self.no_filters = []
         self.assignments = []
 
-        # get_dicts() - is recursive generator, it can invoke itself,
-        # as well as it can be called outside to get dic list
-        # It is necessary somehow mark top-level generator,
-        # to be able process all variables, do suffix stuff, drops dups, etc....
-        # It can be safely done only on top top level get_dicts()
+        # get_dicts_joined() - is recursive generator, it can invoke itself,
+        # as well as it can be called outside to get dict list
+        # It is necessary somehow to mark the top-level generator,
+        # to be able to process all variables, do suffix stuff, drops dupes, etc....
+        # It can be safely done only on the top level get_dicts_joined()
         # Parent generator will reset this flag
         self.parent_generator = True
 
@@ -539,65 +548,98 @@ class Parser(object):
     def _warn(self, s, *args):
         LOG.warn(s, *args)
 
-    def parse_file(self, filename):
+    def parse_file(self, cfgfile: str) -> None:
         """
         Parse a file.
 
-        :param filename: Path of the configuration file.
+        :param cfgfile: configuration file path to parse
         """
-        self.node.filename = filename
-        self.node = self._parse(Lexer(FileReader(filename)), self.node)
-        self.filename = filename
+        self.node.filename = cfgfile
+        self.node = self._parse(Lexer(FileReader(cfgfile)), self.node)
+        self.filename = cfgfile
 
-    def parse_string(self, s):
+    def parse_string(self, cfgstr: str) -> None:
         """
         Parse a string.
 
-        :param s: String to parse.
+        :param cfgstr: configuration string to parse
         """
         self.node.filename = StrReader("").filename
-        self.node = self._parse(Lexer(StrReader(s)), self.node)
+        self.node = self._parse(Lexer(StrReader(cfgstr)), self.node)
 
-    def only_filter(self, variant):
+    def only_filter(self, variant: str) -> None:
         """
         Apply a only filter programatically and keep track of it.
 
         Equivalent to parse a "only variant" line.
 
-        :param variant: String with the variant name.
+        :param variant: variant name to filter with
         """
         string = "only %s" % variant
         self.only_filters.append(string)
         self.parse_string(string)
 
-    def no_filter(self, variant):
+    def no_filter(self, variant: str) -> None:
         """
         Apply a no filter programatically and keep track of it.
 
         Equivalent to parse a "no variant" line.
 
-        :param variant: String with the variant name.
+        :param variant: variant name to filter with
         """
         string = "no %s" % variant
         self.no_filters.append(string)
         self.parse_string(string)
 
-    def assign(self, key, value):
+    def assign(self, key: str, value: str) -> None:
         """
         Apply an assignment programatically and keep track of it.
 
         Equivalent to parse a "key = value" line.
 
-        :param variant: String with the variant name.
+        :param key: key to assign to
+        :param value: value to assign
         """
         string = "%s = %s" % (key, value)
         self.assignments.append(string)
         self.parse_string(string)
 
     @staticmethod
-    def parse_filter(lexer, tokens):
+    def parse_filter(lexer: Lexer, tokens: list[Token]) -> list[list[Label|Token]]:
         """
-        :return: Parsed filter
+        Parse a filter from a list of tokens.
+
+        :param lexer: lexer to use for parsing
+        :param tokens: list of tokens to parse
+        :returns: parsed filters
+        :raises: :py:class:`ParserError` if the syntax contains errors
+
+        More details on the syntax of the connectives for these filters:
+
+        * ``,`` means ``OR``
+        * ``..`` means ``AND``
+        * ``.`` means ``IMMEDIATELY-FOLLOWED-BY``
+        * ``(xx=yy)`` where ``xx=VARIANT_NAME`` and ``yy=VARIANT_VALUE``
+
+        Example:
+
+        ::
+
+            qcow2..(guest_os=Fedora).14, RHEL.6..raw..boot, smp2..qcow2..migrate..ide
+
+        means match all dicts whose names have:
+
+        ::
+
+            (qcow2 AND ((guest_os=Fedora) IMMEDIATELY-FOLLOWED-BY 14)) OR
+            ((RHEL IMMEDIATELY-FOLLOWED-BY 6) AND raw AND boot) OR
+            (smp2 AND qcow2 AND migrate AND ide)
+
+        Note:
+
+        * ``qcow2..Fedora.14`` is equivalent to ``Fedora.14..qcow2``.
+        * ``qcow2..Fedora.14`` is not equivalent to ``qcow2..14.Fedora``.
+        * ``ide, scsi`` is equivalent to ``scsi, ide``.
         """
         or_filters = []
         tokens = iter(tokens + [LEndL()])
@@ -1091,121 +1133,48 @@ class Parser(object):
                                          lexer.line))
             raise
 
-    def get_dicts(self, node=None, ctx=[], content=[], shortname=[], dep=[], skipdups=True):
+    def get_dicts(self, node: Node = None, ctx: list[list[Label]] = None,
+                  content: list[tuple[str, int, Token]] = None,
+                  shortname: list[str] = None, dep: list[str] = None,
+                  skipdups: bool = True) -> Generator[dict[str, str], None, None]:
         """
-        Process 'join' entry, unpack join filter for node.
+        Get dictionaries from a parser and given or its current node.
 
+        :param node: node to start from
         :param ctx: node labels/names
         :param content: previous content in plain
-        :returns: dictionary
-
-        1) join filter_1 filter_2 ....
-            multiplies all dictionaries as:
-                all_variants_match_filter_1 * all_variants_match_filter_2 * ....
-        2) join only_one_filter
-                == only only_one_filter
-        3) join filter_1 filter_1
-            also works and transforms to:
-                all_variants_match_filter_1 * all_variants_match_filter_1
-            Example:
-                join a
-                join a
-            Transforms into:
-                join a a
+        :param shortname: short name
+        :param dep: dependencies
+        :returns: dictionary generator
         """
         node = node or self.node
+        ctx = ctx or []
+        content = content or []
+        shortname = shortname or []
+        dep = dep or []
+        return self.get_dicts_joined(node, ctx, content, shortname, dep, skipdups)
 
-        # Keep track to know who is a parent generator
-        parent = False
-        if self.parent_generator:
-            # I am parent of the all
-            parent = True
-            # No one else is
-            self.parent_generator = False
-
-        # Node is a current block. It has content, its contents: node.content
-        # Content without joins
-        new_content = []
-
-        # All joins in current node
-        joins = []
-
-        for t in node.content:
-            filename, linenum, obj = t
-
-            if not isinstance(obj, JoinFilter):
-                new_content.append(t)
-                continue
-
-            # Accumulate all joins at one node
-            joins += [t]
-
-        if not joins:
-            # Return generator
-            for d in self.get_dicts_plain(node, ctx, content, shortname, dep):
-                yield drop_suffixes(d, skipdups=skipdups) if parent else d
-        else:
-            # Rewrite all separate joins in one node as many `only'
-            onlys = []
-            for j in joins:
-                filename, linenum, obj = j
-                for word in obj.filter:
-                    f = OnlyFilter([word], str(word))
-                    onlys += [(filename, linenum, f)]
-
-            old_content = node.content[:]
-            node.content = new_content
-            for d in self.multiply_join(onlys, node, ctx, content, shortname, dep):
-                yield drop_suffixes(d, skipdups=skipdups) if parent else d
-            node.content = old_content[:]
-
-    def mk_name(self, n1, n2):
-        """Make name for test. Case: two dics were merged"""
-        common_prefix = n1[:[x[0] == x[1] for x in list(zip(n1, n2))].index(0)]
-        cp = ".".join(common_prefix.split('.')[:-1])
-        p1 = re.sub(r"^"+cp, "", n1)
-        p2 = re.sub(r"^"+cp, "", n2)
-        if cp:
-            name = cp + p1 + p2
-        else:
-            name = p1 + "." + p2
-        return name
-
-    def multiply_join(self, onlys, node=None, ctx=[], content=[], shortname=[], dep=[]):
+    def get_dicts_plain(self, node: Node = None, ctx: list[list[Label]] = None,
+                        content: list[tuple[str, int, Token]] = None,
+                        shortname: list[str] = None, dep: list[str] = None) -> Generator[dict[str, str], None, None]:
         """
-        Multiply all joins. Return dictionaries one by one
-        Each `join' is the same as `only' filter
-        This functions is supposed to be a generator, recursive generator
+        Generate dictionaries from the code parsed so far.
+
+        This should be called after parsing something.
+
+        :param node: node to start from
+        :param ctx: node labels/names
+        :param content: previous content in plain
+        :param shortname: short name
+        :param dep: dependencies
+        :returns: dictionary generator
         """
-        # Current join/only
-        only = onlys[:1]
-        remains = onlys[1:]
+        node = node or self.node
+        ctx = ctx or []
+        content = content or []
+        shortname = shortname or []
+        dep = dep or []
 
-        content_orig = node.content[:]
-        node.content += only
-
-        if not remains:
-            for d in self.get_dicts_plain(node, ctx, content, shortname, dep):
-                yield d
-        else:
-            for d1 in self.get_dicts_plain(node, ctx, content, shortname, dep):
-                # Current frame multiply by all variants from bottom
-                node.content = content_orig
-                for d2 in self.multiply_join(remains, node, ctx, content, shortname, dep):
-
-                    d = d1.copy()
-                    d.update(d2)
-                    d["name"] = self.mk_name(d1["name"], d2["name"])
-                    d["shortname"] = self.mk_name(d1["shortname"], d2["shortname"])
-                    yield d
-
-    def get_dicts_plain(self, node=None, ctx=[], content=[], shortname=[], dep=[]):
-        """
-        Generate dictionaries from the code parsed so far.  This should
-        be called after parsing something.
-
-        :return: A dict generator.
-        """
         def process_content(content, failed_filters):
             # 1. Check that the filters in content are OK with the current
             #    context (ctx).
@@ -1291,7 +1260,6 @@ class Parser(object):
             if len(node.failed_cases) > Parser.num_failed_cases:
                 node.failed_cases.pop()
 
-        node = node or self.node
         # if self.debug:    #Print dict on which is working now.
         #    print(node.dump(0))
         # Update dep
@@ -1337,14 +1305,14 @@ class Parser(object):
         count = 0
         if self.defaults and node.var_name not in self.expand_defaults:
             for n in node.children:
-                for d in self.get_dicts(n, ctx, new_content, shortname, dep):
+                for d in self.get_dicts_joined(n, ctx, new_content, shortname, dep):
                     count += 1
                     yield d
                 if n.default and count:
                     break
         else:
             for n in node.children:
-                for d in self.get_dicts(n, ctx, new_content, shortname, dep):
+                for d in self.get_dicts_joined(n, ctx, new_content, shortname, dep):
                     count += 1
                     yield d
         # Reached leaf?
@@ -1356,3 +1324,148 @@ class Parser(object):
                 op.apply_to_dict(d)
             postfix_parse(d)
             yield d
+
+    def get_dicts_joined(self, node: Node = None, ctx: list[list[Label]] = None,
+                         content: list[tuple[str, int, Token]] = None,
+                         shortname: list[str] = None, dep: list[str] = None,
+                         skipdups: bool = True) -> Generator[dict[str, str], None, None]:
+        """
+        Get possibly joined dictionaries added using only filters.
+
+        :param node: node to start from
+        :param ctx: node labels/names
+        :param content: previous content in plain
+        :param shortname: short name
+        :param dep: dependmake_nameencies
+        :returns: dictionary generator
+
+        Process 'join' entries and unpack join filters in the node.
+
+        Main rules for joining via filters:
+
+        1) join filter_1 filter_2 ....
+            multiplies all dictionaries as:
+                all_variants_match_filter_1 * all_variants_match_filter_2 * ....
+        2) join only_one_filter
+                == only only_one_filter
+        3) join filter_1 filter_1
+            also works and transforms to:
+                all_variants_match_filter_1 * all_variants_match_filter_1
+            Example:
+                join a
+                join a
+            Transforms into:
+                join a a
+        """
+        node = node or self.node
+        ctx = ctx or []
+        content = content or []
+        shortname = shortname or []
+        dep = dep or []
+
+        # Keep track to know who is a parent generator
+        parent = False
+        if self.parent_generator:
+            # I am parent of the all
+            parent = True
+            # No one else is
+            self.parent_generator = False
+
+        # Node is a current block. It has content, its contents: node.content
+        # Content without joins
+        new_content = []
+
+        # All joins in current node
+        joins = []
+
+        for t in node.content:
+            filename, linenum, obj = t
+
+            if not isinstance(obj, JoinFilter):
+                new_content.append(t)
+                continue
+
+            # Accumulate all joins at one node
+            joins += [t]
+
+        if not joins:
+            # Return generator
+            for d in self.get_dicts_plain(node, ctx, content, shortname, dep):
+                yield drop_suffixes(d, skipdups=skipdups) if parent else d
+        else:
+            # Rewrite all separate joins in one node as many `only'
+            onlys = []
+            for j in joins:
+                filename, linenum, obj = j
+                for word in obj.filter:
+                    f = OnlyFilter([word], str(word))
+                    onlys += [(filename, linenum, f)]
+
+            old_content = node.content[:]
+            node.content = new_content
+            for d in self.join_filters(onlys, node, ctx, content, shortname, dep):
+                yield drop_suffixes(d, skipdups=skipdups) if parent else d
+            node.content = old_content[:]
+
+    def join_names(self, n1: str, n2: str) -> str:
+        """
+        Produce a new name from two old names where two dictionaries were joined.
+
+        :param n1: name of the first dictionary
+        :param n2: name of the second dictionary
+        :returns: a new name reusing variant names
+        """
+        common_prefix = n1[:[x[0] == x[1] for x in list(zip(n1, n2))].index(0)]
+        cp = ".".join(common_prefix.split('.')[:-1])
+        p1 = re.sub(r"^"+cp, "", n1)
+        p2 = re.sub(r"^"+cp, "", n2)
+        if cp:
+            name = cp + p1 + p2
+        else:
+            name = p1 + "." + p2
+        return name
+
+    def join_filters(self, onlys: list[tuple[str, int, Filter]],
+                     node: Node = None, ctx: list[list[Label]] = None,
+                     content: list[tuple[str, int, Token]] = None,
+                     shortname: list[str] = None, dep: list[str] = None) -> Generator[dict[str, str], None, None]:
+        """
+        Perform all joins as filters on added dictionaries.
+
+        :param onlys: list of only filters
+        :param node: node to start from
+        :param ctx: node labels/names
+        :param content: previous content in plain
+        :param shortname: short name
+        :param dep: dependencies
+        :returns: (resursive) dictionary generator
+
+        Each `join' is the same as an `only' filter.
+        """
+        node = node or self.node
+        ctx = ctx or []
+        content = content or []
+        shortname = shortname or []
+        dep = dep or []
+
+        # Current join/only
+        only = onlys[:1]
+        remains = onlys[1:]
+
+        content_orig = node.content[:]
+        node.content += only
+
+        if not remains:
+            for d in self.get_dicts_plain(node, ctx, content, shortname, dep):
+                yield d
+        else:
+            for d1 in self.get_dicts_plain(node, ctx, content, shortname, dep):
+                # Current frame multiply by all variants from bottom
+                node.content = content_orig
+                for d2 in self.join_filters(remains, node, ctx, content, shortname, dep):
+
+                    d = d1.copy()
+                    d.update(d2)
+                    d["name"] = self.join_names(d1["name"], d2["name"])
+                    d["shortname"] = self.join_names(d1["shortname"], d2["shortname"])
+                    yield d
