@@ -13,7 +13,11 @@ class Filter(object):
 
     def __init__(self, lfilter):
         self.filter = lfilter
-        # print self.filter
+        #print(lfilter)
+        #print(lfilter[0])
+        #print(lfilter[0][0])
+        #print(lfilter[0][0][0])
+        #print(type(lfilter[0][0][0]))
 
     def match(self, ctx, ctx_set):
         for word in self.filter:  # Go through ,
