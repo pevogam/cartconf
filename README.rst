@@ -1,4 +1,10 @@
-Cartesian configuration format file parser.
+Cartesian configuration format file parser
+==========================================
+
+Cartesian product variantization of parameters.
+
+General syntax notes
+--------------------
 
 Filter syntax:
 
@@ -125,3 +131,108 @@ The base of the definitions come verbatim as follows:
 
     FILTER_NAME -> FILTER_NAME.FILTER_NAME
     FILTER_NAME -> VAR-NAME-F | (VAR-NAME-F=VAR-NAME-F)
+
+Direct parser use
+-----------------
+
+Given the Cartesian configuration file `example.cfg`
+
+::
+
+    variants:
+        - qemu_kvm_fedora:
+
+        - qemu_kvm_centos:
+
+        - qemu_kvm_ubuntu:
+
+        - qemu_kvm_kali:
+
+        - qemu_kvm_windows_7:
+
+        - qemu_kvm_windows_10:
+
+    variants:
+        - vm1:
+            main_vm = vm1
+            only qemu_kvm_centos, qemu_kvm_fedora
+            suffix _vm1
+        - vm2:
+            main_vm = vm2
+            only qemu_kvm_windows_10, qemu_kvm_windows_7
+            suffix _vm2
+        - vm3:
+            main_vm = vm3
+            only qemu_kvm_ubuntu, qemu_kvm_kali
+            suffix _vm3
+
+    join vm1 vm2 vm3
+
+This can be parsed using `cartconf` as
+
+::
+
+    ./parse.py example.cfg
+
+which will result in the following parameter dictionaries
+
+::
+
+    dict    1:  vm1.qemu_kvm_fedora.vm2.qemu_kvm_windows_7.vm3.qemu_kvm_ubuntu
+    dict    2:  vm1.qemu_kvm_fedora.vm2.qemu_kvm_windows_7.vm3.qemu_kvm_kali
+    dict    3:  vm1.qemu_kvm_fedora.vm2.qemu_kvm_windows_10.vm3.qemu_kvm_ubuntu
+    dict    4:  vm1.qemu_kvm_fedora.vm2.qemu_kvm_windows_10.vm3.qemu_kvm_kali
+
+
+Avocado varianter plugin use
+----------------------------
+
+Given the Cartesian configuration file `example.cfg`
+
+::
+
+    word = abc
+    variants:
+        - a:
+            x = va
+            word = ${x}
+        - b:
+            x = vb
+    variants:
+        - 1:
+            y = w1
+        - 2:
+            y = w2
+            word = ${y}
+
+This can be parsed using the `cartconf` avocado varianter plugin as
+
+::
+
+    avocado variants -C example.cfg -o aaa=bbb c=d --only a 1
+
+which will result in a job with the following test parameters
+
+::
+
+    dict    1:  1.a
+        _name_map_file = {'example.cfg': '1.a'}
+        _short_name_map_file = {'example.cfg': '1.a'}
+        aaa = bbb
+        c = d
+        dep = []
+        name = 1.a
+        shortname = 1.a
+        word = va
+        x = va
+        y = w1
+
+Installation
+------------
+
+Currently we recommend simple local installation via pip
+
+::
+
+    cd cartconf
+    pip install -e .
