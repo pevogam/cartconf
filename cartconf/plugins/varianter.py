@@ -21,7 +21,7 @@ from avocado.core.plugin_interfaces import CLI, Init, Varianter
 from avocado.core.tree import TreeNode
 from avocado.core.settings import settings
 
-from cartconf.parser import Parser
+from cartconf.parser import Parser, drop_suffixes
 
 
 class CartConfInit(Init):
@@ -170,6 +170,7 @@ class CartConf(Parser, Varianter):
         :returns: generator of variants
         """
         for d in self.get_dicts():
+            d = drop_suffixes(d)
             yield {
                 "variant_id": d["name"],
                 "variant": TreeNode(d["name"], d),
@@ -194,6 +195,7 @@ class CartConf(Parser, Varianter):
         """
         output = ""
         for i, d in enumerate(self.get_dicts()):
+            d = drop_suffixes(d)
             if summary > 0:
                 output += "dict %4d:  %s" % (i + 1, d["name"]) + "\n"
             else:
