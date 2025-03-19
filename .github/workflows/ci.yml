@@ -20,5 +20,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Run tests
+      - name: Run isolation tests
         run: python3 -m unittest tests/test_*
+
+      - name: Install requirements
+        run: |
+          pip install -r requirements_pip.txt
+          pip install -e .
+
+      - name: Run integration tests
+        run: |
+          ./parse.py -c tests/example.cfg "aaa=bbb" "c=d" "only a" "only 1"
+          avocado variants -C tests/example.cfg -o aaa=bbb c=d --only a 1

@@ -7,7 +7,7 @@ Main runnable module.
 import optparse
 import logging
 
-from .parser import Parser
+from cartconf.parser import Parser
 
 
 LOG = logging.getLogger("avocado." + __name__)
