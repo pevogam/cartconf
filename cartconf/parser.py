@@ -467,11 +467,11 @@ class Lexer(object):
         """
         self.rest_as_string = True
         remainder_string = next(self.generator)
-        if type(remainder_string) != LString:
+        if type(remainder_string) is not LString:
             raise ParserError("Expected string, got %s" % type(remainder_string))
         # skip the end-of-line token
         end_of_line = next(self.generator)
-        if type(end_of_line) != LEndL:
+        if type(end_of_line) is not LEndL:
             raise ParserError("Expected end-of-line, got %s" % type(end_of_line))
         return remainder_string
 
