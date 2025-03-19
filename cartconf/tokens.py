@@ -16,7 +16,7 @@ match_substitute = re.compile(r"\$\{(.+?)\}")
 
 
 class Token(object):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = ""
 
     def __str__(self) -> str:
@@ -35,7 +35,7 @@ class Token(object):
 
 
 class LIndent(Token):
-    __slots__ = ["length"]
+    __slots__: list[str] = ["length"]
     identifier = "indent"
 
     def __init__(self, length: int) -> None:
@@ -49,17 +49,17 @@ class LIndent(Token):
 
 
 class LEndL(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "endl"
 
 
 class LEndBlock(LIndent):
-    __slots__ = []
+    __slots__: list[str] = []
     pass
 
 
 class LIdentifier(str):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "Identifier re([A-Za-z0-9][A-Za-z0-9_-]*)"
 
     def __str__(self) -> str:
@@ -128,127 +128,127 @@ class LIdentifier(str):
 
 
 class LWhite(LIdentifier):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "WhiteSpace re(\\s)"
 
 
 class LString(LIdentifier):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "String re(.+)"
 
 
 class LColon(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = ":"
 
 
 class LVariants(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "variants"
 
 
 class LDot(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "."
 
 
 class LVariant(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "-"
 
 
 class LDefault(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "@"
 
 
 class LOnly(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "only"
 
 
 class LSuffix(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "suffix"
 
 
 class LJoin(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "join"
 
 
 class LNo(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "no"
 
 
 class LCond(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = ""
 
 
 class LNotCond(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "!"
 
 
 class LOr(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = ","
 
 
 class LAnd(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = ".."
 
 
 class LCoc(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "."
 
 
 class LComa(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = ","
 
 
 class LLBracket(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "["
 
 
 class LRBracket(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "]"
 
 
 class LLRBracket(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "("
 
 
 class LRRBracket(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = ")"
 
 
 class LRegExpStart(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "${"
 
 
 class LRegExpStop(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "}"
 
 
 class LInclude(Token):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "include"
 
 
 class LOperators(Token):
-    __slots__ = ["name", "value"]
+    __slots__: list[str] = ["name", "value"]
     identifier = ""
     function = None
 
@@ -261,7 +261,7 @@ class LOperators(Token):
 
 
 class LSet(LOperators):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "="
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
@@ -273,7 +273,7 @@ class LSet(LOperators):
 
 
 class LAppend(LOperators):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "+="
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
@@ -282,7 +282,7 @@ class LAppend(LOperators):
 
 
 class LPrepend(LOperators):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "<="
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
@@ -291,7 +291,7 @@ class LPrepend(LOperators):
 
 
 class LLazySet(LOperators):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "~="
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
@@ -300,7 +300,7 @@ class LLazySet(LOperators):
 
 
 class LRegExpSet(LOperators):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "?="
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
@@ -313,7 +313,7 @@ class LRegExpSet(LOperators):
 
 
 class LRegExpAppend(LOperators):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "?+="
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
@@ -326,7 +326,7 @@ class LRegExpAppend(LOperators):
 
 
 class LRegExpPrepend(LOperators):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "?<="
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
@@ -339,7 +339,7 @@ class LRegExpPrepend(LOperators):
 
 
 class LDel(LOperators):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "del"
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
@@ -354,7 +354,7 @@ class LDel(LOperators):
 
 
 class LApplyPreDict(LOperators):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "apply_pre_dict"
 
     def set_operands(self, name: str, value: dict[str, Any]) -> "LApplyPreDict":
@@ -373,7 +373,7 @@ class LApplyPreDict(LOperators):
 
 
 class LUpdateFileMap(LOperators):
-    __slots__ = ["shortname", "dest"]
+    __slots__: list[str] = ["shortname", "dest"]
     identifier = "update_file_map"
 
     def set_operands(
@@ -403,7 +403,7 @@ class LUpdateFileMap(LOperators):
 
 
 class Suffix(LOperators):
-    __slots__ = []
+    __slots__: list[str] = []
     identifier = "apply_suffix"
 
     def __str__(self) -> str:
@@ -418,7 +418,7 @@ class Suffix(LOperators):
                 return True
         return False
 
-    def apply_to_dict(self, d: dict[str, Any]) -> None:
+    def apply_to_dict(self, d: dict[str|tuple[str], Any]) -> None:
         for key in d.copy():
             if key not in reserved_keys:
                 # Store key as a tuple: (key, suffix1, suffix2, suffix3,....)

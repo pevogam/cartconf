@@ -2,6 +2,9 @@
 Filters module.
 """
 
+from typing import Any
+
+
 #: list of all available manual steps or simply semi-automation tools
 __all__ = [
     "Filter",
@@ -68,7 +71,7 @@ class NoOnlyFilter(Filter):
         super(NoOnlyFilter, self).__init__(lfilter)
         self.line = line
 
-    def __eq__(self, o: "NoOnlyFilter") -> bool:
+    def __eq__(self, o: Any) -> bool:
         if isinstance(o, self.__class__):
             if self.filter == o.filter:
                 return True
@@ -176,7 +179,7 @@ class Condition(NoFilter):
     # pylint: disable=W0231
     def __init__(self, lfilter: list[list[list[str]]], line: str) -> None:
         super(Condition, self).__init__(lfilter, line)
-        self.content = []
+        self.content: list[Any] = []
 
     def __str__(self) -> str:
         return "Condition %s:%s" % (self.filter, self.content)
@@ -191,7 +194,7 @@ class NegativeCondition(OnlyFilter):
     # pylint: disable=W0231
     def __init__(self, lfilter: list[list[list[str]]], line: str) -> None:
         super(NegativeCondition, self).__init__(lfilter, line)
-        self.content = []
+        self.content: list[Any] = []
 
     def __str__(self) -> str:
         return "NotCond %s:%s" % (self.filter, self.content)
