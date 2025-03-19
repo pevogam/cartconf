@@ -5,6 +5,7 @@ import os
 import gzip
 import sys
 import collections
+import tempfile
 
 # simple magic for using scripts within a source tree
 basedir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -18,7 +19,535 @@ testdir = os.path.dirname(__file__)
 testdatadir = os.path.join(testdir, 'data')
 
 
-class CartesianConfigTest(unittest.TestCase):
+class LabelTest(unittest.TestCase):
+
+    def test_initialization(self):
+        label = parser.Label("test")
+        self.assertEqual(label.name, "test")
+        self.assertIsNone(label.var_name)
+        self.assertEqual(label.long_name, "test")
+        self.assertIsNotNone(label.hash_val)
+        self.assertIsNone(label.hash_var)
+
+        label_with_var = parser.Label("test", "var")
+        self.assertEqual(label_with_var.name, "var")
+        self.assertEqual(label_with_var.var_name, "test")
+        self.assertEqual(label_with_var.long_name, "(test=var)")
+        self.assertIsNotNone(label_with_var.hash_val)
+        self.assertIsNotNone(label_with_var.hash_var)
+
+    def test_str(self):
+        label = parser.Label("test")
+        self.assertEqual(str(label), "test")
+
+        label_with_var = parser.Label("test", "var")
+        self.assertEqual(str(label_with_var), "(test=var)")
+
+    def test_repr(self):
+        label = parser.Label("test")
+        self.assertEqual(repr(label), "test")
+
+        label_with_var = parser.Label("test", "var")
+        self.assertEqual(repr(label_with_var), "(test=var)")
+
+    def test_eq(self):
+        label1 = parser.Label("test")
+        label2 = parser.Label("test")
+        label3 = parser.Label("test", "var")
+        label4 = parser.Label("test", "var")
+
+        self.assertTrue(label1 == label2)
+        self.assertFalse(label1 == label3)
+        self.assertFalse(label4 == label1)
+        self.assertTrue(label3 == label4)
+
+    def test_ne(self):
+        label1 = parser.Label("test")
+        label2 = parser.Label("test")
+        label3 = parser.Label("test", "var")
+        label4 = parser.Label("test", "var")
+
+        self.assertFalse(label1 != label2)
+        self.assertTrue(label1 != label3)
+        self.assertTrue(label4 != label1)
+        self.assertFalse(label3 != label4)
+
+    def test_hash(self):
+        label1 = parser.Label("test")
+        label2 = parser.Label("test")
+        label3 = parser.Label("test", "var")
+        label4 = parser.Label("test", "var")
+
+        self.assertEqual(hash(label1), label1.hash_name())
+        self.assertEqual(hash(label1), label1.hash_val)
+        self.assertEqual(hash(label3), label3.hash_name())
+        self.assertEqual(hash(label3), label3.hash_val)
+        self.assertIsNone(label1.hash_var)
+        self.assertEqual(label3.hash_var, label3.hash_variant())
+
+        self.assertEqual(label1.hash_name(), label2.hash_name())
+        self.assertEqual(label1.hash_variant(), label2.hash_variant())
+        self.assertNotEqual(label1.hash_name(), label3.hash_name())
+        self.assertNotEqual(label1.hash_variant(), label3.hash_variant())
+        self.assertEqual(label3.hash_name(), label4.hash_name())
+        self.assertEqual(label3.hash_variant(), label4.hash_variant())
+
+        self.assertGreater(label3.hash_variant(), label3.hash_name())
+
+
+class NodeTest(unittest.TestCase):
+
+    def test_initialization(self):
+        node = parser.Node()
+        self.assertEqual(node.var_name, [])
+        self.assertEqual(node.name, [])
+        self.assertEqual(node.filename, "")
+        self.assertEqual(node.dep, [])
+        self.assertEqual(node.content, [])
+        self.assertEqual(node.children, [])
+        self.assertEqual(node.labels, set())
+        self.assertFalse(node.append_to_shortname)
+        self.assertEqual(node.failed_cases, collections.deque())
+        self.assertFalse(node.default)
+
+    def test_dump(self):
+        node = parser.Node()
+        empty_dumped_str = node.dump(0)
+        self.assertRegex(empty_dumped_str, r"name:.*\nvariable name:.*\ncontent:.*\nfailed cases:.*\n")
+
+        node.name = ["test_name"]
+        node.var_name = ["test_var_name"]
+        node.content = ["test_content"]
+        node.failed_cases.append("test_failed_case")
+        dump_str = node.dump(2)
+        expected_str = "  name: ['test_name']\n  variable name: ['test_var_name']\n  content: ['test_content']\n  failed cases: deque(['test_failed_case'])\n"
+        self.assertEqual(dump_str, expected_str)
+
+    def test_dump_with_recurse(self):
+        parent_node = parser.Node()
+        child_node = parser.Node()
+        child_node.name = ["child_name"]
+        parent_node.children.append(child_node)
+        dump_str = parent_node.dump(0, recurse=True)
+        expected_str = "name: []\nvariable name: []\ncontent: []\nfailed cases: deque([])\n   name: ['child_name']\n   variable name: []\n   content: []\n   failed cases: deque([])\n"
+        self.assertEqual(dump_str, expected_str)
+
+
+class StrReaderTest(unittest.TestCase):
+
+    def test_initialization(self):
+        s = "line1\nline2\n  line3\n"
+        reader = parser.StrReader(s)
+        self.assertEqual(reader.filename, "<string>")
+        self.assertEqual(len(reader._lines), 3)
+        self.assertEqual(reader._lines[0], ("line1", 0, 1))
+        self.assertEqual(reader._lines[1], ("line2", 0, 2))
+        self.assertEqual(reader._lines[2], ("line3", 2, 3))
+
+    def test_initialization_comments(self):
+        s = "line1\nline2\n#line3\n  line4\n//line5\nline6\n"
+        reader = parser.StrReader(s)
+        self.assertEqual(reader.filename, "<string>")
+        self.assertEqual(len(reader._lines), 4)
+        self.assertEqual(reader._lines[0], ("line1", 0, 1))
+        self.assertEqual(reader._lines[1], ("line2", 0, 2))
+        self.assertEqual(reader._lines[2], ("line4", 2, 4))
+        self.assertEqual(reader._lines[3], ("line6", 0, 6))
+
+    def test_initialization_tabs(self):
+        s = "line1\nline2  \n  line3	\n"
+        reader = parser.StrReader(s)
+        self.assertEqual(reader.filename, "<string>")
+        self.assertEqual(len(reader._lines), 3)
+        self.assertEqual(reader._lines[0], ("line1", 0, 1))
+        self.assertEqual(reader._lines[1], ("line2", 0, 2))
+        self.assertEqual(reader._lines[2], ("line3", 2, 3))
+
+    def test_get_next_line(self):
+        s = "line1\nline2\n  line3\n"
+        reader = parser.StrReader(s)
+        line, indent, linenum = reader.get_next_line(-1)
+        self.assertEqual(line, "line1")
+        self.assertEqual(indent, 0)
+        self.assertEqual(linenum, 1)
+        line, indent, linenum = reader.get_next_line(-1)
+        self.assertEqual(line, "line2")
+        self.assertEqual(indent, 0)
+        self.assertEqual(linenum, 2)
+        line, indent, linenum = reader.get_next_line(-1)
+        self.assertEqual(line, "line3")
+        self.assertEqual(indent, 2)
+        self.assertEqual(linenum, 3)
+        line, indent, linenum = reader.get_next_line(-1)
+        self.assertEqual(line, None)
+        self.assertEqual(indent, -1)
+        self.assertEqual(linenum, -1)
+
+    def test_set_next_line(self):
+        s = "line1\nline2\n  line3\n"
+        reader = parser.StrReader(s)
+        reader.set_next_line("new line", 1, 4)
+        line, indent, linenum = reader.get_next_line(-1)
+        self.assertEqual(line, "new line")
+        self.assertEqual(indent, 1)
+        self.assertEqual(linenum, 4)
+        line, indent, linenum = reader.get_next_line(-1)
+        self.assertEqual(line, "line1")
+        self.assertEqual(indent, 0)
+        self.assertEqual(linenum, 1)
+
+
+class FileReaderTest(unittest.TestCase):
+
+    def test_initialization(self):
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(b"line1\nline2\n  line3\n")
+            temp_file.flush()
+            temp_file_name = temp_file.name
+            reader = parser.FileReader(temp_file_name)
+        self.assertEqual(reader.filename, temp_file_name)
+        self.assertEqual(len(reader._lines), 3)
+        self.assertEqual(reader._lines[0], ("line1", 0, 1))
+        self.assertEqual(reader._lines[1], ("line2", 0, 2))
+        self.assertEqual(reader._lines[2], ("line3", 2, 3))
+
+
+class LexerTest(unittest.TestCase):
+
+    def setUp(self):
+        self.sample_text = "variants: test\n  only test\n  no test\n  join test\n  suffix test\n  include test\n  del test\n  !test\n"
+        self.reader = parser.StrReader(self.sample_text)
+        self.lexer = parser.Lexer(self.reader)
+
+    def test_initialization(self):
+        self.assertEqual(self.lexer.reader, self.reader)
+        self.assertEqual(self.lexer.filename, self.reader.filename)
+        self.assertIsNone(self.lexer.line)
+        self.assertEqual(self.lexer.linenum, 0)
+        self.assertFalse(self.lexer.ignore_white)
+        self.assertFalse(self.lexer.rest_as_string)
+        self.assertEqual(self.lexer.match_func_index, 0)
+        self.assertIsNotNone(self.lexer.generator)
+        self.assertEqual(self.lexer.prev_indent, 0)
+        self.assertFalse(self.lexer.fast)
+
+    def test_set_prev_indent(self):
+        self.lexer.set_prev_indent(4)
+        self.assertEqual(self.lexer.prev_indent, 4)
+
+    def test_set_fast(self):
+        self.lexer.set_fast()
+        self.assertTrue(self.lexer.fast)
+
+    def test_set_strict(self):
+        self.lexer.set_strict()
+        self.assertFalse(self.lexer.fast)
+
+    def test_match(self):
+        line = "only test"
+        tokens = list(self.lexer.match(line, 0))
+        self.assertIsInstance(tokens[0], parser.LOnly)
+        self.assertIsInstance(tokens[1], parser.LIdentifier)
+
+    def test_get_lexer(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        generator = self.lexer.get_lexer()
+        token = next(generator)
+        self.assertIsInstance(token, parser.LIndent)
+        token = next(generator)
+        self.assertIsInstance(token, parser.LVariants)
+        token = next(generator)
+        self.assertIsInstance(token, parser.LColon)
+        token = next(generator)
+        self.assertIsInstance(token, parser.LWhite)
+        self.assertEqual(token, "")
+        token = next(generator)
+        self.assertIsInstance(token, parser.LIdentifier)
+        self.assertEqual(token, "test")
+
+    def test_get_until_gen(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        tokens = list(self.lexer.get_until_gen([parser.LOnly]))
+        self.assertIsInstance(tokens[0], parser.LIndent)
+        self.assertIsInstance(tokens[1], parser.LVariants)
+        self.assertIsInstance(tokens[2], parser.LColon)
+        self.assertIsInstance(tokens[3], parser.LWhite)
+        self.assertIsInstance(tokens[4], parser.LIdentifier)
+        self.assertIsInstance(tokens[5], parser.LEndL)
+        self.assertIsInstance(tokens[6], parser.LIndent)
+        self.assertIsInstance(tokens[7], parser.LOnly)
+
+    def test_get_until(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        tokens = self.lexer.get_until([parser.LOnly])
+        self.assertIsInstance(tokens[0], parser.LIndent)
+        self.assertIsInstance(tokens[1], parser.LVariants)
+        self.assertIsInstance(tokens[2], parser.LColon)
+        self.assertIsInstance(tokens[3], parser.LWhite)
+        self.assertIsInstance(tokens[4], parser.LIdentifier)
+        self.assertIsInstance(tokens[5], parser.LEndL)
+        self.assertIsInstance(tokens[6], parser.LIndent)
+        self.assertIsInstance(tokens[7], parser.LOnly)
+
+    def test_flush_until(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        self.lexer.flush_until([parser.LOnly])
+        token = next(self.lexer.generator)
+        self.assertIsInstance(token, parser.LIdentifier)
+        self.assertEqual(token, "test")
+
+    def test_get_until_check(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        tokens = self.lexer.get_until_check(
+            [
+                parser.LIndent,
+                parser.LVariants,
+                parser.LColon,
+                parser.LWhite,
+                parser.LIdentifier,
+                parser.LEndL,
+            ],
+            [parser.LOnly],
+        )
+        self.assertIsInstance(tokens[0], parser.LIndent)
+        self.assertIsInstance(tokens[1], parser.LVariants)
+        self.assertIsInstance(tokens[2], parser.LColon)
+        self.assertIsInstance(tokens[3], parser.LIdentifier)
+        self.assertIsInstance(tokens[4], parser.LIdentifier)
+        self.assertIsInstance(tokens[5], parser.LEndL)
+        self.assertIsInstance(tokens[6], parser.LIndent)
+        self.assertIsInstance(tokens[7], parser.LOnly)
+
+        with self.assertRaises(parser.ParserError):
+            self.lexer.get_until_check(
+                [parser.LColon],
+                [parser.LOnly],
+            )
+
+    def test_get_until_no_white(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        tokens = self.lexer.get_until_no_white([parser.LOnly])
+        self.assertIsInstance(tokens[0], parser.LIndent)
+        self.assertIsInstance(tokens[1], parser.LVariants)
+        self.assertIsInstance(tokens[2], parser.LColon)
+        self.assertIsInstance(tokens[3], parser.LIdentifier)
+        self.assertIsInstance(tokens[4], parser.LEndL)
+        self.assertIsInstance(tokens[5], parser.LIndent)
+        self.assertIsInstance(tokens[6], parser.LOnly)
+
+    def test_rest_line_gen(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        tokens = list(self.lexer.rest_line_gen())
+        self.assertIsInstance(tokens[0], parser.LIndent)
+        self.assertIsInstance(tokens[1], parser.LVariants)
+        self.assertIsInstance(tokens[2], parser.LColon)
+        self.assertIsInstance(tokens[3], parser.LIdentifier)
+
+    def test_rest_line(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        tokens = self.lexer.rest_line()
+        self.assertIsInstance(tokens[0], parser.LIndent)
+        self.assertIsInstance(tokens[1], parser.LVariants)
+        self.assertIsInstance(tokens[2], parser.LColon)
+        self.assertIsInstance(tokens[3], parser.LIdentifier)
+
+    def test_rest_line_no_white(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        tokens = self.lexer.rest_line_no_white()
+        self.assertIsInstance(tokens[0], parser.LIndent)
+        self.assertIsInstance(tokens[1], parser.LVariants)
+        self.assertIsInstance(tokens[2], parser.LColon)
+        # no white space token here
+        self.assertIsInstance(tokens[3], parser.LIdentifier)
+
+    def test_rest_line_as_string_token(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        next(self.lexer.generator)  # indent
+        next(self.lexer.generator)  # variant
+        next(self.lexer.generator)  # colon
+        token = self.lexer.rest_line_as_string_token()
+        self.assertIsInstance(token, parser.LString)
+        self.assertEqual(token, "test")
+
+        # only compatible line endings are possible
+        with self.assertRaises(parser.ParserError):
+            self.lexer.rest_line_as_string_token()
+
+    def test_get_next_check(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        token_type, token = self.lexer.get_next_check([parser.LIndent])
+        self.assertEqual(token_type, parser.LIndent)
+        self.assertIsInstance(token, parser.LIndent)
+
+        with self.assertRaises(parser.ParserError):
+            self.lexer.get_next_check([parser.LIndent])
+
+    def test_get_next_check_nw(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        token_type, token = self.lexer.get_next_check_no_white([parser.LIndent])
+        self.assertEqual(token_type, parser.LIndent)
+        self.assertIsInstance(token, parser.LIndent)
+
+        self.lexer.get_next_check_no_white([parser.LVariants])
+        self.lexer.get_next_check_no_white([parser.LColon])
+        # no white space token here
+        self.lexer.get_next_check_no_white([parser.LIdentifier])
+        self.lexer.get_next_check_no_white([parser.LEndL])
+
+    def test_check_token(self):
+        # TODO: somewhat overcomplicated but the default lexer needs explicit -1 indent
+        self.lexer.set_prev_indent(-1)
+        token = parser.LIdentifier("test")
+        token_type, checked_token = self.lexer.check_token(token, [parser.LIdentifier])
+        self.assertEqual(token_type, parser.LIdentifier)
+        self.assertEqual(checked_token, token)
+
+        with self.assertRaises(parser.ParserError):
+            self.lexer.check_token(token, [parser.LIndent])
+
+
+class ParserTest(unittest.TestCase):
+
+    def setUp(self):
+        self.parser = parser.Parser()
+
+    def test_initialization(self):
+        self.assertIsInstance(self.parser.node, parser.Node)
+        self.assertFalse(self.parser.debug)
+        self.assertFalse(self.parser.defaults)
+        self.assertEqual(self.parser.expand_defaults, [])
+        self.assertIsNone(self.parser.filename)
+        self.assertEqual(self.parser.only_filters, [])
+        self.assertEqual(self.parser.no_filters, [])
+        self.assertEqual(self.parser.assignments, [])
+        self.assertTrue(self.parser.parent_generator)
+
+    def test_parse_file(self):
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(b"variants:\n  - test:\n")
+            temp_file.flush()
+            temp_file_name = temp_file.name
+            self.parser.parse_file(temp_file_name)
+        self.assertEqual(self.parser.node.name, [])
+        self.assertEqual(self.parser.node.content, [])
+        self.assertEqual(len(self.parser.node.children), 1)
+        self.assertEqual(self.parser.node.children[0].name,
+                         [parser.Label("test")])
+        for c in self.parser.node.children[0].content:
+            self.assertEqual(c[0], temp_file_name)
+        self.assertEqual(self.parser.filename, temp_file_name)
+
+    def test_parse_string(self):
+        test_string = "variants:\n  - test:\n"
+        self.parser.parse_string(test_string)
+        self.assertEqual(self.parser.node.name, [])
+        self.assertEqual(self.parser.node.content, [])
+        self.assertEqual(len(self.parser.node.children), 1)
+        self.assertEqual(self.parser.node.children[0].name,
+                         [parser.Label("test")])
+        for content_stage in self.parser.node.children[0].content:
+            self.assertEqual(content_stage[0], "<string>")
+        self.assertIsNone(self.parser.filename)
+
+    def test_only_filter(self):
+        self.parser.only_filter("test_variant")
+        self.assertIn("only test_variant", self.parser.only_filters)
+        self.assertEqual(self.parser.node.name, [])
+        last_content = self.parser.node.content[-1]
+        self.assertIn("test_variant", str(last_content[2]))
+
+    def test_no_filter(self):
+        self.parser.no_filter("test_variant")
+        self.assertIn("no test_variant", self.parser.no_filters)
+        self.assertEqual(self.parser.node.name, [])
+        last_content = self.parser.node.content[-1]
+        self.assertIn("test_variant", str(last_content[2]))
+
+    def test_assign(self):
+        self.parser.assign("key", "value")
+        self.assertIn("key = value", self.parser.assignments)
+        self.assertEqual(self.parser.node.name, [])
+        last_content = self.parser.node.content[-1]
+        self.assertIn("'key': 'value'", str(last_content[2]))
+
+    def test_parse_filter(self):
+        lexer = parser.Lexer(parser.StrReader("test.value"))
+        lexer.set_prev_indent(-1)
+        tokens = lexer.get_until([parser.LEndL])
+        filters = parser.Parser.parse_filter(lexer, tokens[1:])
+        self.assertEqual(len(filters), 1)
+        self.assertEqual(len(filters[0]), 1)
+        self.assertEqual(len(filters[0][0]), 2)
+        self.assertEqual(filters[0][0][0].name, "test")
+        self.assertEqual(filters[0][0][1].name, "value")
+
+    def test_parse_filter_complicated(self):
+        f = "only xxx.yyy..(xxx=333).aaa, ddd (eeee) rrr.aaa"
+        self._compare_string_config(f, [], True)
+        lexer = parser.Lexer(parser.StrReader(f))
+        lexer.set_prev_indent(-1)
+        lexer.get_next_check([parser.LIndent])
+        lexer.get_next_check([parser.LOnly])
+        p_filter = parser.Parser.parse_filter(lexer, lexer.rest_line())
+        self.assertEqual(p_filter,
+                         [[[parser.Label("xxx"),
+                            parser.Label("yyy")],
+                           [parser.Label("xxx", "333"),
+                            parser.Label("aaa")]],
+                          [[parser.Label("ddd")]],
+                          [[parser.Label("eeee")]],
+                          [[parser.Label("rrr"),
+                            parser.Label("aaa")]]],
+                         "Failed to parse filter.")
+
+    def test_get_dicts(self):
+        self.parser.parse_string("variants:\n  - test:\n    key = value\n")
+        dicts = list(self.parser.get_dicts())
+        self.assertEqual(len(dicts), 1)
+        self.assertEqual(dicts[0]["name"], "test")
+        self.assertEqual(dicts[0]["key"], "value")
+
+    def test_get_dicts_plain(self):
+        self.parser.parse_string("variants:\n  - test:\n    key = value\n")
+        dicts = list(self.parser.get_dicts_plain())
+        self.assertEqual(len(dicts), 1)
+        self.assertEqual(dicts[0]["name"], "test")
+        self.assertEqual(dicts[0]["key"], "value")
+
+    def test_get_dicts_joined(self):
+        self.parser.parse_string("variants:\n  - test:\n    key = value\n    join test\n")
+        dicts = list(self.parser.get_dicts())
+        self.assertEqual(len(dicts), 1)
+        self.assertEqual(dicts[0]["name"], "test")
+        self.assertEqual(dicts[0]["key"], "value")
+
+    def test_join_names(self):
+        name1 = "test1.subtest1"
+        name2 = "test1.subtest2"
+        combined_name = self.parser.join_names(name1, name2)
+        self.assertEqual(combined_name, "test1.subtest1.subtest2")
+
+    def test_join_filters(self):
+        self.parser.parse_string("variants:\n  - test1:\n    key1 = value1\n  - test2:\n    key2 = value2\n")
+        onlys = [(self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("test1")]]], "test1")),
+                 (self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("test2")]]], "test2"))]
+        dicts = list(self.parser.join_filters(onlys))
+        self.assertEqual(len(dicts), 1)
+        self.assertEqual(dicts[0]["name"], "test1.test2")
+        self.assertEqual(dicts[0]["key1"], "value1")
+        self.assertEqual(dicts[0]["key2"], "value2")
 
     def _compare_parser_dictionaries(self, parser: parser.Parser, reference: dict[str, str]) -> None:
         """Check if the parser dictionaries match reference ones."""
@@ -75,6 +604,55 @@ class CartesianConfigTest(unittest.TestCase):
                  'x': 'vb'},
             ])
 
+    def test_variant_product(self):
+        self._compare_string_config("""
+            c = abc
+            variants:
+                - a:
+                    x = va
+                - b:
+                    x = vb
+            variants:
+                - 1:
+                    y = w1
+                - 2:
+                    y = w2
+            """,
+            [
+                {'_name_map_file': {'<string>': '1.a'},
+                 '_short_name_map_file': {'<string>': '1.a'},
+                 'c': 'abc',
+                 'dep': [],
+                 'name': '1.a',
+                 'shortname': '1.a',
+                 'x': 'va',
+                 'y': 'w1'},
+                {'_name_map_file': {'<string>': '1.b'},
+                 '_short_name_map_file': {'<string>': '1.b'},
+                'c': 'abc',
+                 'dep': [],
+                 'name': '1.b',
+                 'shortname': '1.b',
+                 'x': 'vb',
+                 'y': 'w1'},
+                {'_name_map_file': {'<string>': '2.a'},
+                 '_short_name_map_file': {'<string>': '2.a'},
+                 'c': 'abc',
+                 'dep': [],
+                 'name': '2.a',
+                 'shortname': '2.a',
+                 'x': 'va',
+                 'y': 'w2'},
+                {'_name_map_file': {'<string>': '2.b'},
+                '_short_name_map_file': {'<string>': '2.b'},
+                 'c': 'abc',
+                 'dep': [],
+                 'name': '2.b',
+                 'shortname': '2.b',
+                 'x': 'vb',
+                 'y': 'w2'},
+            ])
+
     def test_filter_mixing(self):
         self._compare_string_config("""
             variants:
@@ -108,7 +686,7 @@ class CartesianConfigTest(unittest.TestCase):
                  'shortname': 'testB.nokvm.unknown_qemu'},
             ])
 
-    def test_name_variant(self):
+    def test_named_variants(self):
         self._compare_string_config("""
             variants tests: # All tests in configuration
               - wait:
@@ -200,7 +778,7 @@ class CartesianConfigTest(unittest.TestCase):
                  'virt_system': 'windows'},
             ])
 
-    def test_defaults(self):
+    def test_variant_defaults(self):
         self._compare_string_config("""
             variants tests:
               - wait:
@@ -213,7 +791,7 @@ class CartesianConfigTest(unittest.TestCase):
               - test2:
                    run = "test1"
 
-            variants virt_system [ default=  linux ]:
+            variants virt_system [ default=linux ]:
               - linux:
               - @windows:
 
@@ -979,26 +1557,6 @@ class CartesianConfigTest(unittest.TestCase):
                  'tests': 'test2'},
             ],
             True)
-
-        f = "only xxx.yyy..(xxx=333).aaa, ddd (eeee) rrr.aaa"
-
-        self._compare_string_config(f, [], True)
-
-        lexer = parser.Lexer(parser.StrReader(f))
-        lexer.set_prev_indent(-1)
-        lexer.get_next_check([parser.LIndent])
-        lexer.get_next_check([parser.LOnly])
-        p_filter = parser.parse_filter(lexer, lexer.rest_line())
-        self.assertEqual(p_filter,
-                         [[[parser.Label("xxx"),
-                            parser.Label("yyy")],
-                           [parser.Label("xxx", "333"),
-                            parser.Label("aaa")]],
-                          [[parser.Label("ddd")]],
-                          [[parser.Label("eeee")]],
-                          [[parser.Label("rrr"),
-                            parser.Label("aaa")]]],
-                         "Failed to parse filter.")
 
     def test_join_substitution(self):
         self._compare_string_config("""

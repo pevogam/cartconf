@@ -81,7 +81,7 @@ if __name__ == "__main__":
         c.parse_string(s)
 
     if options.debug:
-        c.node.dump(0, True)
+        print(c.node.dump(0, True))
 
     dicts = c.get_dicts(skipdups=options.skipdups)
     print_dicts(options, dicts)

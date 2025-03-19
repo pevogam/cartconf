@@ -5,6 +5,7 @@ Tokens module.
 import collections
 import os
 import re
+from typing import Any
 
 from .exceptions import ParserError
 from .constants import reserved_keys
@@ -23,13 +24,13 @@ class Token(object):
     __slots__ = []
     identifier = ""
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.identifier
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "'%s'" % self.identifier
 
-    def __ne__(self, o):
+    def __ne__(self, o: 'Token') -> bool:
         """
         The comparison is asymmetric due to optimization.
         """
@@ -42,13 +43,13 @@ class LIndent(Token):
     __slots__ = ["length"]
     identifier = "indent"
 
-    def __init__(self, length):
+    def __init__(self, length: int) -> None:
         self.length = length
 
-    def __str__(self):
+    def __str__(self) -> str:
         return "%s %s" % (self.identifier, self.length)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "%s %s" % (self.identifier, self.length)
 
 
@@ -66,19 +67,19 @@ class LIdentifier(str):
     __slots__ = []
     identifier = "Identifier re([A-Za-z0-9][A-Za-z0-9_-]*)"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return super(LIdentifier, self).__str__()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "'%s'" % self
 
-    def checkChar(self, chars):
+    def checkChar(self, chars: str) -> 'LIdentifier':
         for t in self:
             if not (t in chars):
                 raise ParserError("Wrong char %s in %s" % (t, self))
         return self
 
-    def checkAlpha(self):
+    def checkAlpha(self) -> 'LIdentifier':
         """
         Check if string contain only chars
         """
@@ -86,7 +87,7 @@ class LIdentifier(str):
             raise ParserError("Some of chars is not alpha in %s" % (self))
         return self
 
-    def checkNumbers(self):
+    def checkNumbers(self) -> 'LIdentifier':
         """
         Check if string contain only chars
         """
@@ -94,7 +95,7 @@ class LIdentifier(str):
             raise ParserError("Some of chars is not digit in %s" % (self))
         return self
 
-    def checkCharAlpha(self, chars):
+    def checkCharAlpha(self, chars: str) -> 'LIdentifier':
         """
         Check if string contain only chars
         """
@@ -104,7 +105,7 @@ class LIdentifier(str):
                                   "chars [%s] in %s" % (t, chars, self))
         return self
 
-    def checkCharAlphaNum(self, chars):
+    def checkCharAlphaNum(self, chars: str) -> 'LIdentifier':
         """
         Check if string contain only chars
         """
@@ -114,7 +115,7 @@ class LIdentifier(str):
                                   "chars [%s] in %s" % (t, chars, self))
         return self
 
-    def checkCharNumeric(self, chars):
+    def checkCharNumeric(self, chars: str) -> 'LIdentifier':
         """
         Check if string contain only chars
         """
@@ -250,7 +251,7 @@ class LOperators(Token):
     identifier = ""
     function = None
 
-    def set_operands(self, name, value):
+    def set_operands(self, name: str, value: str) -> 'LOperators':
         # pylint: disable=W0201
         self.name = str(name)
         # pylint: disable=W0201
@@ -262,7 +263,7 @@ class LSet(LOperators):
     __slots__ = []
     identifier = "="
 
-    def apply_to_dict(self, d):
+    def apply_to_dict(self, d: dict[str, Any]) -> None:
         """
         :param d: Dictionary for apply value
         """
@@ -274,7 +275,7 @@ class LAppend(LOperators):
     __slots__ = []
     identifier = "+="
 
-    def apply_to_dict(self, d):
+    def apply_to_dict(self, d: dict[str, Any]) -> None:
         if self.name not in reserved_keys:
             d[self.name] = d.get(self.name, "") + _substitution(self.value, d)
 
@@ -283,7 +284,7 @@ class LPrepend(LOperators):
     __slots__ = []
     identifier = "<="
 
-    def apply_to_dict(self, d):
+    def apply_to_dict(self, d: dict[str, Any]) -> None:
         if self.name not in reserved_keys:
             d[self.name] = _substitution(self.value, d) + d.get(self.name, "")
 
@@ -292,7 +293,7 @@ class LLazySet(LOperators):
     __slots__ = []
     identifier = "~="
 
-    def apply_to_dict(self, d):
+    def apply_to_dict(self, d: dict[str, Any]) -> None:
         if self.name not in reserved_keys and self.name not in d:
             d[self.name] = _substitution(self.value, d)
 
@@ -301,7 +302,7 @@ class LRegExpSet(LOperators):
     __slots__ = []
     identifier = "?="
 
-    def apply_to_dict(self, d):
+    def apply_to_dict(self, d: dict[str, Any]) -> None:
         exp = re.compile("%s$" % self.name)
         value = _substitution(self.value, d)
         for key in d:
@@ -314,7 +315,7 @@ class LRegExpAppend(LOperators):
     __slots__ = []
     identifier = "?+="
 
-    def apply_to_dict(self, d):
+    def apply_to_dict(self, d: dict[str, Any]) -> None:
         exp = re.compile("%s$" % self.name)
         value = _substitution(self.value, d)
         for key in d:
@@ -327,7 +328,7 @@ class LRegExpPrepend(LOperators):
     __slots__ = []
     identifier = "?<="
 
-    def apply_to_dict(self, d):
+    def apply_to_dict(self, d: dict[str, Any]) -> None:
         exp = re.compile("%s$" % self.name)
         value = _substitution(self.value, d)
         for key in d:
@@ -340,7 +341,7 @@ class LDel(LOperators):
     __slots__ = []
     identifier = "del"
 
-    def apply_to_dict(self, d):
+    def apply_to_dict(self, d: dict[str, Any]) -> None:
         exp = re.compile("%s$" % self.name)
         keys_to_del = collections.deque()
         for key in d:
@@ -355,18 +356,18 @@ class LApplyPreDict(LOperators):
     __slots__ = []
     identifier = "apply_pre_dict"
 
-    def set_operands(self, name, value):
+    def set_operands(self, name: str, value: dict[str, Any]) -> 'LApplyPreDict':
         self.name = name    # pylint: disable=W0201,E0237
         self.value = value  # pylint: disable=W0201,E0237
         return self
 
-    def apply_to_dict(self, d):
+    def apply_to_dict(self, d: dict[str, Any]) -> None:
         d.update(self.value)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return "Apply_pre_dict: %s" % self.value
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "Apply_pre_dict: %s" % self.value
 
 
@@ -374,7 +375,7 @@ class LUpdateFileMap(LOperators):
     __slots__ = ["shortname", "dest"]
     identifier = "update_file_map"
 
-    def set_operands(self, filename, name, dest="_name_map_file"):
+    def set_operands(self, filename: str, name: str, dest: str = "_name_map_file") -> 'LUpdateFileMap':
         # pylint: disable=W0201
         self.name = name
         # pylint: disable=W0201
@@ -386,7 +387,7 @@ class LUpdateFileMap(LOperators):
         self.dest = dest
         return self
 
-    def apply_to_dict(self, d):
+    def apply_to_dict(self, d: dict[str, Any]) -> None:
         dest = self.dest
         if dest not in d:
             d[dest] = {}
@@ -402,18 +403,19 @@ class Suffix(LOperators):
     __slots__ = []
     identifier = "apply_suffix"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return "Suffix: %s" % (self.value)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "Suffix %s" % (self.value)
 
-    def __eq__(self, o):
+    def __eq__(self, o: Any) -> bool:
         if isinstance(o, self.__class__):
             if self.value == o.value:
                 return True
+        return False
 
-    def apply_to_dict(self, d):
+    def apply_to_dict(self, d: dict[str, Any]) -> None:
         for key in d.copy():
             if key not in reserved_keys:
                 # Store key as a tuple: (key, suffix1, suffix2, suffix3,....)
@@ -446,7 +448,7 @@ tokens_oper = {"": LSet,
 
 
 # Helpers for all tokens
-def _substitution(value, d):
+def _substitution(value: str, d: dict[str, Any]) -> str:
     """
     Only optimization string Template substitute is quite expensive operation.
 

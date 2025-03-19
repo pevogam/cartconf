@@ -6,9 +6,10 @@ import os
 import collections
 import logging
 import re
+from typing import Generator
 
 from .exceptions import *
-from .utils import drop_suffixes
+from .utils import drop_suffixes, apply_suffix_bounds
 from .filters import *
 from .tokens import *
 
@@ -16,77 +17,45 @@ from .tokens import *
 LOG = logging.getLogger('avocado.' + __name__)
 
 
-tokens_oper_re = [r"\=", r"\+\=", r"\<\=", r"\~\=", r"\?\=", r"\?\+\=", r"\?\<\="]
-_ops_exp = re.compile(r"|".join(tokens_oper_re))
-
-
 class Label(object):
     __slots__ = ["name", "var_name", "long_name", "hash_val", "hash_var"]
 
-    def __init__(self, name, next_name=None):
-        if next_name is None:
-            self.name = name
-            self.var_name = None
-        else:
-            self.name = next_name
-            self.var_name = name
-
-        if self.var_name is None:
-            self.long_name = "%s" % (self.name)
-        else:
-            self.long_name = "(%s=%s)" % (self.var_name, self.name)
-
+    def __init__(self, name: str, next_name: str = None) -> None:
+        self.name = next_name if next_name else name
+        self.var_name = name if next_name else None
+        self.long_name = f"({self.var_name}={self.name})" if self.var_name else f"{self.name}"
         self.hash_val = self.hash_name()
-        self.hash_var = None
-        if self.var_name:
-            self.hash_var = self.hash_variant()
+        self.hash_var = self.hash_variant() if self.var_name else None
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.long_name
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.long_name
 
-    def __eq__(self, o):
-        """
-        The comparison is asymmetric due to optimization.
-        """
-        if o.var_name:
-            if self.long_name == o.long_name:
-                return True
-        else:
-            if self.name == o.name:
-                return True
-        return False
+    def __eq__(self, o: "Label") -> bool:
+        """The comparison is asymmetric due to optimization."""
+        return self.long_name == o.long_name if o.var_name else self.name == o.name
 
-    def __ne__(self, o):
-        """
-        The comparison is asymmetric due to optimization.
-        """
-        if o.var_name:
-            if self.long_name != o.long_name:
-                return True
-        else:
-            if self.name != o.name:
-                return True
-        return False
+    def __ne__(self, o: "Label") -> bool:
+        """The comparison is asymmetric due to optimization."""
+        return self.long_name != o.long_name if o.var_name else self.name != o.name
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return self.hash_val
 
-    def hash_name(self):
-        return sum([i + 1 * ord(x) for i, x in enumerate(self.name)])
+    def hash_name(self) -> int:
+        return sum((i + 1) * ord(x) for i, x in enumerate(self.name))
 
-    def hash_variant(self):
-        return sum([i + 1 * ord(x) for i, x in enumerate(str(self))])
+    def hash_variant(self) -> int:
+        return sum((i + 1) * ord(x) for i, x in enumerate(str(self)))
 
 
 class Node(object):
     __slots__ = ["var_name", "name", "filename", "dep", "content", "children",
-                 "labels", "append_to_shortname", "failed_cases", "default",
-                 "q_dict"]
+                 "labels", "append_to_shortname", "failed_cases", "default"]
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.var_name = []
         self.name = []
         self.filename = ""
@@ -98,24 +67,23 @@ class Node(object):
         self.failed_cases = collections.deque()
         self.default = False
 
-    def dump(self, indent, recurse=False):
-        print("%s%s" % (" " * indent, self.name))
-        print("%s%s" % (" " * indent, self.var_name))
-        print("%s%s" % (" " * indent, self))
-        print("%s%s" % (" " * indent, self.content))
-        print("%s%s" % (" " * indent, self.failed_cases))
+    def dump(self, indent: int, recurse: bool = False) -> str:
+        dump_str = f"{' ' * indent}name: {self.name}\n"
+        dump_str += f"{' ' * indent}variable name: {self.var_name}\n"
+        dump_str += f"{' ' * indent}content: {self.content}\n"
+        dump_str += f"{' ' * indent}failed cases: {self.failed_cases}\n"
         if recurse:
             for child in self.children:
-                child.dump(indent + 3, recurse)
+                dump_str += child.dump(indent + 3, recurse)
+        return dump_str
 
 
 class StrReader(object):
-
     """
     Preprocess an input string for easy reading.
     """
 
-    def __init__(self, s):
+    def __init__(self, s: str) -> None:
         """
         Initialize the reader.
 
@@ -129,18 +97,16 @@ class StrReader(object):
             line = line.rstrip().expandtabs()
             stripped_line = line.lstrip()
             indent = len(line) - len(stripped_line)
-            if (not stripped_line or
-                    stripped_line.startswith("#") or
-                    stripped_line.startswith("//")):
+            if not stripped_line or stripped_line.startswith(("#", "//")):
                 continue
             self._lines.append((stripped_line, indent, linenum + 1))
 
-    def get_next_line(self, prev_indent):
+    def get_next_line(self, prev_indent: int) -> tuple[str | None, int, int]:
         """
         Get the next line in the current block.
 
         :param prev_indent: The indentation level of the previous block.
-        :return: (line, indent, linenum), where indent is the line's
+        :returns: (line, indent, linenum), where indent is the line's
             indentation level.  If no line is available, (None, -1, -1) is
             returned.
         """
@@ -156,7 +122,7 @@ class StrReader(object):
         self._line_index += 1
         return line, indent, linenum
 
-    def set_next_line(self, line, indent, linenum):
+    def set_next_line(self, line: str, indent: int, linenum: int) -> None:
         """
         Make the next call to get_next_line() return the given line instead of
         the real next line.
@@ -167,29 +133,34 @@ class StrReader(object):
 
 
 class FileReader(StrReader):
-
     """
     Preprocess an input file for easy reading.
     """
 
-    def __init__(self, filename):
+    def __init__(self, filename: str) -> None:
         """
         Initialize the reader.
 
-        :parse filename: The name of the input file.
+        :param filename: name of the input file
         """
         with open(filename) as f:
-            StrReader.__init__(self, f.read())
+            super().__init__(f.read())
         self.filename = filename
-
-
-spec_iden = "_-"
-spec_oper = "+<?~"
 
 
 class Lexer(object):
 
-    def __init__(self, reader):
+    tokens_oper_re = [r"\=", r"\+\=", r"\<\=", r"\~\=", r"\?\=", r"\?\+\=", r"\?\<\="]
+    _ops_exp = re.compile(r"|".join(tokens_oper_re))
+    spec_iden = "_-"
+    spec_oper = "+<?~"
+
+    def __init__(self, reader: StrReader | FileReader) -> None:
+        """
+        Initialize the lexer.
+
+        :param reader: file or string reader to get lines from
+        """
         self.reader = reader
         self.filename = reader.filename
         self.line = None
@@ -201,16 +172,24 @@ class Lexer(object):
         self.prev_indent = 0
         self.fast = False
 
-    def set_prev_indent(self, prev_indent):
+    def set_prev_indent(self, prev_indent: int) -> None:
         self.prev_indent = prev_indent
 
-    def set_fast(self):
+    def set_fast(self) -> None:
         self.fast = True
 
-    def set_strict(self):
+    def set_strict(self) -> None:
         self.fast = False
 
-    def match(self, line, pos):
+    def match(self, line: str, pos: int) -> Generator[Token, None, None]:
+        """
+        Generate tokens from a string line in order of matching.
+
+        :param line: line to parse from
+        :param pos: position in the line to start parsing from
+        :returns: iterator of tokens that were read
+        :raises: :py:class:`LexerError` if unexpected character is found
+        """
         l0 = line[0]
         chars = ""
         m = None
@@ -263,7 +242,7 @@ class Lexer(object):
 
         if self.fast and pos == 0:  # due to refexp
             cind = line[pos:].find(":")
-            m = _ops_exp.search(line[pos:])
+            m = Lexer._ops_exp.search(line[pos:])
 
         oper = ""
         token = None
@@ -279,9 +258,9 @@ class Lexer(object):
         else:
             li = enumerate(line[pos:], pos)
             for pos, char in li:
-                if char.isalnum() or char in spec_iden:    # alfanum+_-
+                if char.isalnum() or char in Lexer.spec_iden:    # alfanum+_-
                     chars += char
-                elif char in spec_oper:     # <+?=~
+                elif char in Lexer.spec_oper:     # <+?=~
                     if chars:
                         yield LIdentifier(chars)
                         oper = ""
@@ -297,7 +276,7 @@ class Lexer(object):
                                 if not self.ignore_white:
                                     yield LWhite()
                                 break
-                    if char.isalnum() or char in spec_iden:
+                    if char.isalnum() or char in Lexer.spec_iden:
                         chars += char
                     elif char == "=":
                         if oper in tokens_oper:
@@ -319,7 +298,7 @@ class Lexer(object):
                         yield LString(chars)
                     elif char == "#":
                         break
-                    elif char in spec_oper:
+                    elif char in Lexer.spec_oper:
                         oper += char
                     else:
                         raise LexerError("Unexpected character %s on"
@@ -339,7 +318,14 @@ class Lexer(object):
             chars = ""
         yield LEndL()
 
-    def get_lexer(self):
+    def get_lexer(self) -> Generator[Token, None, None]:
+        """
+        Generate tokens from a multi-line reader in order of matching.
+
+        :returns: iterator of tokens that were read
+
+        ..warning:: This generator will never terminate and needs checks for end tokens.
+        """
         cr = self.reader
         indent = 0
         while True:
@@ -354,223 +340,189 @@ class Lexer(object):
             for token in self.match(self.line, 0):
                 yield token
 
-    def get_until_gen(self, end_tokens=None):
-        if end_tokens is None:
-            end_tokens = [LEndL]
+    def get_until_gen(self, end_tokens: list[type] = None) -> Generator[Token, None, None]:
+        """
+        Generate tokens from a multi-line reader terminating at a list of end tokens.
+
+        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
+        :returns: iterator of tokens that were read
+        """
+        end_tokens = end_tokens or [LEndL]
         token = next(self.generator)
         while type(token) not in end_tokens:
             yield token
             token = next(self.generator)
         yield token
 
-    def get_until(self, end_tokens=None):
-        if end_tokens is None:
-            end_tokens = [LEndL]
+    def get_until(self, end_tokens: list[type] = None) -> list[Token]:
+        """
+        Get a full list of tokens from a multi-line reader terminating at a list of end tokens.
+
+        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
+        :returns: list of tokens that were read
+        """
+        end_tokens = end_tokens or [LEndL]
         return [x for x in self.get_until_gen(end_tokens)]
 
-    def flush_until(self, end_tokens=None):
-        if end_tokens is None:
-            end_tokens = [LEndL]
+    def flush_until(self, end_tokens: list[type] = None) -> None:
+        """
+        Skip all tokens until any in a list of end tokens.
+
+        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
+        """
+        end_tokens = end_tokens or [LEndL]
         for _ in self.get_until_gen(end_tokens):
             pass
 
-    def get_until_check(self, lType, end_tokens=None):
+    def get_until_check(self, allowed_tokens: list[type], end_tokens: list[type] = None) -> list[Token]:
         """
-        Read tokens from iterator until get end_tokens or type of token not
-        match ltype
+        Get a full list of tokens from acceptable ones terminating at a list of end ones.
 
-        :param lType: List of allowed tokens
-        :param end_tokens: List of tokens for end reading
-        :return: List of readed tokens.
+        :param allowed_tokens: list of allowed tokens
+        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
+        :returns: list of tokens that were read
+        :raises: :py:class:`ParserError` if unexpected token is found
         """
-        if end_tokens is None:
-            end_tokens = [LEndL]
+        end_tokens = end_tokens or [LEndL]
         tokens = []
-        lType = lType + end_tokens
+        allowed_tokens = allowed_tokens + end_tokens
         for token in self.get_until_gen(end_tokens):
-            if type(token) in lType:
+            if type(token) in allowed_tokens:
                 tokens.append(token)
             else:
-                raise ParserError("Expected %s got %s" % (lType, type(token)),
+                raise ParserError("Expected %s got %s" % (allowed_tokens, type(token)),
                                   self.line, self.filename, self.linenum)
         return tokens
 
-    def get_until_no_white(self, end_tokens=None):
+    def get_until_no_white(self, end_tokens: list[type] = None) -> list[Token]:
         """
-        Read tokens from iterator until get one of end_tokens and strip LWhite
+        Get a full list of tokens terminating at a list of end tokens and strip white space ones.
 
-        :param end_tokens:  List of tokens for end reading
-        :return: List of readed tokens.
+        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
+        :returns: list of tokens that were read
         """
-        if end_tokens is None:
-            end_tokens = [LEndL]
+        end_tokens = end_tokens or [LEndL]
         return [x for x in self.get_until_gen(end_tokens) if not isinstance(x, LWhite)]
 
-    def rest_line_gen(self):
+    def rest_line_gen(self) -> Generator[Token, None, None]:
+        """
+        Generate tokens from the rest of the line terminating only at an end-of-line token.
+        :returns: iterator of tokens that were read
+
+        :returns: iterator of tokens that were read
+        """
         token = next(self.generator)
         while not isinstance(token, LEndL):
             yield token
             token = next(self.generator)
 
-    def rest_line(self):
+    def rest_line(self) -> list[Token]:
+        """
+        Get a full list of tokens from the rest of the line terminating only at an end-of-line token.
+
+        :returns: list of tokens that were read
+        """
         return [x for x in self.rest_line_gen()]
 
-    def rest_line_no_white(self):
+    def rest_line_no_white(self) -> list[Token]:
+        """
+        Get a full list of tokens from the rest of the line and strip white space ones.
+
+        :returns: list of tokens that were read
+        """
         return [x for x in self.rest_line_gen() if not isinstance(x, LWhite)]
 
-    def rest_line_as_LString(self):
-        self.rest_as_string = True
-        lstr = next(self.generator)
-        next(self.generator)
-        return lstr
+    def rest_line_as_string_token(self) -> LString:
+        """
+        Get a string token from the rest of the line.
 
-    def get_next_check(self, lType):
+        :returns: rest of the line as a string token
+        :raises: :py:class:`ParserError` if the remaining token is not a string token
+            followed by an end-of-line token
+        """
+        self.rest_as_string = True
+        remainder_string = next(self.generator)
+        if type(remainder_string) != LString:
+            raise ParserError("Expected string, got %s" % type(remainder_string))
+        # skip the end-of-line token
+        end_of_line = next(self.generator)
+        if type(end_of_line) != LEndL:
+            raise ParserError("Expected end-of-line, got %s" % type(end_of_line))
+        return remainder_string
+
+    def get_next_check(self, allowed_tokens: list[type]) -> tuple[type, Token]:
+        """
+        Get the next token and throw an error if it is not acceptable.
+
+        :param allowed_tokens: list of allowed tokens
+        :returns: the next acceptable token and its type
+        :raises: :py:class:`ParserError` if token is not acceptable
+        """
         token = next(self.generator)
-        if type(token) in lType:
+        if type(token) in allowed_tokens:
             return type(token), token
         else:
             raise ParserError("Expected %s got ['%s']=[%s]" %
-                              ([x.identifier for x in lType],
+                              ([x.identifier for x in allowed_tokens],
                                token.identifier, token),
                               self.line, self.filename, self.linenum)
 
-    def get_next_check_nw(self, lType):
+    def get_next_check_no_white(self, allowed_tokens: list[type]) -> tuple[type, Token]:
+        """
+        Get the next acceptable token and strip white space tokens.
+
+        :param allowed_tokens: list of allowed tokens
+        :returns: the next acceptable token and its type
+        :raises: :py:class:`ParserError` if token is not acceptable
+        """
         token = next(self.generator)
         while isinstance(token, LWhite):
             token = next(self.generator)
-        if type(token) in lType:
+        if type(token) in allowed_tokens:
             return type(token), token
         else:
             raise ParserError("Expected %s got ['%s']" %
-                              ([x.identifier for x in lType],
+                              ([x.identifier for x in allowed_tokens],
                                token.identifier),
                               self.line, self.filename, self.linenum)
 
-    def check_token(self, token, lType):
-        if type(token) in lType:
+    def check_token(self, token: Token, allowed_tokens: list[type]) -> tuple[type, Token]:
+        """
+        Check that a token is acceptable (among the allowed ones).
+
+        :param token: token to check
+        :param allowed_tokens: list of allowed tokens
+        :returns: the acceptable token and its type
+        :raises: :py:class:`ParserError` if token is not acceptable
+        """
+        if type(token) in allowed_tokens:
             return type(token), token
         else:
             raise ParserError("Expected %s got ['%s']" %
-                              ([x.identifier for x in lType],
+                              ([x.identifier for x in allowed_tokens],
                                token.identifier),
                               self.line, self.filename, self.linenum)
-
-
-def next_nw(gener):
-    token = next(gener)
-    while isinstance(token, LWhite):
-        token = next(gener)
-    return token
-
-
-def cmd_tokens(tokens1, tokens2):
-    for x, y in list(zip(tokens1, tokens2)):
-        if x != y:
-            return False
-    else:
-        return True
-
-
-def apply_predict(lexer, node, pre_dict):
-    predict = LApplyPreDict().set_operands(None, pre_dict)
-    node.content += [(lexer.filename, lexer.linenum, predict)]
-    return {}
-
-
-def parse_filter(lexer, tokens):
-    """
-    :return: Parsed filter
-    """
-    or_filters = []
-    tokens = iter(tokens + [LEndL()])
-    typet, token = lexer.check_token(next(tokens), [LIdentifier, LLRBracket,
-                                                    LEndL, LWhite])
-    and_filter = []
-    con_filter = []
-    dots = 1
-    while typet not in [LEndL]:
-        if typet in [LIdentifier, LLRBracket]:        # join    identifier
-            if typet == LLRBracket:    # (xxx=ttt)
-                _, ident = lexer.check_token(next_nw(tokens),
-                                             [LIdentifier])  # (iden
-                typet, _ = lexer.check_token(next_nw(tokens),
-                                             [LSet, LRRBracket])  # =
-                if typet == LRRBracket:  # (xxx)
-                    token = Label(str(ident))
-                elif typet == LSet:    # (xxx = yyyy)
-                    _, value = lexer.check_token(next_nw(tokens),
-                                                 [LIdentifier, LString])
-                    lexer.check_token(next_nw(tokens), [LRRBracket])
-                    token = Label(str(ident), str(value))
-            else:
-                token = Label(token)
-            if dots == 1:
-                con_filter.append(token)
-            elif dots == 2:
-                and_filter.append(con_filter)
-                con_filter = [token]
-            elif dots == 0 or dots > 2:
-                raise ParserError("Syntax Error expected \".\" between"
-                                  " Identifier.", lexer.line, lexer.filename,
-                                  lexer.linenum)
-
-            dots = 0
-        elif typet == LDot:         # xxx.xxxx or xxx..xxxx
-            dots += 1
-        elif typet in [LComa, LWhite]:
-            if dots > 0:
-                raise ParserError("Syntax Error expected identifier between"
-                                  " \".\" and \",\".", lexer.line,
-                                  lexer.filename, lexer.linenum)
-            if and_filter:
-                if con_filter:
-                    and_filter.append(con_filter)
-                    con_filter = []
-                or_filters.append(and_filter)
-                and_filter = []
-            elif con_filter:
-                or_filters.append([con_filter])
-                con_filter = []
-            elif typet == LIdentifier:
-                or_filters.append([[Label(token)]])
-            else:
-                raise ParserError("Syntax Error expected \",\" between"
-                                  " Identifier.", lexer.line, lexer.filename,
-                                  lexer.linenum)
-            dots = 1
-            token = next(tokens)
-            while isinstance(token, LWhite):
-                token = next(tokens)
-            typet, token = lexer.check_token(token, [LIdentifier,
-                                                     LComa, LDot,
-                                                     LLRBracket, LEndL])
-            continue
-        typet, token = lexer.check_token(next(tokens), [LIdentifier, LComa,
-                                                        LDot, LLRBracket,
-                                                        LEndL, LWhite])
-    if and_filter:
-        if con_filter:
-            and_filter.append(con_filter)
-            con_filter = []
-        or_filters.append(and_filter)
-        and_filter = []
-    if con_filter:
-        or_filters.append([con_filter])
-        con_filter = []
-    return or_filters
-
-
-num_failed_cases = 5
 
 
 class Parser(object):
     # pylint: disable=W0102
 
-    def __init__(self, filename=None, defaults=False, expand_defaults=[],
-                 debug=False):
+    num_failed_cases = 5
+
+    def __init__(self, filename: str = None, defaults: bool = False,
+                 expand_defaults: list[str] = None, debug: bool = False) -> None:
+        """
+        Initialize the parser.
+
+        :param filename: file path to parse from
+        :param defaults: whether to use default variants
+        :param expand_defaults: list of default variants to expand
+        :param debug: whether to enable debug logging
+        """
         self.node = Node()
         self.debug = debug
         self.defaults = defaults
+        expand_defaults = expand_defaults or []
         self.expand_defaults = [LIdentifier(x) for x in expand_defaults]
 
         self.filename = filename
@@ -581,11 +533,11 @@ class Parser(object):
         self.no_filters = []
         self.assignments = []
 
-        # get_dicts() - is recursive generator, it can invoke itself,
-        # as well as it can be called outside to get dic list
-        # It is necessary somehow mark top-level generator,
-        # to be able process all variables, do suffix stuff, drops dups, etc....
-        # It can be safely done only on top top level get_dicts()
+        # get_dicts_joined() - is recursive generator, it can invoke itself,
+        # as well as it can be called outside to get dict list
+        # It is necessary somehow to mark the top-level generator,
+        # to be able to process all variables, do suffix stuff, drops dupes, etc....
+        # It can be safely done only on the top level get_dicts_joined()
         # Parent generator will reset this flag
         self.parent_generator = True
 
@@ -596,60 +548,183 @@ class Parser(object):
     def _warn(self, s, *args):
         LOG.warn(s, *args)
 
-    def parse_file(self, filename):
+    def parse_file(self, cfgfile: str) -> None:
         """
         Parse a file.
 
-        :param filename: Path of the configuration file.
+        :param cfgfile: configuration file path to parse
         """
-        self.node.filename = filename
-        self.node = self._parse(Lexer(FileReader(filename)), self.node)
-        self.filename = filename
+        self.node.filename = cfgfile
+        self.node = self._parse(Lexer(FileReader(cfgfile)), self.node)
+        self.filename = cfgfile
 
-    def parse_string(self, s):
+    def parse_string(self, cfgstr: str) -> None:
         """
         Parse a string.
 
-        :param s: String to parse.
+        :param cfgstr: configuration string to parse
         """
         self.node.filename = StrReader("").filename
-        self.node = self._parse(Lexer(StrReader(s)), self.node)
+        self.node = self._parse(Lexer(StrReader(cfgstr)), self.node)
 
-    def only_filter(self, variant):
+    def only_filter(self, variant: str) -> None:
         """
         Apply a only filter programatically and keep track of it.
 
         Equivalent to parse a "only variant" line.
 
-        :param variant: String with the variant name.
+        :param variant: variant name to filter with
         """
         string = "only %s" % variant
         self.only_filters.append(string)
         self.parse_string(string)
 
-    def no_filter(self, variant):
+    def no_filter(self, variant: str) -> None:
         """
         Apply a no filter programatically and keep track of it.
 
         Equivalent to parse a "no variant" line.
 
-        :param variant: String with the variant name.
+        :param variant: variant name to filter with
         """
         string = "no %s" % variant
         self.no_filters.append(string)
         self.parse_string(string)
 
-    def assign(self, key, value):
+    def assign(self, key: str, value: str) -> None:
         """
         Apply an assignment programatically and keep track of it.
 
         Equivalent to parse a "key = value" line.
 
-        :param variant: String with the variant name.
+        :param key: key to assign to
+        :param value: value to assign
         """
         string = "%s = %s" % (key, value)
         self.assignments.append(string)
         self.parse_string(string)
+
+    @staticmethod
+    def parse_filter(lexer: Lexer, tokens: list[Token]) -> list[list[Label|Token]]:
+        """
+        Parse a filter from a list of tokens.
+
+        :param lexer: lexer to use for parsing
+        :param tokens: list of tokens to parse
+        :returns: parsed filters
+        :raises: :py:class:`ParserError` if the syntax contains errors
+
+        More details on the syntax of the connectives for these filters:
+
+        * ``,`` means ``OR``
+        * ``..`` means ``AND``
+        * ``.`` means ``IMMEDIATELY-FOLLOWED-BY``
+        * ``(xx=yy)`` where ``xx=VARIANT_NAME`` and ``yy=VARIANT_VALUE``
+
+        Example:
+
+        ::
+
+            qcow2..(guest_os=Fedora).14, RHEL.6..raw..boot, smp2..qcow2..migrate..ide
+
+        means match all dicts whose names have:
+
+        ::
+
+            (qcow2 AND ((guest_os=Fedora) IMMEDIATELY-FOLLOWED-BY 14)) OR
+            ((RHEL IMMEDIATELY-FOLLOWED-BY 6) AND raw AND boot) OR
+            (smp2 AND qcow2 AND migrate AND ide)
+
+        Note:
+
+        * ``qcow2..Fedora.14`` is equivalent to ``Fedora.14..qcow2``.
+        * ``qcow2..Fedora.14`` is not equivalent to ``qcow2..14.Fedora``.
+        * ``ide, scsi`` is equivalent to ``scsi, ide``.
+        """
+        or_filters = []
+        tokens = iter(tokens + [LEndL()])
+        typet, token = lexer.check_token(next(tokens), [LIdentifier, LLRBracket,
+                                                        LEndL, LWhite])
+        and_filter = []
+        con_filter = []
+        dots = 1
+
+        def next_nw(gener):
+            token = next(gener)
+            while isinstance(token, LWhite):
+                token = next(gener)
+            return token
+
+        while typet not in [LEndL]:
+            if typet in [LIdentifier, LLRBracket]:        # join    identifier
+                if typet == LLRBracket:    # (xxx=ttt)
+                    _, ident = lexer.check_token(next_nw(tokens),
+                                                [LIdentifier])  # (iden
+                    typet, _ = lexer.check_token(next_nw(tokens),
+                                                [LSet, LRRBracket])  # =
+                    if typet == LRRBracket:  # (xxx)
+                        token = Label(str(ident))
+                    elif typet == LSet:    # (xxx = yyyy)
+                        _, value = lexer.check_token(next_nw(tokens),
+                                                    [LIdentifier, LString])
+                        lexer.check_token(next_nw(tokens), [LRRBracket])
+                        token = Label(str(ident), str(value))
+                else:
+                    token = Label(token)
+                if dots == 1:
+                    con_filter.append(token)
+                elif dots == 2:
+                    and_filter.append(con_filter)
+                    con_filter = [token]
+                elif dots == 0 or dots > 2:
+                    raise ParserError("Syntax Error expected \".\" between"
+                                    " Identifier.", lexer.line, lexer.filename,
+                                    lexer.linenum)
+
+                dots = 0
+            elif typet == LDot:         # xxx.xxxx or xxx..xxxx
+                dots += 1
+            elif typet in [LComa, LWhite]:
+                if dots > 0:
+                    raise ParserError("Syntax Error expected identifier between"
+                                    " \".\" and \",\".", lexer.line,
+                                    lexer.filename, lexer.linenum)
+                if and_filter:
+                    if con_filter:
+                        and_filter.append(con_filter)
+                        con_filter = []
+                    or_filters.append(and_filter)
+                    and_filter = []
+                elif con_filter:
+                    or_filters.append([con_filter])
+                    con_filter = []
+                elif typet == LIdentifier:
+                    or_filters.append([[Label(token)]])
+                else:
+                    raise ParserError("Syntax Error expected \",\" between"
+                                    " Identifier.", lexer.line, lexer.filename,
+                                    lexer.linenum)
+                dots = 1
+                token = next(tokens)
+                while isinstance(token, LWhite):
+                    token = next(tokens)
+                typet, token = lexer.check_token(token, [LIdentifier,
+                                                        LComa, LDot,
+                                                        LLRBracket, LEndL])
+                continue
+            typet, token = lexer.check_token(next(tokens), [LIdentifier, LComa,
+                                                            LDot, LLRBracket,
+                                                            LEndL, LWhite])
+        if and_filter:
+            if con_filter:
+                and_filter.append(con_filter)
+                con_filter = []
+            or_filters.append(and_filter)
+            and_filter = []
+        if con_filter:
+            or_filters.append([con_filter])
+            con_filter = []
+        return or_filters
 
     def _parse(self, lexer, node=None, prev_indent=-1):
         if not node:
@@ -682,6 +757,18 @@ class Parser(object):
         #     1. Escape multiply suffix operators
         #     2. Affect all elements in current block
         suffix = None
+
+        def cmd_tokens(tokens1, tokens2):
+            for x, y in list(zip(tokens1, tokens2)):
+                if x != y:
+                    return False
+            else:
+                return True
+
+        def apply_predict(lexer, node, pre_dict):
+            predict = LApplyPreDict().set_operands(None, pre_dict)
+            node.content += [(lexer.filename, lexer.linenum, predict)]
+            return {}
 
         try:
             while True:
@@ -746,8 +833,8 @@ class Parser(object):
                         # Parse:
                         #    xxx.yyy.(aaa=bbb):
                         identifier = [token] + identifier[:-1]
-                        cfilter = parse_filter(lexer, identifier + [LEndL()])
-                        next_line = lexer.rest_line_as_LString()
+                        cfilter = Parser.parse_filter(lexer, identifier + [LEndL()])
+                        next_line = lexer.rest_line_as_string_token()
                         if next_line != "":
                             lexer.reader.set_next_line(next_line, indent + 1,
                                                        lexer.linenum)
@@ -781,16 +868,16 @@ class Parser(object):
                     while True:
                         lexer.set_prev_indent(var_indent)
                         # Get token from lexer and check syntax.
-                        typet, token = lexer.get_next_check_nw([LIdentifier,
-                                                                LDefault,
-                                                                LIndent,
-                                                                LEndBlock])
+                        typet, token = lexer.get_next_check_no_white([LIdentifier,
+                                                                      LDefault,
+                                                                      LIndent,
+                                                                      LEndBlock])
                         if typet == LEndBlock:
                             break
 
                         if typet == LIndent:
-                            lexer.get_next_check_nw([LVariant])
-                            typet, token = lexer.get_next_check_nw(
+                            lexer.get_next_check_no_white([LVariant])
+                            typet, token = lexer.get_next_check_no_white(
                                 [LIdentifier,
                                  LDefault])
 
@@ -818,7 +905,7 @@ class Parser(object):
                         tokens = None
                         if not isinstance(token, LEndL):
                             tokens = [token] + lexer.get_until([LEndL])
-                            deps = parse_filter(lexer, tokens)
+                            deps = Parser.parse_filter(lexer, tokens)
                         else:
                             deps = []
 
@@ -918,9 +1005,9 @@ class Parser(object):
                                                   lexer.linenum)
                             var_name = tokens[0]
                         elif vtypet == LLBracket:  # [
-                            _, ident = lexer.get_next_check_nw([LIdentifier])
-                            typet, _ = lexer.get_next_check_nw([LSet,
-                                                                LRBracket])
+                            _, ident = lexer.get_next_check_no_white([LIdentifier])
+                            typet, _ = lexer.get_next_check_no_white([LSet,
+                                                                      LRBracket])
                             if typet == LRBracket:  # [xxx]
                                 if ident not in meta:
                                     meta[ident] = []
@@ -939,7 +1026,7 @@ class Parser(object):
                                                       lexer.filename,
                                                       lexer.linenum)
 
-                        tokens = lexer.get_next_check_nw(varianst_allowed_in)
+                        tokens = lexer.get_next_check_no_white(varianst_allowed_in)
                         vtypet = type(tokens[-1])
 
                     if "default" in meta:
@@ -955,14 +1042,14 @@ class Parser(object):
                         raise ParserError("Syntax ERROR expected \":\"",
                                           lexer.line, lexer.filename,
                                           lexer.linenum)
-                    lexer.get_next_check_nw([LEndL])
+                    lexer.get_next_check_no_white([LEndL])
                     allowed = variants_allowed
                     var_indent = indent
 
                 elif typet in [LNo, LOnly]:
                     # Parse:
                     #    only/no (filter=text)..aaa.bbb, xxxx
-                    lfilter = parse_filter(lexer, lexer.rest_line())
+                    lfilter = Parser.parse_filter(lexer, lexer.rest_line())
 
                     pre_dict = apply_predict(lexer, node, pre_dict)
                     if typet == LOnly:
@@ -976,7 +1063,7 @@ class Parser(object):
                     # Parse:
                     #    join (filter=text)..aaa.bbb, xxxx
                     # syntax is the same as for No/Only filters
-                    lfilter = parse_filter(lexer, lexer.rest_line())
+                    lfilter = Parser.parse_filter(lexer, lexer.rest_line())
 
                     pre_dict = apply_predict(lexer, node, pre_dict)
 
@@ -996,7 +1083,7 @@ class Parser(object):
                 elif typet == LInclude:
                     # Parse:
                     #    include relative file patch to working directory.
-                    path = lexer.rest_line_as_LString()
+                    path = lexer.rest_line_as_string_token()
                     filename = os.path.expanduser(path)
                     if (isinstance(lexer.reader, FileReader) and
                             not os.path.isabs(filename)):
@@ -1014,8 +1101,8 @@ class Parser(object):
                 elif typet == LDel:
                     # Parse:
                     #    del operand
-                    _, to_del = lexer.get_next_check_nw([LIdentifier])
-                    lexer.get_next_check_nw([LEndL])
+                    _, to_del = lexer.get_next_check_no_white([LIdentifier])
+                    lexer.get_next_check_no_white([LEndL])
                     token.set_operands(to_del, None)
 
                     pre_dict = apply_predict(lexer, node, pre_dict)
@@ -1025,10 +1112,10 @@ class Parser(object):
                 elif typet == LNotCond:
                     # Parse:
                     #    !xxx.yyy.(aaa=bbb): vvv
-                    lfilter = parse_filter(lexer,
-                                           lexer.get_until_no_white(
-                                               [LColon, LEndL])[:-1])
-                    next_line = lexer.rest_line_as_LString()
+                    lfilter = Parser.parse_filter(lexer,
+                                                  lexer.get_until_no_white(
+                                                     [LColon, LEndL])[:-1])
+                    next_line = lexer.rest_line_as_string_token()
                     if next_line != "":
                         lexer.reader.set_next_line(next_line, indent + 1,
                                                    lexer.linenum)
@@ -1046,121 +1133,48 @@ class Parser(object):
                                          lexer.line))
             raise
 
-    def get_dicts(self, node=None, ctx=[], content=[], shortname=[], dep=[], skipdups=True):
+    def get_dicts(self, node: Node = None, ctx: list[list[Label]] = None,
+                  content: list[tuple[str, int, Token]] = None,
+                  shortname: list[str] = None, dep: list[str] = None,
+                  skipdups: bool = True) -> Generator[dict[str, str], None, None]:
         """
-        Process 'join' entry, unpack join filter for node.
+        Get dictionaries from a parser and given or its current node.
 
+        :param node: node to start from
         :param ctx: node labels/names
         :param content: previous content in plain
-        :returns: dictionary
-
-        1) join filter_1 filter_2 ....
-            multiplies all dictionaries as:
-                all_variants_match_filter_1 * all_variants_match_filter_2 * ....
-        2) join only_one_filter
-                == only only_one_filter
-        3) join filter_1 filter_1
-            also works and transforms to:
-                all_variants_match_filter_1 * all_variants_match_filter_1
-            Example:
-                join a
-                join a
-            Transforms into:
-                join a a
+        :param shortname: short name
+        :param dep: dependencies
+        :returns: dictionary generator
         """
         node = node or self.node
+        ctx = ctx or []
+        content = content or []
+        shortname = shortname or []
+        dep = dep or []
+        return self.get_dicts_joined(node, ctx, content, shortname, dep, skipdups)
 
-        # Keep track to know who is a parent generator
-        parent = False
-        if self.parent_generator:
-            # I am parent of the all
-            parent = True
-            # No one else is
-            self.parent_generator = False
-
-        # Node is a current block. It has content, its contents: node.content
-        # Content without joins
-        new_content = []
-
-        # All joins in current node
-        joins = []
-
-        for t in node.content:
-            filename, linenum, obj = t
-
-            if not isinstance(obj, JoinFilter):
-                new_content.append(t)
-                continue
-
-            # Accumulate all joins at one node
-            joins += [t]
-
-        if not joins:
-            # Return generator
-            for d in self.get_dicts_plain(node, ctx, content, shortname, dep):
-                yield drop_suffixes(d, skipdups=skipdups) if parent else d
-        else:
-            # Rewrite all separate joins in one node as many `only'
-            onlys = []
-            for j in joins:
-                filename, linenum, obj = j
-                for word in obj.filter:
-                    f = OnlyFilter([word], str(word))
-                    onlys += [(filename, linenum, f)]
-
-            old_content = node.content[:]
-            node.content = new_content
-            for d in self.multiply_join(onlys, node, ctx, content, shortname, dep):
-                yield drop_suffixes(d, skipdups=skipdups) if parent else d
-            node.content = old_content[:]
-
-    def mk_name(self, n1, n2):
-        """Make name for test. Case: two dics were merged"""
-        common_prefix = n1[:[x[0] == x[1] for x in list(zip(n1, n2))].index(0)]
-        cp = ".".join(common_prefix.split('.')[:-1])
-        p1 = re.sub(r"^"+cp, "", n1)
-        p2 = re.sub(r"^"+cp, "", n2)
-        if cp:
-            name = cp + p1 + p2
-        else:
-            name = p1 + "." + p2
-        return name
-
-    def multiply_join(self, onlys, node=None, ctx=[], content=[], shortname=[], dep=[]):
+    def get_dicts_plain(self, node: Node = None, ctx: list[list[Label]] = None,
+                        content: list[tuple[str, int, Token]] = None,
+                        shortname: list[str] = None, dep: list[str] = None) -> Generator[dict[str, str], None, None]:
         """
-        Multiply all joins. Return dictionaries one by one
-        Each `join' is the same as `only' filter
-        This functions is supposed to be a generator, recursive generator
+        Generate dictionaries from the code parsed so far.
+
+        This should be called after parsing something.
+
+        :param node: node to start from
+        :param ctx: node labels/names
+        :param content: previous content in plain
+        :param shortname: short name
+        :param dep: dependencies
+        :returns: dictionary generator
         """
-        # Current join/only
-        only = onlys[:1]
-        remains = onlys[1:]
+        node = node or self.node
+        ctx = ctx or []
+        content = content or []
+        shortname = shortname or []
+        dep = dep or []
 
-        content_orig = node.content[:]
-        node.content += only
-
-        if not remains:
-            for d in self.get_dicts_plain(node, ctx, content, shortname, dep):
-                yield d
-        else:
-            for d1 in self.get_dicts_plain(node, ctx, content, shortname, dep):
-                # Current frame multiply by all variants from bottom
-                node.content = content_orig
-                for d2 in self.multiply_join(remains, node, ctx, content, shortname, dep):
-
-                    d = d1.copy()
-                    d.update(d2)
-                    d["name"] = self.mk_name(d1["name"], d2["name"])
-                    d["shortname"] = self.mk_name(d1["shortname"], d2["shortname"])
-                    yield d
-
-    def get_dicts_plain(self, node=None, ctx=[], content=[], shortname=[], dep=[]):
-        """
-        Generate dictionaries from the code parsed so far.  This should
-        be called after parsing something.
-
-        :return: A dict generator.
-        """
         def process_content(content, failed_filters):
             # 1. Check that the filters in content are OK with the current
             #    context (ctx).
@@ -1243,12 +1257,11 @@ class Parser(object):
             node.failed_cases.appendleft((ctx, ctx_set,
                                           new_external_filters,
                                           new_internal_filters))
-            if len(node.failed_cases) > num_failed_cases:
+            if len(node.failed_cases) > Parser.num_failed_cases:
                 node.failed_cases.pop()
 
-        node = node or self.node
         # if self.debug:    #Print dict on which is working now.
-        #    node.dump(0)
+        #    print(node.dump(0))
         # Update dep
         for d in node.dep:
             for dd in d:
@@ -1292,14 +1305,14 @@ class Parser(object):
         count = 0
         if self.defaults and node.var_name not in self.expand_defaults:
             for n in node.children:
-                for d in self.get_dicts(n, ctx, new_content, shortname, dep):
+                for d in self.get_dicts_joined(n, ctx, new_content, shortname, dep):
                     count += 1
                     yield d
                 if n.default and count:
                     break
         else:
             for n in node.children:
-                for d in self.get_dicts(n, ctx, new_content, shortname, dep):
+                for d in self.get_dicts_joined(n, ctx, new_content, shortname, dep):
                     count += 1
                     yield d
         # Reached leaf?
@@ -1309,79 +1322,150 @@ class Parser(object):
                  "shortname": ".".join([str(sn.name) for sn in shortname])}
             for _, _, op in new_content:
                 op.apply_to_dict(d)
-            postfix_parse(d)
+            apply_suffix_bounds(d)
             yield d
 
+    def get_dicts_joined(self, node: Node = None, ctx: list[list[Label]] = None,
+                         content: list[tuple[str, int, Token]] = None,
+                         shortname: list[str] = None, dep: list[str] = None,
+                         skipdups: bool = True) -> Generator[dict[str, str], None, None]:
+        """
+        Get possibly joined dictionaries added using only filters.
 
-def convert_data_size(size, default_sufix='B'):
-    """
-    Convert data size from human readable units to an int of arbitrary size.
+        :param node: node to start from
+        :param ctx: node labels/names
+        :param content: previous content in plain
+        :param shortname: short name
+        :param dep: dependmake_nameencies
+        :returns: dictionary generator
 
-    :param size: Human readable data size representation (string).
-    :param default_sufix: Default sufix used to represent data.
-    :return: Int with data size in the appropriate order of magnitude.
-    """
-    orders = {'B': 1,
-              'K': 1024,
-              'M': 1024 * 1024,
-              'G': 1024 * 1024 * 1024,
-              'T': 1024 * 1024 * 1024 * 1024,
-              }
+        Process 'join' entries and unpack join filters in the node.
 
-    order = re.findall("([BbKkMmGgTt])", size[-1])
-    if not order:
-        size += default_sufix
-        order = [default_sufix]
+        Main rules for joining via filters:
 
-    return int(float(size[0:-1]) * orders[order[0].upper()])
+        1) join filter_1 filter_2 ....
+            multiplies all dictionaries as:
+                all_variants_match_filter_1 * all_variants_match_filter_2 * ....
+        2) join only_one_filter
+                == only only_one_filter
+        3) join filter_1 filter_1
+            also works and transforms to:
+                all_variants_match_filter_1 * all_variants_match_filter_1
+            Example:
+                join a
+                join a
+            Transforms into:
+                join a a
+        """
+        node = node or self.node
+        ctx = ctx or []
+        content = content or []
+        shortname = shortname or []
+        dep = dep or []
 
+        # Keep track to know who is a parent generator
+        parent = False
+        if self.parent_generator:
+            # I am parent of the all
+            parent = True
+            # No one else is
+            self.parent_generator = False
 
-def compare_string(str1, str2):
-    """
-    Compare two int string and return -1, 0, 1.
-    It can compare two memory value even in sufix
+        # Node is a current block. It has content, its contents: node.content
+        # Content without joins
+        new_content = []
 
-    :param str1: The first string
-    :param str2: The second string
+        # All joins in current node
+        joins = []
 
-    :Return: Return -1, when str1<  str2
-                     0, when str1 = str2
-                     1, when str1>  str2
-    """
-    order1 = re.findall("([BbKkMmGgTt])", str1)
-    order2 = re.findall("([BbKkMmGgTt])", str2)
-    if order1 or order2:
-        value1 = convert_data_size(str1, "M")
-        value2 = convert_data_size(str2, "M")
-    else:
-        value1 = int(str1)
-        value2 = int(str2)
-    if value1 < value2:
-        return -1
-    elif value1 == value2:
-        return 0
-    else:
-        return 1
+        for t in node.content:
+            filename, linenum, obj = t
 
+            if not isinstance(obj, JoinFilter):
+                new_content.append(t)
+                continue
 
-def postfix_parse(dic):
-    tmp_dict = {}
-    for key in dic:
-        # Bypass the case that use tuple as key value
-        if isinstance(key, tuple):
-            continue
-        if key.endswith("_max"):
-            tmp_key = key.split("_max")[0]
-            if (tmp_key not in dic or
-                    compare_string(dic[tmp_key], dic[key]) > 0):
-                tmp_dict[tmp_key] = dic[key]
-        elif key.endswith("_min"):
-            tmp_key = key.split("_min")[0]
-            if (tmp_key not in dic or
-                    compare_string(dic[tmp_key], dic[key]) < 0):
-                tmp_dict[tmp_key] = dic[key]
-        elif key.endswith("_fixed"):
-            tmp_key = key.split("_fixed")[0]
-            tmp_dict[tmp_key] = dic[key]
-    for key in tmp_dict:
-        dic[key] = tmp_dict[key]
+            # Accumulate all joins at one node
+            joins += [t]
+
+        if not joins:
+            # Return generator
+            for d in self.get_dicts_plain(node, ctx, content, shortname, dep):
+                yield drop_suffixes(d, skipdups=skipdups) if parent else d
+        else:
+            # Rewrite all separate joins in one node as many `only'
+            onlys = []
+            for j in joins:
+                filename, linenum, obj = j
+                for word in obj.filter:
+                    f = OnlyFilter([word], str(word))
+                    onlys += [(filename, linenum, f)]
+
+            old_content = node.content[:]
+            node.content = new_content
+            for d in self.join_filters(onlys, node, ctx, content, shortname, dep):
+                yield drop_suffixes(d, skipdups=skipdups) if parent else d
+            node.content = old_content[:]
+
+    def join_names(self, n1: str, n2: str) -> str:
+        """
+        Produce a new name from two old names where two dictionaries were joined.
+
+        :param n1: name of the first dictionary
+        :param n2: name of the second dictionary
+        :returns: a new name reusing variant names
+        """
+        common_prefix = n1[:[x[0] == x[1] for x in list(zip(n1, n2))].index(0)]
+        cp = ".".join(common_prefix.split('.')[:-1])
+        p1 = re.sub(r"^"+cp, "", n1)
+        p2 = re.sub(r"^"+cp, "", n2)
+        if cp:
+            name = cp + p1 + p2
+        else:
+            name = p1 + "." + p2
+        return name
+
+    def join_filters(self, onlys: list[tuple[str, int, Filter]],
+                     node: Node = None, ctx: list[list[Label]] = None,
+                     content: list[tuple[str, int, Token]] = None,
+                     shortname: list[str] = None, dep: list[str] = None) -> Generator[dict[str, str], None, None]:
+        """
+        Perform all joins as filters on added dictionaries.
+
+        :param onlys: list of only filters
+        :param node: node to start from
+        :param ctx: node labels/names
+        :param content: previous content in plain
+        :param shortname: short name
+        :param dep: dependencies
+        :returns: (resursive) dictionary generator
+
+        Each `join' is the same as an `only' filter.
+        """
+        node = node or self.node
+        ctx = ctx or []
+        content = content or []
+        shortname = shortname or []
+        dep = dep or []
+
+        # Current join/only
+        only = onlys[:1]
+        remains = onlys[1:]
+
+        content_orig = node.content[:]
+        node.content += only
+
+        if not remains:
+            for d in self.get_dicts_plain(node, ctx, content, shortname, dep):
+                yield d
+        else:
+            for d1 in self.get_dicts_plain(node, ctx, content, shortname, dep):
+                # Current frame multiply by all variants from bottom
+                node.content = content_orig
+                for d2 in self.join_filters(remains, node, ctx, content, shortname, dep):
+
+                    d = d1.copy()
+                    d.update(d2)
+                    d["name"] = self.join_names(d1["name"], d2["name"])
+                    d["shortname"] = self.join_names(d1["shortname"], d2["shortname"])
+                    yield d
