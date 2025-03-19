@@ -8,7 +8,7 @@ from typing import Any
 from .constants import reserved_keys
 
 
-def convert_data_size(size: str, default_suffix: str = 'B') -> int:
+def convert_data_size(size: str, default_suffix: str = "B") -> int:
     """
     Convert data size from human readable units to an int of arbitrary size.
 
@@ -16,12 +16,13 @@ def convert_data_size(size: str, default_suffix: str = 'B') -> int:
     :param default_suffix: default suffix used to represent data
     :returns: integer with data size in the appropriate order of magnitude
     """
-    orders = {'B': 1,
-              'K': 1024,
-              'M': 1024 * 1024,
-              'G': 1024 * 1024 * 1024,
-              'T': 1024 * 1024 * 1024 * 1024,
-              }
+    orders = {
+        "B": 1,
+        "K": 1024,
+        "M": 1024 * 1024,
+        "G": 1024 * 1024 * 1024,
+        "T": 1024 * 1024 * 1024 * 1024,
+    }
 
     order = re.findall("([BbKkMmGgTt])", size[-1])
     if not order:
@@ -71,13 +72,11 @@ def apply_suffix_bounds(d: dict[str, str]) -> None:
             continue
         if key.endswith("_max"):
             tmp_key = key.split("_max")[0]
-            if (tmp_key not in d or
-                    compare_string(d[tmp_key], d[key]) > 0):
+            if tmp_key not in d or compare_string(d[tmp_key], d[key]) > 0:
                 tmp_dict[tmp_key] = d[key]
         elif key.endswith("_min"):
             tmp_key = key.split("_min")[0]
-            if (tmp_key not in d or
-                    compare_string(d[tmp_key], d[key]) < 0):
+            if tmp_key not in d or compare_string(d[tmp_key], d[key]) < 0:
                 tmp_dict[tmp_key] = d[key]
         elif key.endswith("_fixed"):
             tmp_key = key.split("_fixed")[0]
@@ -88,13 +87,13 @@ def apply_suffix_bounds(d: dict[str, str]) -> None:
 
 def drop_suffixes(d: dict[Any, str], skipdups: bool = True) -> dict[str, str]:
     """
-    Merge suffixes for same var or drop off unnecessary suffixes.
-,
-    :param d: dictionary with keys to drop suffixes from
-    :param skipdups: whether to skip keys with suffixes that
-        have the same value as the general key
+        Merge suffixes for same var or drop off unnecessary suffixes.
+    ,
+        :param d: dictionary with keys to drop suffixes from
+        :param skipdups: whether to skip keys with suffixes that
+            have the same value as the general key
 
-    This step returns a copy of a suffix flattened dictionary.
+        This step returns a copy of a suffix flattened dictionary.
     """
     # dictionary `d_flat' is going to be the mutated copy of `d`
     d_flat = d.copy()
@@ -127,7 +126,7 @@ def drop_suffixes(d: dict[Any, str], skipdups: bool = True) -> dict[str, str]:
         else:
             # merge suffixes, preserve reverse order of suffixes
             new_key = key[:1] + key[1:][::-1]
-            new_key = ''.join((map(str, new_key)))
+            new_key = "".join((map(str, new_key)))
         d_flat[new_key] = d_flat.pop(key)
 
     return d_flat

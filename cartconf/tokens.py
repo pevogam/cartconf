@@ -25,7 +25,7 @@ class Token(object):
     def __repr__(self) -> str:
         return "'%s'" % self.identifier
 
-    def __ne__(self, o: 'Token') -> bool:
+    def __ne__(self, o: "Token") -> bool:
         """
         The comparison is asymmetric due to optimization.
         """
@@ -68,13 +68,13 @@ class LIdentifier(str):
     def __repr__(self) -> str:
         return "'%s'" % self
 
-    def checkChar(self, chars: str) -> 'LIdentifier':
+    def checkChar(self, chars: str) -> "LIdentifier":
         for t in self:
             if not (t in chars):
                 raise ParserError("Wrong char %s in %s" % (t, self))
         return self
 
-    def checkAlpha(self) -> 'LIdentifier':
+    def checkAlpha(self) -> "LIdentifier":
         """
         Check if string contain only chars
         """
@@ -82,7 +82,7 @@ class LIdentifier(str):
             raise ParserError("Some of chars is not alpha in %s" % (self))
         return self
 
-    def checkNumbers(self) -> 'LIdentifier':
+    def checkNumbers(self) -> "LIdentifier":
         """
         Check if string contain only chars
         """
@@ -90,34 +90,40 @@ class LIdentifier(str):
             raise ParserError("Some of chars is not digit in %s" % (self))
         return self
 
-    def checkCharAlpha(self, chars: str) -> 'LIdentifier':
+    def checkCharAlpha(self, chars: str) -> "LIdentifier":
         """
         Check if string contain only chars
         """
         for t in self:
             if not (t in chars or t.isalpha()):
-                raise ParserError("Char %s is not alpha or one of special"
-                                  "chars [%s] in %s" % (t, chars, self))
+                raise ParserError(
+                    "Char %s is not alpha or one of special"
+                    "chars [%s] in %s" % (t, chars, self)
+                )
         return self
 
-    def checkCharAlphaNum(self, chars: str) -> 'LIdentifier':
+    def checkCharAlphaNum(self, chars: str) -> "LIdentifier":
         """
         Check if string contain only chars
         """
         for t in self:
             if not (t in chars or t.isalnum()):
-                raise ParserError("Char %s is not alphanum or one of special"
-                                  "chars [%s] in %s" % (t, chars, self))
+                raise ParserError(
+                    "Char %s is not alphanum or one of special"
+                    "chars [%s] in %s" % (t, chars, self)
+                )
         return self
 
-    def checkCharNumeric(self, chars: str) -> 'LIdentifier':
+    def checkCharNumeric(self, chars: str) -> "LIdentifier":
         """
         Check if string contain only chars
         """
         for t in self:
             if not (t in chars or t.isdigit()):
-                raise ParserError("Char %s is not digit or one of special"
-                                  "chars [%s] in %s" % (t, chars, self))
+                raise ParserError(
+                    "Char %s is not digit or one of special"
+                    "chars [%s] in %s" % (t, chars, self)
+                )
         return self
 
 
@@ -246,7 +252,7 @@ class LOperators(Token):
     identifier = ""
     function = None
 
-    def set_operands(self, name: str, value: str) -> 'LOperators':
+    def set_operands(self, name: str, value: str) -> "LOperators":
         # pylint: disable=W0201
         self.name = str(name)
         # pylint: disable=W0201
@@ -351,8 +357,8 @@ class LApplyPreDict(LOperators):
     __slots__ = []
     identifier = "apply_pre_dict"
 
-    def set_operands(self, name: str, value: dict[str, Any]) -> 'LApplyPreDict':
-        self.name = name    # pylint: disable=W0201,E0237
+    def set_operands(self, name: str, value: dict[str, Any]) -> "LApplyPreDict":
+        self.name = name  # pylint: disable=W0201,E0237
         self.value = value  # pylint: disable=W0201,E0237
         return self
 
@@ -370,7 +376,9 @@ class LUpdateFileMap(LOperators):
     __slots__ = ["shortname", "dest"]
     identifier = "update_file_map"
 
-    def set_operands(self, filename: str, name: str, dest: str = "_name_map_file") -> 'LUpdateFileMap':
+    def set_operands(
+        self, filename: str, name: str, dest: str = "_name_map_file"
+    ) -> "LUpdateFileMap":
         # pylint: disable=W0201
         self.name = name
         # pylint: disable=W0201
@@ -420,26 +428,29 @@ class Suffix(LOperators):
                 d[new_key] = d.pop(key)
 
 
-tokens_map = {"-": LVariant,
-              ".": LDot,
-              ":": LColon,
-              "@": LDefault,
-              ",": LComa,
-              "[": LLBracket,
-              "]": LRBracket,
-              "(": LLRBracket,
-              ")": LRRBracket,
-              "!": LNotCond}
+tokens_map = {
+    "-": LVariant,
+    ".": LDot,
+    ":": LColon,
+    "@": LDefault,
+    ",": LComa,
+    "[": LLBracket,
+    "]": LRBracket,
+    "(": LLRBracket,
+    ")": LRRBracket,
+    "!": LNotCond,
+}
 
 
-tokens_oper = {"": LSet,
-               "~": LLazySet,
-               "+": LAppend,
-               "<": LPrepend,
-               "?": LRegExpSet,
-               "?+": LRegExpAppend,
-               "?<": LRegExpPrepend,
-               }
+tokens_oper = {
+    "": LSet,
+    "~": LLazySet,
+    "+": LAppend,
+    "<": LPrepend,
+    "?": LRegExpSet,
+    "?+": LRegExpAppend,
+    "?<": LRegExpPrepend,
+}
 
 
 # Helpers for all tokens
@@ -463,12 +474,12 @@ def _substitution(value: str, d: dict[str, Any]) -> str:
             match = match_substitute.search(value, start)
             while match:
                 val = d_flat[match.group(1)]
-                st += value[start:match.start()] + str(val)
+                st += value[start : match.start()] + str(val)
                 start = match.end()
                 match = match_substitute.search(value, start)
         except KeyError:
             pass
-        st += value[start:len(value)]
+        st += value[start : len(value)]
         return st
     else:
         return value

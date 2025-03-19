@@ -2,6 +2,7 @@
 Exceptions module.
 """
 
+
 class ParserError(Exception):
 
     def __init__(self, msg, line=None, filename=None, linenum=None):
@@ -13,8 +14,7 @@ class ParserError(Exception):
 
     def __str__(self):
         if self.line:
-            return "%s: %r (%s:%s)" % (self.msg, self.line,
-                                       self.filename, self.linenum)
+            return "%s: %r (%s:%s)" % (self.msg, self.line, self.filename, self.linenum)
         else:
             return "%s (%s:%s)" % (self.msg, self.filename, self.linenum)
 
@@ -32,5 +32,8 @@ class MissingIncludeError(Exception):
         self.linenum = linenum
 
     def __str__(self):
-        return ("%r (%s:%s): file does not exist or it's not a regular "
-                "file" % (self.line, self.filename, self.linenum))
+        return "%r (%s:%s): file does not exist or it's not a regular " "file" % (
+            self.line,
+            self.filename,
+            self.linenum,
+        )
