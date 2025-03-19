@@ -12,12 +12,7 @@ from .constants import reserved_keys
 from .utils import drop_suffixes
 
 
-#: list of all available manual steps or simply semi-automation tools
-#__all__ = ["Filter", "NoOnlyFilter", "OnlyFilter", "NoFilter", "JoinFilter",
-#           "BlockFilter", "Condition", "NegativeCondition"]
-
-
-match_substitute = re.compile("\$\{(.+?)\}")
+match_substitute = re.compile(r"\$\{(.+?)\}")
 
 
 class Token(object):
