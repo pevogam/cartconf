@@ -1,0 +1,31 @@
+name: CartConf Lint
+
+on: [push, pull_request]
+
+jobs:
+  lints:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install mypy types-setuptools black pycodestyle pydocstyle
+
+      - name: Run linters
+        run: |
+          # TODO: we need stricter type hints than the current ones
+          # mypy cartconf
+          black --check --diff --color cartconf
+          # only excluded checks are conflicts with black and within pycodestyle
+          # (in addition E402 is not something we intend to follow)
+          pycodestyle --ignore=E203,E402,E501,W503 cartconf
+          # TODO: we need stricter documentation improvements than the current ones
+          # pydocstyle cartconf
