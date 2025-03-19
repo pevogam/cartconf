@@ -3,17 +3,18 @@ Utils module.
 """
 
 import re
+from typing import Any
 
 from .constants import reserved_keys
 
 
-def convert_data_size(size, default_sufix='B'):
+def convert_data_size(size: str, default_suffix: str = 'B') -> int:
     """
     Convert data size from human readable units to an int of arbitrary size.
 
-    :param size: Human readable data size representation (string).
-    :param default_sufix: Default sufix used to represent data.
-    :return: Int with data size in the appropriate order of magnitude.
+    :param size: human readable data size representation
+    :param default_suffix: default suffix used to represent data
+    :returns: integer with data size in the appropriate order of magnitude
     """
     orders = {'B': 1,
               'K': 1024,
@@ -24,23 +25,23 @@ def convert_data_size(size, default_sufix='B'):
 
     order = re.findall("([BbKkMmGgTt])", size[-1])
     if not order:
-        size += default_sufix
-        order = [default_sufix]
+        size += default_suffix
+        order = [default_suffix]
 
     return int(float(size[0:-1]) * orders[order[0].upper()])
 
 
-def compare_string(str1, str2):
+def compare_string(str1: str, str2: str) -> int:
     """
-    Compare two int string and return -1, 0, 1.
-    It can compare two memory value even in sufix
+    Compare two int strings and return -1, 0, 1.
 
-    :param str1: The first string
-    :param str2: The second string
+    It can compare two memory values even in suffix.
 
-    :Return: Return -1, when str1<  str2
-                     0, when str1 = str2
-                     1, when str1>  str2
+    :param str1: first string to use
+    :param str2: second string to use
+    :returns: -1, when str1 < str2
+              0, when str1 = str2
+              1, when str1 > str2
     """
     order1 = re.findall("([BbKkMmGgTt])", str1)
     order2 = re.findall("([BbKkMmGgTt])", str2)
@@ -58,32 +59,40 @@ def compare_string(str1, str2):
         return 1
 
 
-def postfix_parse(dic):
+def apply_suffix_bounds(d: dict[str, str]) -> None:
+    """
+    Parse the postfix of the key in the dictionary and update the value
+    of the key without postfix.
+    """
     tmp_dict = {}
-    for key in dic:
+    for key in d:
         # Bypass the case that use tuple as key value
         if isinstance(key, tuple):
             continue
         if key.endswith("_max"):
             tmp_key = key.split("_max")[0]
-            if (tmp_key not in dic or
-                    compare_string(dic[tmp_key], dic[key]) > 0):
-                tmp_dict[tmp_key] = dic[key]
+            if (tmp_key not in d or
+                    compare_string(d[tmp_key], d[key]) > 0):
+                tmp_dict[tmp_key] = d[key]
         elif key.endswith("_min"):
             tmp_key = key.split("_min")[0]
-            if (tmp_key not in dic or
-                    compare_string(dic[tmp_key], dic[key]) < 0):
-                tmp_dict[tmp_key] = dic[key]
+            if (tmp_key not in d or
+                    compare_string(d[tmp_key], d[key]) < 0):
+                tmp_dict[tmp_key] = d[key]
         elif key.endswith("_fixed"):
             tmp_key = key.split("_fixed")[0]
-            tmp_dict[tmp_key] = dic[key]
+            tmp_dict[tmp_key] = d[key]
     for key in tmp_dict:
-        dic[key] = tmp_dict[key]
+        d[key] = tmp_dict[key]
 
 
-def drop_suffixes(d, skipdups=True):
+def drop_suffixes(d: dict[Any, str], skipdups: bool = True) -> dict[str, str]:
     """
-    Merge suffixes for same var, or drop off unnecessary suffixes
+    Merge suffixes for same var or drop off unnecessary suffixes.
+,
+    :param d: dictionary with keys to drop suffixes from
+    :param skipdups: whether to skip keys with suffixes that
+        have the same value as the general key
 
     This step returns a copy of a suffix flattened dictionary.
     """

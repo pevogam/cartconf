@@ -9,7 +9,7 @@ import re
 from typing import Generator
 
 from .exceptions import *
-from .utils import drop_suffixes, postfix_parse
+from .utils import drop_suffixes, apply_suffix_bounds
 from .filters import *
 from .tokens import *
 
@@ -1322,7 +1322,7 @@ class Parser(object):
                  "shortname": ".".join([str(sn.name) for sn in shortname])}
             for _, _, op in new_content:
                 op.apply_to_dict(d)
-            postfix_parse(d)
+            apply_suffix_bounds(d)
             yield d
 
     def get_dicts_joined(self, node: Node = None, ctx: list[list[Label]] = None,
