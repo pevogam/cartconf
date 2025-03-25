@@ -1194,7 +1194,15 @@ class Parser(object):
                 elif typet == LDel:
                     # Parse:
                     #    del operand
-                    _, to_del = lexer.get_next_check_no_white([LIdentifier])
+                    _, to_del = lexer.get_next_check_no_white([LString, LIdentifier])
+                    print(0, to_del)
+                    #_, to_del = lexer.get_next_check([LIdentifier])
+                    #print(1, to_del)
+                    #_, to_del = lexer.get_next_check_nw([LString])
+                    #print(2, to_del)
+                    #if value and (value[0] == value[-1] == '"' or
+                    #              value[0] == value[-1] == "'"):
+                    #    value = value[1:-1]
                     lexer.get_next_check_no_white([LEndL])
                     token.set_operands(to_del, None)
 
