@@ -1536,6 +1536,10 @@ class Parser(object):
                 yield drop_suffixes(d, skipdups=skipdups) if parent else d
             node.content = old_content[:]
 
+        # no more recursive calls - restore parent generator
+        if parent:
+            self.parent_generator = True
+
     def join_names(self, n1: str, n2: str) -> str:
         """
         Produce a new name from two old names where two dictionaries were joined.
