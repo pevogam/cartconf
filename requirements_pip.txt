@@ -1,5 +1,5 @@
 # build dependencies
 maturin
 
-# runtime dependencies
+# runtime dependencies (must overlap with pyproject dependencies)
 avocado-framework==109.0
