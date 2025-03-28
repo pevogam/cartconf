@@ -181,7 +181,7 @@ class Lexer(object):
         self.rest_as_string = False
         self.match_func_index = 0
         self.generator = self.get_lexer()
-        self.prev_indent = 0
+        self.prev_indent = -1
         self.fast = False
 
     def set_prev_indent(self, prev_indent: int) -> None:
