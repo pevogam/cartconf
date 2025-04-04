@@ -392,6 +392,140 @@ class LexerTest(unittest.TestCase):
             self.lexer.check_token(token, [parser.LIndent])
 
 
+class ParserApplyMethodsTest(unittest.TestCase):
+
+    def setUp(self):
+        self.parser = parser.Parser()
+        self.node = parser.Node()
+        self.lexer = parser.Lexer(parser.StrReader(""))
+
+    def test_apply_predict(self):
+        pre_dict = {"key": "value"}
+        parser.Parser._apply_predict(self.lexer, self.node, pre_dict)
+        self.assertEqual(pre_dict, {})
+        self.assertEqual(len(self.node.content), 1)
+        self.assertIsInstance(self.node.content[0][2], parser.LApplyPreDict)
+
+    def test_apply_include(self):
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(b"variants:\n  - test:\n")
+            temp_file.flush()
+            temp_file_name = temp_file.name
+            self.lexer = parser.Lexer(parser.StrReader(f"include {temp_file_name}"))
+            self.lexer.get_next_check([parser.LIndent])  # indent allowed
+            self.lexer.get_next_check([parser.LInclude])  # block allowed
+            pre_dict = {"key": "value"}
+            node = self.parser._apply_include(self.lexer, self.node, pre_dict)
+        self.assertEqual(pre_dict, {})
+        self.assertEqual(len(node.children), 1)
+        self.assertEqual(node.children[0].name, [parser.Label("test")])
+
+    def test_apply_operator_set_optimized(self):
+        self.lexer = parser.Lexer(parser.StrReader("key2 = value2"))
+        # TODO: this seems to be required and not optional for applying operators
+        self.lexer.set_fast()
+        self.lexer.get_next_check([parser.LIndent])  # indent allowed
+        _, token = self.lexer.get_next_check([parser.LIdentifier])  # block allowed
+        identifier = self.lexer.get_until_no_white([parser.LSet])  # identifier allowed
+        pre_dict = {"key1": "value1"}
+        parser.Parser._apply_operator(identifier, token, self.lexer, self.node, pre_dict)
+        self.assertEqual(pre_dict, {"key1": "value1", "key2": "value2"})
+        self.assertEqual(len(self.node.content), 0)
+
+    def test_apply_operator_append_safe(self):
+        self.lexer = parser.Lexer(parser.StrReader("key1 += &value2"))
+        # TODO: this seems to be required and not optional for applying operators
+        self.lexer.set_fast()
+        self.lexer.get_next_check([parser.LIndent])  # indent allowed
+        _, token = self.lexer.get_next_check([parser.LIdentifier])  # block allowed
+        identifier = self.lexer.get_until_no_white([parser.LAppend])  # identifier allowed
+        pre_dict = {"key1": "value1"}
+        parser.Parser._apply_operator(identifier, token, self.lexer, self.node, pre_dict)
+        self.assertEqual(pre_dict, {"key1": "value1&value2"})
+        self.assertEqual(len(self.node.content), 0)
+
+    def test_apply_operator_append_unsafe(self):
+        self.lexer = parser.Lexer(parser.StrReader("key2 += &value2"))
+        # TODO: this seems to be required and not optional for applying operators
+        self.lexer.set_fast()
+        self.lexer.get_next_check([parser.LIndent])  # indent allowed
+        _, token = self.lexer.get_next_check([parser.LIdentifier])  # block allowed
+        identifier = self.lexer.get_until_no_white([parser.LAppend])  # identifier allowed
+        pre_dict = {"key1": "value1"}
+        parser.Parser._apply_operator(identifier, token, self.lexer, self.node, pre_dict)
+        self.assertEqual(pre_dict, {})
+        self.assertEqual(len(self.node.content), 2)
+        self.assertIsInstance(self.node.content[0][2], parser.LApplyPreDict)
+        self.assertIsInstance(self.node.content[1][2], parser.LAppend)
+
+    def test_apply_deletion(self):
+        self.lexer = parser.Lexer(parser.StrReader("del key"))
+        self.lexer.get_next_check([parser.LIndent])  # indent allowed
+        self.lexer.get_next_check([parser.LDel])  # block allowed
+        pre_dict = {"key1": "value1"}
+        self.parser._apply_deletion(self.lexer, self.node, pre_dict)
+        self.assertEqual(pre_dict, {})
+        self.assertEqual(len(self.node.content), 2)
+        self.assertIsInstance(self.node.content[0][2], parser.LApplyPreDict)
+        self.assertIsInstance(self.node.content[1][2], parser.LDel)
+
+    def test_apply_condition(self):
+        self.lexer = parser.Lexer(parser.StrReader("key:\nvalue"))
+        self.lexer.get_next_check([parser.LIndent])  # indent allowed
+        _, token = self.lexer.get_next_check([parser.LIdentifier])  # block allowed
+        identifier = self.lexer.get_until_no_white([parser.LColon])  # identifier allowed
+        pre_dict = {"key1": "value1"}
+        self.parser._apply_condition(identifier, token, self.lexer, self.node, pre_dict, 0)
+        self.assertEqual(pre_dict, {})
+        self.assertEqual(len(self.node.content), 2)
+        self.assertIsInstance(self.node.content[0][2], parser.LApplyPreDict)
+        self.assertIsInstance(self.node.content[1][2], parser.Condition)
+
+    def test_apply_notcondition(self):
+        self.lexer = parser.Lexer(parser.StrReader("!key:\nvalue"))
+        self.lexer.get_next_check([parser.LIndent])  # indent allowed
+        self.lexer.get_next_check([parser.LNotCond])  # block allowed
+        pre_dict = {"key1": "value1"}
+        self.parser._apply_notcondition(self.lexer, self.node, pre_dict, 0)
+        self.assertEqual(pre_dict, {})
+        self.assertEqual(len(self.node.content), 2)
+        self.assertIsInstance(self.node.content[0][2], parser.LApplyPreDict)
+        self.assertIsInstance(self.node.content[1][2], parser.NegativeCondition)
+
+    def test_apply_variants(self):
+        self.lexer = parser.Lexer(parser.StrReader("variants test:"))
+        self.lexer.get_next_check([parser.LIndent])  # indent allowed
+        self.lexer.get_next_check([parser.LVariants])  # block allowed
+        variant_name, meta = parser.Parser._apply_variants(self.lexer, self.node)
+        self.assertEqual(variant_name, "test")
+        self.assertEqual(meta, {})
+        self.assertEqual(len(self.node.content), 0)
+
+    def test_apply_variants_meta(self):
+        self.lexer = parser.Lexer(parser.StrReader("variants test [meta1] [meta2]:"))
+        self.lexer.get_next_check([parser.LIndent])  # indent allowed
+        self.lexer.get_next_check([parser.LVariants])  # block allowed
+        variant_name, meta = parser.Parser._apply_variants(self.lexer, self.node)
+        self.assertEqual(variant_name, "test")
+        self.assertEqual(meta, {"meta1": [True], "meta2": [True]})
+        self.assertEqual(len(self.node.content), 0)
+
+    def test_apply_variant(self):
+        self.lexer = parser.Lexer(parser.StrReader("- test:"))
+        self.lexer.get_next_check([parser.LIndent])  # indent allowed
+        token, _ = self.lexer.get_next_check([parser.LVariant])  # variants allowed
+        pre_dict = {"key1": "value1"}
+        node = self.parser._apply_variant(token, self.lexer, self.node, pre_dict, 0, "test", 0, {})
+        self.assertEqual(pre_dict, {})
+        self.assertEqual(len(self.node.content), 1)
+        self.assertIsInstance(self.node.content[0][2], parser.LApplyPreDict)
+        self.assertEqual(len(node.content), 0)
+        self.assertEqual(len(node.children), 1)
+        self.assertEqual(node.children[0].name, [parser.Label("test")])
+        self.assertEqual(len(node.children[0].children), 1)
+        self.assertEqual(node.children[0].children[0], self.node)
+
+
 class ParserTest(unittest.TestCase):
 
     def setUp(self):
