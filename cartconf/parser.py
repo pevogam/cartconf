@@ -80,14 +80,23 @@ class Node(object):
         self.default = False
 
     def dump(self, indent: int, recurse: bool = False) -> str:
-        dump_str = f"{' ' * indent}name: {self.name}\n"
-        dump_str += f"{' ' * indent}variable name: {self.var_name}\n"
-        dump_str += f"{' ' * indent}content: {self.content}\n"
-        dump_str += f"{' ' * indent}failed cases: {self.failed_cases}\n"
+        """
+        Dump node information as separate lines.
+
+        :param indent: indentation level for the dump
+        :param recurse: whether to recurse into child nodes
+        :returns: string representation of the node data
+        """
+        dump_lines = [
+            f"{' ' * indent}name: {self.name}",
+            f"{' ' * indent}variable name: {self.var_name}",
+            f"{' ' * indent}content: {self.content}",
+            f"{' ' * indent}failed cases: {self.failed_cases}",
+        ]
         if recurse:
             for child in self.children:
-                dump_str += child.dump(indent + 3, recurse)
-        return dump_str
+                dump_lines.append(child.dump(indent + 3, recurse))
+        return "\n".join(dump_lines)
 
 
 class StrReader(object):
@@ -203,9 +212,6 @@ class Lexer(object):
         :raises: :py:class:`LexerError` if unexpected character is found
         """
         l0 = line[0]
-        chars = ""
-        m = None
-        cind = 0
         if l0 == "v":
             if line.startswith("variants:"):
                 yield LVariants()
@@ -252,36 +258,40 @@ class Lexer(object):
                 while line[pos].isspace():
                     pos += 1
 
+        m = None
+        cind = 0
         if self.fast and pos == 0:  # due to refexp
             cind = line[pos:].find(":")
             m = Lexer._ops_exp.search(line[pos:])
 
-        oper = ""
-        token = None
-
+        chars = []
         if self.rest_as_string:
             self.rest_as_string = False
             yield LString(line[pos:].lstrip())
         elif self.fast and m and (cind < 0 or cind > m.end()):
-            chars = ""
+            chars = []
             yield LIdentifier(line[: m.start()].rstrip())
             yield tokens_oper[m.group()[:-1]]()
             yield LString(line[m.end() :].lstrip())
         else:
+            oper = []
+            token = None
             li = enumerate(line[pos:], pos)
             for pos, char in li:
                 if char.isalnum() or char in Lexer.spec_iden:  # alfanum+_-
-                    chars += char
+                    chars += [char]
                 elif char in Lexer.spec_oper:  # <+?=~
                     if chars:
-                        yield LIdentifier(chars)
-                        oper = ""
-                    chars = ""
-                    oper += char
+                        chars_str = "".join(chars)
+                        yield LIdentifier(chars_str)
+                        oper = []
+                    chars = []
+                    oper += [char]
                 else:
                     if chars:
-                        yield LIdentifier(chars)
-                        chars = ""
+                        chars_str = "".join(chars)
+                        yield LIdentifier(chars_str)
+                        chars = []
                     if char.isspace():  # Whitespace
                         for pos, char in li:
                             if not char.isspace():
@@ -289,10 +299,11 @@ class Lexer(object):
                                     yield LWhite()
                                 break
                     if char.isalnum() or char in Lexer.spec_iden:
-                        chars += char
+                        chars += [char]
                     elif char == "=":
-                        if oper in tokens_oper:
-                            yield tokens_oper[oper]()
+                        oper_str = "".join(oper)
+                        if oper_str in tokens_oper:
+                            yield tokens_oper[oper_str]()
                         else:
                             raise LexerError(
                                 "Unexpected character %s on" " pos %s" % (char, pos),
@@ -300,20 +311,21 @@ class Lexer(object):
                                 self.filename,
                                 self.linenum,
                             )
-                        oper = ""
+                        oper = []
                     elif char in tokens_map:
                         token = tokens_map[char]()
                     elif char == '"':
-                        chars = ""
+                        chars = []
                         pos, char = next(li)
                         while char != '"':
-                            chars += char
+                            chars += [char]
                             pos, char = next(li)
-                        yield LString(chars)
+                        chars_str = "".join(chars)
+                        yield LString(chars_str)
                     elif char == "#":
                         break
                     elif char in Lexer.spec_oper:
-                        oper += char
+                        oper += [char]
                     else:
                         raise LexerError(
                             "Unexpected character %s on"
@@ -332,8 +344,9 @@ class Lexer(object):
                         yield LString(line[pos + 1 :].lstrip())
                         break
         if chars:
-            yield LIdentifier(chars)
-            chars = ""
+            chars_str = "".join(chars)
+            yield LIdentifier(chars_str)
+            chars = []
         yield LEndL()
 
     def get_lexer(self) -> Generator[Token, None, None]:
