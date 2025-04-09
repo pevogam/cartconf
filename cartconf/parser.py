@@ -293,11 +293,14 @@ class Lexer(object):
                         yield LIdentifier(chars_str)
                         chars = []
                     if char.isspace():  # Whitespace
+                        space = ""
                         for pos, char in li:
                             if not char.isspace():
                                 if not self.ignore_white:
-                                    yield LWhite()
+                                    yield LWhite(space)
                                 break
+                            else:
+                                space += char
                     if char.isalnum() or char in Lexer.spec_iden:
                         chars += [char]
                     elif char == "=":
@@ -720,15 +723,15 @@ class Parser(object):
                         next_nw(tokens), [LSet, LRRBracket]
                     )  # =
                     if typet == LRRBracket:  # (xxx)
-                        token = Label(str(ident))
+                        token = Label(ident.string)
                     elif typet == LSet:  # (xxx = yyyy)
                         _, value = lexer.check_token(
                             next_nw(tokens), [LIdentifier, LString]
                         )
                         lexer.check_token(next_nw(tokens), [LRRBracket])
-                        token = Label(str(ident), str(value))
+                        token = Label(ident.string, value.string)
                 else:
-                    token = Label(token)
+                    token = Label(token.string)
                 if dots == 1:
                     con_filter.append(token)
                 elif dots == 2:
@@ -763,7 +766,7 @@ class Parser(object):
                     or_filters.append([con_filter])
                     con_filter = []
                 elif typet == LIdentifier:
-                    or_filters.append([[Label(token)]])
+                    or_filters.append([[Label(token.string)]])
                 else:
                     raise ParserError(
                         'Syntax Error expected "," between' " Identifier.",
@@ -822,7 +825,7 @@ class Parser(object):
            include relative file patch to working directory.
         """
         path = lexer.rest_line_as_string_token()
-        filename = os.path.expanduser(path)
+        filename = os.path.expanduser(path.string)
         if isinstance(lexer.reader, FileReader) and not os.path.isabs(filename):
             filename = os.path.join(os.path.dirname(lexer.filename), filename)
         if not os.path.isfile(filename):
@@ -849,16 +852,19 @@ class Parser(object):
         """
         op = identifier[-1]
         if len(identifier) == 1:
-            identifier = token
+            identifier_str = token.string
         else:
             identifier = [token] + identifier[:-1]
-            identifier = "".join([str(x) for x in identifier])
+            identifier_str = "".join([x.string for x in identifier])
         _, value = lexer.get_next_check([LString])
-        if value and (value[0] == value[-1] == '"' or value[0] == value[-1] == "'"):
-            value = value[1:-1]
+        value_str = value.string
+        if value_str and (
+            value_str[0] == value_str[-1] == '"' or value_str[0] == value_str[-1] == "'"
+        ):
+            value_str = value_str[1:-1]
 
-        op.set_operands(identifier, value)
-        d_nin_val = "$" not in value
+        op.set_operands(identifier_str, value_str)
+        d_nin_val = "$" not in value_str
         if isinstance(op, LSet) and d_nin_val:  # Optimization
             op.apply_to_dict(pre_dict)
         else:
@@ -888,7 +894,7 @@ class Parser(object):
         _, to_del = lexer.get_next_check_no_white([LIdentifier])
         lexer.get_next_check_no_white([LEndL])
         token = LDel()
-        token.set_operands(to_del, None)
+        token.set_operands(to_del.string, None)
 
         Parser._apply_predict(lexer, node, pre_dict)
         node.content += [(lexer.filename, lexer.linenum, token)]
@@ -909,8 +915,8 @@ class Parser(object):
         identifier = [token] + identifier[:-1]
         cfilter = Parser.parse_filter(lexer, identifier + [LEndL()])
         next_line = lexer.rest_line_as_string_token()
-        if next_line != "":
-            lexer.reader.set_next_line(next_line, indent + 1, lexer.linenum)
+        if next_line.string != "":
+            lexer.reader.set_next_line(next_line.string, indent + 1, lexer.linenum)
         cond = Condition(cfilter, lexer.line)
         self._parse(lexer, cond, prev_indent=indent)
 
@@ -932,8 +938,8 @@ class Parser(object):
             lexer, lexer.get_until_no_white([LColon, LEndL])[:-1]
         )
         next_line = lexer.rest_line_as_string_token()
-        if next_line != "":
-            lexer.reader.set_next_line(next_line, indent + 1, lexer.linenum)
+        if next_line.string != "":
+            lexer.reader.set_next_line(next_line.string, indent + 1, lexer.linenum)
         cond = NegativeCondition(lfilter, lexer.line)
         self._parse(lexer, cond, prev_indent=indent)
 
@@ -972,20 +978,20 @@ class Parser(object):
                         lexer.filename,
                         lexer.linenum,
                     )
-                variant_name = tokens[0]
+                variant_name = tokens[0].string
             elif vtypet == LLBracket:  # [
                 _, ident = lexer.get_next_check_no_white([LIdentifier])
                 typet, _ = lexer.get_next_check_no_white([LSet, LRBracket])
                 if typet == LRBracket:  # [xxx]
-                    if ident not in meta:
-                        meta[ident] = []
-                    meta[ident].append(True)
+                    if ident.string not in meta:
+                        meta[ident.string] = []
+                    meta[ident.string].append(True)
                 elif typet == LSet:  # [xxx = yyyy]
                     tokens = lexer.get_until_no_white([LRBracket, LEndL])
                     if isinstance(tokens[-1], LRBracket):
-                        if ident not in meta:
-                            meta[ident] = []
-                        meta[ident].append(tokens[:-1])
+                        if ident.string not in meta:
+                            meta[ident.string] = []
+                        meta[ident.string].append(tokens[:-1])
                     else:
                         raise ParserError(
                             "Syntax ERROR" ' expected "]"',
@@ -1069,11 +1075,11 @@ class Parser(object):
                 name = [token] + lexer.get_until_check([LIdentifier, LDot], [LColon])
 
             if len(name) == 2:
-                name = [name[0]]
                 raw_name = name
+                name = [name[0].string]
             else:
                 raw_name = [x for x in name[:-1]]
-                name = [x for x in name[:-1] if isinstance(x, LIdentifier)]
+                name = [x.string for x in name[:-1] if isinstance(x, LIdentifier)]
 
             token = next(lexer.generator)
             while isinstance(token, LWhite):
@@ -1091,16 +1097,16 @@ class Parser(object):
             node2.labels = node.labels
 
             if variant_name:
-                op = LSet().set_operands(variant_name, ".".join([str(n) for n in name]))
+                op = LSet().set_operands(variant_name, ".".join([n for n in name]))
                 node2.content += [(lexer.filename, lexer.linenum, op)]
 
             node3 = self._parse(lexer, node2, prev_indent=indent)
 
             if variant_name:
                 node3.var_name = variant_name
-                node3.name = [Label(variant_name, str(n)) for n in name]
+                node3.name = [Label(variant_name, n) for n in name]
             else:
-                node3.name = [Label(str(n)) for n in name]
+                node3.name = [Label(n) for n in name]
 
             # Update mapping name to file
 
@@ -1292,7 +1298,7 @@ class Parser(object):
                         Parser._apply_predict(lexer, node, pre_dict)
                     token_type, token_val = lexer.get_next_check([LIdentifier])
                     lexer.get_next_check([LEndL])
-                    suffix_operator = Suffix().set_operands(None, token_val)
+                    suffix_operator = Suffix().set_operands(None, token_val.string)
                     # Suffix will be applied as all other elements in current node are processed:
                     suffix = (lexer.filename, lexer.linenum, suffix_operator)
 

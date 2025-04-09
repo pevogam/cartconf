@@ -37,18 +37,18 @@ class TestTokens(unittest.TestCase):
 
     def test_lidentifier(self):
         t = LIdentifier("identifier")
-        self.assertEqual(str(t), "identifier")
-        self.assertEqual(repr(t), "'identifier'")
+        self.assertEqual(str(t), "Identifier re([A-Za-z0-9][A-Za-z0-9_-]*) \"identifier\"")
+        self.assertEqual(repr(t), "'Identifier re([A-Za-z0-9][A-Za-z0-9_-]*) \"identifier\"'")
 
     def test_lwhite(self):
         t = LWhite(" ")
-        self.assertEqual(str(t), " ")
-        self.assertEqual(repr(t), "' '")
+        self.assertEqual(str(t), "WhiteSpace re(\\s) \" \"")
+        self.assertEqual(repr(t), "'WhiteSpace re(\\s) \" \"'")
 
     def test_lstring(self):
         t = LString("string")
-        self.assertEqual(str(t), "string")
-        self.assertEqual(repr(t), "'string'")
+        self.assertEqual(str(t), "String re(.+) \"string\"")
+        self.assertEqual(repr(t), "'String re(.+) \"string\"'")
 
     def test_lcolon(self):
         t = LColon()

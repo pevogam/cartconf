@@ -10,9 +10,9 @@ pub enum Tokens {
     LIndent(i32),
     LEndL(),
     LEndBlock(i32),
-    LIdentifier(),
-    LWhite(),
-    LString(),
+    LIdentifier(String),
+    LWhite(String),
+    LString(String),
     LColon(),
     LVariants(),
     LDot(),
@@ -54,9 +54,9 @@ impl fmt::Display for Tokens {
             Tokens::LIndent(length) => write!(f, "indent {}", length),
             Tokens::LEndL() => write!(f, "endl"),
             Tokens::LEndBlock(length) => write!(f, "indent {}", length),
-            Tokens::LIdentifier() => write!(f, "Identifier re([A-Za-z0-9][A-Za-z0-9_-]*)"),
-            Tokens::LWhite() => write!(f, "WhiteSpace re(\\s)"),
-            Tokens::LString() => write!(f, "String re(.+)"),
+            Tokens::LIdentifier(string) => write!(f, "Identifier re([A-Za-z0-9][A-Za-z0-9_-]*) \"{}\"", string),
+            Tokens::LWhite(string) => write!(f, "WhiteSpace re(\\s) \"{}\"", string),
+            Tokens::LString(string) => write!(f, "String re(.+) \"{}\"", string),
             Tokens::LColon() => write!(f, ":"),
             Tokens::LVariants() => write!(f, "variants"),
             Tokens::LDot() => write!(f, "."),
@@ -115,6 +115,16 @@ impl Tokens {
             Tokens::LIndent(length) => Ok(*length),
             Tokens::LEndBlock(length) => Ok(*length),
             _ => Err(PyAttributeError::new_err("length is not a valid attribute for this token")),
+        }
+    }
+
+    #[getter]
+    fn string(&self) -> PyResult<String> {
+        match self {
+            Tokens::LIdentifier(string) => Ok(string.to_string()),
+            Tokens::LWhite(string) => Ok(string.to_string()),
+            Tokens::LString(string) => Ok(string.to_string()),
+            _ => Err(PyAttributeError::new_err("string is not a valid attribute for this token")),
         }
     }
 }

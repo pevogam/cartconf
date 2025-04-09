@@ -45,87 +45,9 @@ class Token(object):
 LIndent = Tokens.LIndent
 LEndL = Tokens.LEndL
 LEndBlock = Tokens.LEndBlock
-
-
-class LIdentifier(str):
-    __slots__ = []
-    identifier = "Identifier re([A-Za-z0-9][A-Za-z0-9_-]*)"
-
-    def __str__(self) -> str:
-        return super(LIdentifier, self).__str__()
-
-    def __repr__(self) -> str:
-        return "'%s'" % self
-
-    def checkChar(self, chars: str) -> "LIdentifier":
-        for t in self:
-            if not (t in chars):
-                raise ParserError("Wrong char %s in %s" % (t, self))
-        return self
-
-    def checkAlpha(self) -> "LIdentifier":
-        """
-        Check if string contain only chars
-        """
-        if not self.isalpha():
-            raise ParserError("Some of chars is not alpha in %s" % (self))
-        return self
-
-    def checkNumbers(self) -> "LIdentifier":
-        """
-        Check if string contain only chars
-        """
-        if not self.isdigit():
-            raise ParserError("Some of chars is not digit in %s" % (self))
-        return self
-
-    def checkCharAlpha(self, chars: str) -> "LIdentifier":
-        """
-        Check if string contain only chars
-        """
-        for t in self:
-            if not (t in chars or t.isalpha()):
-                raise ParserError(
-                    "Char %s is not alpha or one of special"
-                    "chars [%s] in %s" % (t, chars, self)
-                )
-        return self
-
-    def checkCharAlphaNum(self, chars: str) -> "LIdentifier":
-        """
-        Check if string contain only chars
-        """
-        for t in self:
-            if not (t in chars or t.isalnum()):
-                raise ParserError(
-                    "Char %s is not alphanum or one of special"
-                    "chars [%s] in %s" % (t, chars, self)
-                )
-        return self
-
-    def checkCharNumeric(self, chars: str) -> "LIdentifier":
-        """
-        Check if string contain only chars
-        """
-        for t in self:
-            if not (t in chars or t.isdigit()):
-                raise ParserError(
-                    "Char %s is not digit or one of special"
-                    "chars [%s] in %s" % (t, chars, self)
-                )
-        return self
-
-
-class LWhite(LIdentifier):
-    __slots__ = []
-    identifier = "WhiteSpace re(\\s)"
-
-
-class LString(LIdentifier):
-    __slots__ = []
-    identifier = "String re(.+)"
-
-
+LIdentifier = Tokens.LIdentifier
+LWhite = Tokens.LWhite
+LString = Tokens.LString
 LColon = Tokens.LColon
 LVariants = Tokens.LVariants
 LDot = Tokens.LDot
