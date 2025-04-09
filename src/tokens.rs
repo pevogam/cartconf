@@ -1,6 +1,7 @@
 use std::fmt;
 
 use pyo3::prelude::*;
+use pyo3::exceptions::PyAttributeError;
 
 // Define an enum for the different types of tokens
 #[pyclass(eq)]
@@ -98,12 +99,23 @@ impl Tokens {
     fn identifier(&self) -> String {
         self.to_string()
     }
+
     fn __str__(&self) -> PyResult<String> {
         Ok(self.to_string())
     }
+
     fn __repr__(&self) -> PyResult<String> {
         let s = self.__str__()?;
         Ok(format!("'{}'", s))
+    }
+
+    #[getter]
+    fn length(&self) -> PyResult<i32> {
+        match self {
+            Tokens::LIndent(length) => Ok(*length),
+            Tokens::LEndBlock(length) => Ok(*length),
+            _ => Err(PyAttributeError::new_err("length is not a valid attribute for this token")),
+        }
     }
 }
 

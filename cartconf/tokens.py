@@ -42,26 +42,9 @@ class Token(object):
         return False
 
 
-class LIndent(Token):
-    __slots__ = ["length"]
-    identifier = "indent"
-
-    def __init__(self, length: int) -> None:
-        self.length = length
-
-    def __str__(self) -> str:
-        return "%s %s" % (self.identifier, self.length)
-
-    def __repr__(self) -> str:
-        return "%s %s" % (self.identifier, self.length)
-
-
+LIndent = Tokens.LIndent
 LEndL = Tokens.LEndL
-
-
-class LEndBlock(LIndent):
-    __slots__ = []
-    pass
+LEndBlock = Tokens.LEndBlock
 
 
 class LIdentifier(str):

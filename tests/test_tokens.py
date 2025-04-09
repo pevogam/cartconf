@@ -23,7 +23,7 @@ class TestTokens(unittest.TestCase):
     def test_lindent(self):
         t = LIndent(4)
         self.assertEqual(str(t), "indent 4")
-        self.assertEqual(repr(t), "indent 4")
+        self.assertEqual(repr(t), "'indent 4'")
 
     def test_lendl(self):
         t = LEndL()
@@ -33,7 +33,7 @@ class TestTokens(unittest.TestCase):
     def test_lendblock(self):
         t = LEndBlock(4)
         self.assertEqual(str(t), "indent 4")
-        self.assertEqual(repr(t), "indent 4")
+        self.assertEqual(repr(t), "'indent 4'")
 
     def test_lidentifier(self):
         t = LIdentifier("identifier")
