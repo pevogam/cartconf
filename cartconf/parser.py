@@ -202,7 +202,7 @@ class Lexer(object):
     def set_strict(self) -> None:
         self.fast = False
 
-    def match(self, line: str, pos: int) -> Generator[Token, None, None]:
+    def match(self, line: str, pos: int) -> Generator["Token", None, None]:
         """
         Generate tokens from a string line in order of matching.
 
@@ -241,7 +241,7 @@ class Lexer(object):
                 pos = 7
         elif l0 == "d":
             if line.startswith("del "):
-                yield LDel()
+                yield LDel("", "")
                 pos = 3
                 while line[pos].isspace():
                     pos += 1
@@ -271,7 +271,7 @@ class Lexer(object):
         elif self.fast and m and (cind < 0 or cind > m.end()):
             chars = []
             yield LIdentifier(line[: m.start()].rstrip())
-            yield tokens_oper[m.group()[:-1]]()
+            yield tokens_oper[m.group()[:-1]]("", "")
             yield LString(line[m.end() :].lstrip())
         else:
             oper = []
@@ -306,7 +306,7 @@ class Lexer(object):
                     elif char == "=":
                         oper_str = "".join(oper)
                         if oper_str in tokens_oper:
-                            yield tokens_oper[oper_str]()
+                            yield tokens_oper[oper_str]("", "")
                         else:
                             raise LexerError(
                                 "Unexpected character %s on" " pos %s" % (char, pos),
@@ -352,7 +352,7 @@ class Lexer(object):
             chars = []
         yield LEndL()
 
-    def get_lexer(self) -> Generator[Token, None, None]:
+    def get_lexer(self) -> Generator["Token", None, None]:
         """
         Generate tokens from a multi-line reader in order of matching.
 
@@ -375,7 +375,7 @@ class Lexer(object):
 
     def get_until_gen(
         self, end_tokens: list[type] = None
-    ) -> Generator[Token, None, None]:
+    ) -> Generator["Token", None, None]:
         """
         Generate tokens from a multi-line reader terminating at a list of end tokens.
 
@@ -389,7 +389,7 @@ class Lexer(object):
             token = next(self.generator)
         yield token
 
-    def get_until(self, end_tokens: list[type] = None) -> list[Token]:
+    def get_until(self, end_tokens: list[type] = None) -> list["Token"]:
         """
         Get a full list of tokens from a multi-line reader terminating at a list of end tokens.
 
@@ -411,7 +411,7 @@ class Lexer(object):
 
     def get_until_check(
         self, allowed_tokens: list[type], end_tokens: list[type] = None
-    ) -> list[Token]:
+    ) -> list["Token"]:
         """
         Get a full list of tokens from acceptable ones terminating at a list of end ones.
 
@@ -435,7 +435,7 @@ class Lexer(object):
                 )
         return tokens
 
-    def get_until_no_white(self, end_tokens: list[type] = None) -> list[Token]:
+    def get_until_no_white(self, end_tokens: list[type] = None) -> list["Token"]:
         """
         Get a full list of tokens terminating at a list of end tokens and strip white space ones.
 
@@ -445,7 +445,7 @@ class Lexer(object):
         end_tokens = end_tokens or [LEndL]
         return [x for x in self.get_until_gen(end_tokens) if not isinstance(x, LWhite)]
 
-    def rest_line_gen(self) -> Generator[Token, None, None]:
+    def rest_line_gen(self) -> Generator["Token", None, None]:
         """
         Generate tokens from the rest of the line terminating only at an end-of-line token.
         :returns: iterator of tokens that were read
@@ -457,7 +457,7 @@ class Lexer(object):
             yield token
             token = next(self.generator)
 
-    def rest_line(self) -> list[Token]:
+    def rest_line(self) -> list["Token"]:
         """
         Get a full list of tokens from the rest of the line terminating only at an end-of-line token.
 
@@ -465,7 +465,7 @@ class Lexer(object):
         """
         return [x for x in self.rest_line_gen()]
 
-    def rest_line_no_white(self) -> list[Token]:
+    def rest_line_no_white(self) -> list["Token"]:
         """
         Get a full list of tokens from the rest of the line and strip white space ones.
 
@@ -491,7 +491,7 @@ class Lexer(object):
             raise ParserError("Expected end-of-line, got %s" % type(end_of_line))
         return remainder_string
 
-    def get_next_check(self, allowed_tokens: list[type]) -> tuple[type, Token]:
+    def get_next_check(self, allowed_tokens: list[type]) -> tuple[type, "Token"]:
         """
         Get the next token and throw an error if it is not acceptable.
 
@@ -511,7 +511,9 @@ class Lexer(object):
                 self.linenum,
             )
 
-    def get_next_check_no_white(self, allowed_tokens: list[type]) -> tuple[type, Token]:
+    def get_next_check_no_white(
+        self, allowed_tokens: list[type]
+    ) -> tuple[type, "Token"]:
         """
         Get the next acceptable token and strip white space tokens.
 
@@ -534,8 +536,8 @@ class Lexer(object):
             )
 
     def check_token(
-        self, token: Token, allowed_tokens: list[type]
-    ) -> tuple[type, Token]:
+        self, token: "Token", allowed_tokens: list[type]
+    ) -> tuple[type, "Token"]:
         """
         Check that a token is acceptable (among the allowed ones).
 
@@ -662,7 +664,9 @@ class Parser(object):
         self.parse_string(string)
 
     @staticmethod
-    def parse_filter(lexer: Lexer, tokens: list[Token]) -> list[list[Label | Token]]:
+    def parse_filter(
+        lexer: Lexer, tokens: list["Token"]
+    ) -> "list[list[Label | Token]]":
         """
         Parse a filter from a list of tokens.
 
@@ -797,7 +801,7 @@ class Parser(object):
         return or_filters
 
     @staticmethod
-    def _cmd_tokens(tokens1: list[Token], tokens2: list[Token]) -> bool:
+    def _cmd_tokens(tokens1: list["Token"], tokens2: list["Token"]) -> bool:
         for x, y in list(zip(tokens1, tokens2)):
             if x != y:
                 return False
@@ -810,7 +814,7 @@ class Parser(object):
         node: Node,
         pre_dict: dict[str, str],
     ) -> None:
-        predict = LApplyPreDict(None, pre_dict.copy())
+        predict = LApplyPreDict("", pre_dict.copy())
         node.content += [(lexer.filename, lexer.linenum, predict)]
         pre_dict.clear()
 
@@ -837,8 +841,8 @@ class Parser(object):
 
     @staticmethod
     def _apply_operator(
-        identifier: list[Token],
-        token: Token,
+        identifier: list["Token"],
+        token: "Token",
         lexer: Lexer,
         node: Node,
         pre_dict: dict[str, str],
@@ -893,15 +897,15 @@ class Parser(object):
         """
         _, to_del = lexer.get_next_check_no_white([LIdentifier])
         lexer.get_next_check_no_white([LEndL])
-        token = LDel(to_del.string, None)
+        token = LDel(to_del.string, "")
 
         Parser._apply_predict(lexer, node, pre_dict)
         node.content += [(lexer.filename, lexer.linenum, token)]
 
     def _apply_condition(
         self,
-        identifier: list[Token],
-        token: Token,
+        identifier: list["Token"],
+        token: "Token",
         lexer: Lexer,
         node: Node,
         pre_dict: dict[str, str],
@@ -1026,7 +1030,7 @@ class Parser(object):
 
     def _apply_variant(
         self,
-        token: Token,
+        token: "Token",
         lexer: Lexer,
         node: Node,
         pre_dict: dict[str, str],
@@ -1123,7 +1127,9 @@ class Parser(object):
 
             node3.append_to_shortname = not is_default
 
-            op = LUpdateFileMap(lexer.filename, ".".join(str(x) for x in node3.name))
+            op = LUpdateFileMap(
+                lexer.filename, ".".join(str(x) for x in node3.name), "_name_map_file"
+            )
             node3.content += [(lexer.filename, lexer.linenum, op)]
 
             op = LUpdateFileMap(
@@ -1222,7 +1228,9 @@ class Parser(object):
                     # Parse:
                     #    identifier .....
                     identifier = lexer.get_until_no_white(identifier_allowed)
-                    if isinstance(identifier[-1], LOperators):  # operand = <=
+                    if tokens_oper_key(identifier[-1]) in list(
+                        tokens_oper
+                    ):  # operand = <=
                         Parser._apply_operator(identifier, token, lexer, node, pre_dict)
                     elif isinstance(identifier[-1], LColon):  # condition:
                         self._apply_condition(
@@ -1295,7 +1303,7 @@ class Parser(object):
                         Parser._apply_predict(lexer, node, pre_dict)
                     token_type, token_val = lexer.get_next_check([LIdentifier])
                     lexer.get_next_check([LEndL])
-                    suffix_operator = Suffix(None, token_val.string)
+                    suffix_operator = Suffix("", token_val.string)
                     # Suffix will be applied as all other elements in current node are processed:
                     suffix = (lexer.filename, lexer.linenum, suffix_operator)
 
@@ -1314,7 +1322,7 @@ class Parser(object):
         self,
         node: Node = None,
         ctx: list[list[Label]] = None,
-        content: list[tuple[str, int, Token]] = None,
+        content: list[tuple[str, int, "Token"]] = None,
         shortname: list[str] = None,
         dep: list[str] = None,
         skipdups: bool = True,
@@ -1340,7 +1348,7 @@ class Parser(object):
         self,
         node: Node = None,
         ctx: list[list[Label]] = None,
-        content: list[tuple[str, int, Token]] = None,
+        content: list[tuple[str, int, "Token"]] = None,
         shortname: list[str] = None,
         dep: list[str] = None,
     ) -> Generator[dict[str, str], None, None]:
@@ -1377,7 +1385,7 @@ class Parser(object):
             blocked_filters = []
             for t in content:
                 filename, linenum, obj = t
-                if isinstance(obj, LOperators):
+                if tokens_oper_key(obj) in list(tokens_oper):
                     new_content.append(t)
                     continue
                 # obj is an OnlyFilter/NoFilter/Condition/NegativeCondition
@@ -1528,7 +1536,7 @@ class Parser(object):
         self,
         node: Node = None,
         ctx: list[list[Label]] = None,
-        content: list[tuple[str, int, Token]] = None,
+        content: list[tuple[str, int, "Token"]] = None,
         shortname: list[str] = None,
         dep: list[str] = None,
         skipdups: bool = True,
@@ -1634,7 +1642,7 @@ class Parser(object):
         onlys: list[tuple[str, int, Filter]],
         node: Node = None,
         ctx: list[list[Label]] = None,
-        content: list[tuple[str, int, Token]] = None,
+        content: list[tuple[str, int, "Token"]] = None,
         shortname: list[str] = None,
         dep: list[str] = None,
     ) -> Generator[dict[str, str], None, None]:

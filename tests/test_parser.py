@@ -530,6 +530,7 @@ class ParserTest(unittest.TestCase):
 
     def setUp(self):
         self.parser = parser.Parser()
+        self.maxDiff = None
 
     def test_initialization(self):
         self.assertIsInstance(self.parser.node, parser.Node)
@@ -588,7 +589,7 @@ class ParserTest(unittest.TestCase):
         self.assertIn("key = value", self.parser.assignments)
         self.assertEqual(self.parser.node.name, [])
         last_content = self.parser.node.content[-1]
-        self.assertIn("'key': 'value'", str(last_content[2]))
+        self.assertIn("\"key\": \"value\"", str(last_content[2]))
 
     def test_parse_filter(self):
         lexer = parser.Lexer(parser.StrReader("test.value"))

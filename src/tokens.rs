@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use regex::Regex;
 
-use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::{prelude::*, IntoPyObjectExt};
+use pyo3::types::{PyDict, PyTuple, PyString, IntoPyDict};
 use pyo3::exceptions::PyAttributeError;
 
 const RESERVED_KEYS: &[&str] = &[
@@ -47,17 +47,17 @@ pub enum Tokens {
     LRegExpStart(),
     LRegExpStop(),
     LInclude(),
-    LSet(),
-    LAppend(),
-    LPrepend(),
-    LLazySet(),
-    LRegExpSet(),
-    LRegExpAppend(),
-    LRegExpPrepend(),
-    LDel(),
-    LApplyPreDict(),
-    LUpdateFileMap(),
-    Suffix(),
+    LSet(String, String),
+    LAppend(String, String),
+    LPrepend(String, String),
+    LLazySet(String, String),
+    LRegExpSet(String, String),
+    LRegExpAppend(String, String),
+    LRegExpPrepend(String, String),
+    LDel(String, String),
+    LApplyPreDict(String, HashMap<String, String>),
+    LUpdateFileMap(String, String, String),
+    Suffix(String, String),
 }
 // Implement the Display trait for Tokens
 impl fmt::Display for Tokens {
@@ -91,17 +91,17 @@ impl fmt::Display for Tokens {
             Tokens::LRegExpStart() => write!(f, "${{"),
             Tokens::LRegExpStop() => write!(f, "}}"),
             Tokens::LInclude() => write!(f, "include"),
-            Tokens::LSet() => write!(f, "="),
-            Tokens::LAppend() => write!(f, "+="),
-            Tokens::LPrepend() => write!(f, "<="),
-            Tokens::LLazySet() => write!(f, "~="),
-            Tokens::LRegExpSet() => write!(f, "?="),
-            Tokens::LRegExpAppend() => write!(f, "?+="),
-            Tokens::LRegExpPrepend() => write!(f, "?<="),
-            Tokens::LDel() => write!(f, "del"),
-            Tokens::LApplyPreDict() => write!(f, "apply_pre_dict"),
-            Tokens::LUpdateFileMap() => write!(f, "update_file_map"),
-            Tokens::Suffix() => write!(f, "apply_suffix"),
+            Tokens::LSet(_name, _value) => write!(f, "="),
+            Tokens::LAppend(_name, _value) => write!(f, "+="),
+            Tokens::LPrepend(_name, _value) => write!(f, "<="),
+            Tokens::LLazySet(_name, _value) => write!(f, "~="),
+            Tokens::LRegExpSet(_name, _value) => write!(f, "?="),
+            Tokens::LRegExpAppend(_name, _value) => write!(f, "?+="),
+            Tokens::LRegExpPrepend(_name, _value) => write!(f, "?<="),
+            Tokens::LDel(_name, _value) => write!(f, "del"),
+            Tokens::LApplyPreDict(_name, value) => write!(f, "apply_pre_dict {:?}", value),
+            Tokens::LUpdateFileMap(_filename, _name, _value) => write!(f, "update_file_map"),
+            Tokens::Suffix(_name, value) => write!(f, "suffix {}", value),
         }
     }
 }
@@ -137,6 +137,268 @@ impl Tokens {
             Tokens::LWhite(string) => Ok(string.to_string()),
             Tokens::LString(string) => Ok(string.to_string()),
             _ => Err(PyAttributeError::new_err("string is not a valid attribute for this token")),
+        }
+    }
+
+    #[getter]
+    fn name(&self) -> PyResult<String> {
+        match self {
+            Tokens::LSet(name, _value) => Ok(name.to_string()),
+            Tokens::LAppend(name, _value) => Ok(name.to_string()),
+            Tokens::LPrepend(name, _value) => Ok(name.to_string()),
+            Tokens::LLazySet(name, _value) => Ok(name.to_string()),
+            Tokens::LRegExpSet(name, _value) => Ok(name.to_string()),
+            Tokens::LRegExpAppend(name, _value) => Ok(name.to_string()),
+            Tokens::LRegExpPrepend(name, _value) => Ok(name.to_string()),
+            Tokens::LDel(name, _value) => Ok(name.to_string()),
+            Tokens::LApplyPreDict(name, _value) => Ok(name.to_string()),
+            Tokens::LUpdateFileMap(_filename, name, _value) => Ok(name.to_string()),
+            Tokens::Suffix(name, _value) => Ok(name.to_string()),
+            _ => Err(PyAttributeError::new_err("name is not a valid attribute for this token")),
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> PyResult<String> {
+        match self {
+            Tokens::LSet(_name, value) => Ok(value.to_string()),
+            Tokens::LAppend(_name, value) => Ok(value.to_string()),
+            Tokens::LPrepend(_name, value) => Ok(value.to_string()),
+            Tokens::LLazySet(_name, value) => Ok(value.to_string()),
+            Tokens::LRegExpSet(_name, value) => Ok(value.to_string()),
+            Tokens::LRegExpAppend(_name, value) => Ok(value.to_string()),
+            Tokens::LRegExpPrepend(_name, value) => Ok(value.to_string()),
+            Tokens::LDel(_name, value) => Ok(value.to_string()),
+            //Tokens::LApplyPreDict(_name, value) => Ok(value.to_string()),
+            Tokens::LUpdateFileMap(_filename, _name, value) => Ok(value.to_string()),
+            Tokens::Suffix(_name, value) => Ok(value.to_string()),
+            _ => Err(PyAttributeError::new_err("value is not a valid attribute for this token")),
+        }
+    }
+
+    #[getter]
+    fn filename(&self) -> PyResult<String> {
+        match self {
+            Tokens::LUpdateFileMap(filename, _name, _value) => Ok(filename.to_string()),
+            _ => Err(PyAttributeError::new_err("filename is not a valid attribute for this token")),
+        }
+    }
+
+    fn apply_to_dict(&self, py_dict: &Bound<'_, PyDict>) -> PyResult<()> {
+        match self {
+            Tokens::LSet(name, value) => {
+                if !RESERVED_KEYS.contains(&name.as_str()) {
+                    let substituted_value = substitution(value, py_dict);
+                    py_dict.set_item(name, &substituted_value)?;
+                }
+                Ok(())
+            }
+            Tokens::LAppend(name, value) => {
+                if !RESERVED_KEYS.contains(&name.as_str()) {
+                    // TODO: ridiculously complicated way to get an empty python string
+                    let empty_value: Bound<'_, PyAny> = PyString::new(py_dict.py(), "").into_bound_py_any(py_dict.py()).unwrap();
+                    if let Ok(current_value) = py_dict.get_item(name) {
+                        let current_value = current_value.unwrap_or_else(|| empty_value);
+                        let substituted_value = substitution(value, py_dict);
+                        let new_value = format!("{}{}", current_value.extract::<String>()?, substituted_value);
+                        py_dict.set_item(name, &new_value)?;
+                    }
+                }
+                Ok(())
+            }
+            Tokens::LPrepend(name, value) => {
+                if !RESERVED_KEYS.contains(&name.as_str()) {
+                    // TODO: ridiculously complicated way to get an empty python string
+                    let empty_value: Bound<'_, PyAny> = PyString::new(py_dict.py(), "").into_bound_py_any(py_dict.py()).unwrap();
+                    if let Ok(current_value) = py_dict.get_item(name) {
+                        let current_value = current_value.unwrap_or_else(|| empty_value);
+                        let substituted_value = substitution(value, py_dict);
+                        let new_value = format!("{}{}", substituted_value, current_value.extract::<String>()?);
+                        py_dict.set_item(name, &new_value)?;
+                    }
+                }
+                Ok(())
+            }
+            Tokens::LLazySet(name, value) => {
+                if !RESERVED_KEYS.contains(&name.as_str()) && !py_dict.contains(name)? {
+                    let substituted_value = substitution(value, py_dict);
+                    py_dict.set_item(name, &substituted_value)?;
+                }
+                Ok(())
+            }
+            Tokens::LRegExpSet(name, value) => {
+                let exp = Regex::new(&format!(r"^{}$", name)).unwrap();
+                let substituted_value = substitution(value, py_dict);
+                for (key, _) in py_dict.iter() {
+                    if let Ok(key_str) = key.extract::<String>() {
+                        // TODO: keystr = "".join(key) if isinstance(key, tuple) else key
+                        // TODO: unwrap() all around and check final ? arguments
+                        if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
+                            py_dict.set_item(key, &substituted_value)?;
+                        }
+                    } else {
+                        let key_tuple = key.downcast::<PyTuple>()?.as_slice();
+                        let mut key_str = String::new();
+                        for item in key_tuple.iter() {
+                            if let Ok(item_str) = item.extract::<String>() {
+                                key_str.push_str(&item_str);
+                            }
+                        }
+                        if exp.is_match(&key_str) {
+                            py_dict.set_item(key, &substituted_value)?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Tokens::LRegExpAppend(name, value) => {
+                let exp = Regex::new(&format!(r"^{}$", name)).unwrap();
+                let substituted_value = substitution(value, py_dict);
+                for (key, val) in py_dict.iter() {
+                    if let Ok(key_str) = key.extract::<String>() {
+                        if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
+                            let current_value = val.extract::<String>().unwrap_or_default();
+                            let new_value = format!("{}{}", current_value, substituted_value);
+                            py_dict.set_item(key, new_value)?;
+                        }
+                    } else {
+                        let key_tuple = key.downcast::<PyTuple>()?.as_slice();
+                        let mut key_str = String::new();
+                        for item in key_tuple.iter() {
+                            if let Ok(item_str) = item.extract::<String>() {
+                                key_str.push_str(&item_str);
+                            }
+                        }
+                        if exp.is_match(&key_str) {
+                            let current_value = val.extract::<String>().unwrap_or_default();
+                            let new_value = format!("{}{}", current_value, substituted_value);
+                            py_dict.set_item(key, new_value)?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Tokens::LRegExpPrepend(name, value) => {
+                let exp = Regex::new(&format!(r"^{}$", name)).unwrap();
+                let substituted_value = substitution(value, py_dict);
+                for (key, val) in py_dict.iter() {
+                    if let Ok(key_str) = key.extract::<String>() {
+                        if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
+                            let current_value = val.extract::<String>().unwrap_or_default();
+                            let new_value = format!("{}{}", substituted_value, current_value);
+                            py_dict.set_item(key, new_value)?;
+                        }
+                    } else {
+                        let key_tuple = key.downcast::<PyTuple>()?.as_slice();
+                        let mut key_str = String::new();
+                        for item in key_tuple.iter() {
+                            if let Ok(item_str) = item.extract::<String>() {
+                                key_str.push_str(&item_str);
+                            }
+                        }
+                        if exp.is_match(&key_str) {
+                            let current_value = val.extract::<String>().unwrap_or_default();
+                            let new_value = format!("{}{}", substituted_value, current_value);
+                            py_dict.set_item(key, new_value)?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Tokens::LDel(name, _) => {
+                let exp = Regex::new(&format!(r"^{}$", name)).unwrap();
+                let keys_to_delete: Vec<_> = py_dict
+                    .iter()
+                    .filter_map(|(key, _)| {
+                        if let Ok(key_str) = key.extract::<String>() {
+                            if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
+                                return Some(key);
+                            }
+                        } else {
+                            let key_tuple = key.downcast::<PyTuple>().ok()?.as_slice();
+                            let mut key_str = String::new();
+                            for item in key_tuple.iter() {
+                                if let Ok(item_str) = item.extract::<String>() {
+                                    key_str.push_str(&item_str);
+                                }
+                            }
+                            if exp.is_match(&key_str) {
+                                return Some(key);
+                            }
+                        }
+                        None
+                    })
+                    .collect();
+                for key in keys_to_delete {
+                    py_dict.del_item(key)?;
+                }
+                Ok(())
+            }
+            Tokens::LApplyPreDict(_, value) => {
+                py_dict.update(value.into_py_dict(py_dict.py())?.as_mapping())?;
+                Ok(())
+            }
+            Tokens::LUpdateFileMap(filename, name, value) => {
+                let dest = value;
+                let shortname = if filename == "<string>" {
+                    filename.clone()
+                } else {
+                    std::path::Path::new(filename)
+                        .file_name()
+                        .and_then(|os_str| os_str.to_str())
+                        .unwrap_or(filename)
+                        .to_string()
+                };
+
+                if !py_dict.contains(dest)? {
+                    py_dict.set_item(dest, PyDict::new(py_dict.py()))?;
+                }
+
+                let dest_dict = py_dict.get_item(dest).unwrap_or_default();
+                if dest_dict.is_none() {
+                    return Err(PyAttributeError::new_err(format!("{} is not a dict", dest)));
+                }
+                let dest_dict = dest_dict.unwrap();
+                let dest_dict = dest_dict
+                    .downcast::<PyDict>()
+                    .map_err(|_| PyAttributeError::new_err(format!("{} is not a dict", dest)))?;
+                if let Some(old_name) = dest_dict.get_item(&shortname).unwrap() {
+                    let old_name_str = old_name.extract::<String>()?;
+                    let new_name = format!("{}.{}", name, old_name_str);
+                    dest_dict.set_item(&shortname, new_name)?;
+                } else {
+                    dest_dict.set_item(&shortname, name)?;
+                }
+                Ok(())
+            }
+            Tokens::Suffix(_, value) => {
+                let py_value = value.into_bound_py_any(py_dict.py()).unwrap();
+                let suffixed_py_dict = PyDict::new(py_dict.py());
+                for (key, val) in py_dict.iter() {
+                    let py_value_clone = py_value.clone();
+                    let mut items = Vec::new();
+                    if let Ok(key_str) = key.extract::<String>() {
+                        if RESERVED_KEYS.contains(&key_str.as_str()) {
+                            suffixed_py_dict.set_item(key, val)?;
+                            continue;
+                        } else {
+                            items.push(key);
+                        }
+                    } else {
+                        let key_tuple = key.downcast::<PyTuple>()?.as_slice();
+                        for item in key_tuple.iter() {
+                            items.push(item.into_bound_py_any(py_dict.py()).unwrap());
+                        }
+                    }
+                    items.push(py_value_clone);
+                    let new_key = PyTuple::new(py_dict.py(), items)?;
+                    suffixed_py_dict.set_item(new_key, val)?;
+                }
+                py_dict.clear();
+                py_dict.update(suffixed_py_dict.as_mapping())?;
+                Ok(())
+            }
+            _ => Err(PyAttributeError::new_err("apply_to_dict is not a valid attribute for this token")),
         }
     }
 }
@@ -240,7 +502,6 @@ pub fn substitution(value: &str, py_dict: &Bound<'_, PyDict>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyo3::types::IntoPyDict;
 
     #[test]
     fn test_display() {

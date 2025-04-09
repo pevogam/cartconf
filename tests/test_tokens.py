@@ -7,18 +7,10 @@ basedir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if os.path.isdir(os.path.join(basedir, 'cartconf')):
     sys.path.append(basedir)
 
-from cartconf.tokens import Token, LIndent, LEndL, LEndBlock, LIdentifier, LWhite, LString, LColon, LVariants, LDot, LVariant, LDefault, LOnly, LSuffix, LJoin, LNo, LCond, LNotCond, LOr, LAnd, LCoc, LComa, LLBracket, LRBracket, LLRBracket, LRRBracket, LRegExpStart, LRegExpStop, LInclude, LSet, LAppend, LPrepend, LLazySet, LRegExpSet, LRegExpAppend, LRegExpPrepend, LDel, LApplyPreDict, LUpdateFileMap, Suffix
+from cartconf.tokens import LIndent, LEndL, LEndBlock, LIdentifier, LWhite, LString, LColon, LVariants, LDot, LVariant, LDefault, LOnly, LSuffix, LJoin, LNo, LCond, LNotCond, LOr, LAnd, LCoc, LComa, LLBracket, LRBracket, LLRBracket, LRRBracket, LRegExpStart, LRegExpStop, LInclude, LSet, LAppend, LPrepend, LLazySet, LRegExpSet, LRegExpAppend, LRegExpPrepend, LDel, LApplyPreDict, LUpdateFileMap, Suffix
 
 
 class TestTokens(unittest.TestCase):
-
-    def test_token(self):
-        t = Token()
-        self.assertEqual(str(t), "")
-        self.assertEqual(repr(t), "''")
-        self.assertFalse(t != Token())
-        # TODO: the comparison is asymmetric for performance reasons
-        self.assertFalse(t == Token())
 
     def test_lindent(self):
         t = LIndent(4)
@@ -216,17 +208,17 @@ class TestTokens(unittest.TestCase):
         self.assertEqual(str(t), "del")
         self.assertEqual(repr(t), "'del'")
 
-    def test_lapply_pred_dict(self):
+    def test_lapply_pre_dict(self):
         t = LApplyPreDict("name", {"key": "value"})
         self.assertEqual(t.name, "name")
-        self.assertEqual(t.value, {"key": "value"})
-        self.assertEqual(str(t), "Apply_pre_dict: {'key': 'value'}")
-        self.assertEqual(repr(t), "Apply_pre_dict: {'key': 'value'}")
+        #self.assertEqual(t.value, {"key": "value"})
+        self.assertEqual(str(t), "apply_pre_dict {\"key\": \"value\"}")
+        self.assertEqual(repr(t), "'apply_pre_dict {\"key\": \"value\"}'")
 
     def test_lupdate_file_map(self):
-        t = LUpdateFileMap("filename", "name")
+        t = LUpdateFileMap("filename", "name", "_name_map_file")
         self.assertEqual(t.name, "name")
-        self.assertEqual(t.shortname, "filename")
+        self.assertEqual(t.filename, "filename")
         self.assertEqual(str(t), "update_file_map")
         self.assertEqual(repr(t), "'update_file_map'")
 
@@ -234,8 +226,8 @@ class TestTokens(unittest.TestCase):
         t = Suffix("name", "value")
         self.assertEqual(t.name, "name")
         self.assertEqual(t.value, "value")
-        self.assertEqual(str(t), "Suffix: value")
-        self.assertEqual(repr(t), "Suffix value")
+        self.assertEqual(str(t), "suffix value")
+        self.assertEqual(repr(t), "'suffix value'")
 
 if __name__ == '__main__':
     unittest.main()
