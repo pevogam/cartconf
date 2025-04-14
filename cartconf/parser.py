@@ -810,7 +810,7 @@ class Parser(object):
         node: Node,
         pre_dict: dict[str, str],
     ) -> None:
-        predict = LApplyPreDict().set_operands(None, pre_dict.copy())
+        predict = LApplyPreDict(None, pre_dict.copy())
         node.content += [(lexer.filename, lexer.linenum, predict)]
         pre_dict.clear()
 
@@ -863,7 +863,7 @@ class Parser(object):
         ):
             value_str = value_str[1:-1]
 
-        op.set_operands(identifier_str, value_str)
+        op = type(op)(identifier_str, value_str)
         d_nin_val = "$" not in value_str
         if isinstance(op, LSet) and d_nin_val:  # Optimization
             op.apply_to_dict(pre_dict)
@@ -893,8 +893,7 @@ class Parser(object):
         """
         _, to_del = lexer.get_next_check_no_white([LIdentifier])
         lexer.get_next_check_no_white([LEndL])
-        token = LDel()
-        token.set_operands(to_del.string, None)
+        token = LDel(to_del.string, None)
 
         Parser._apply_predict(lexer, node, pre_dict)
         node.content += [(lexer.filename, lexer.linenum, token)]
@@ -1097,7 +1096,7 @@ class Parser(object):
             node2.labels = node.labels
 
             if variant_name:
-                op = LSet().set_operands(variant_name, ".".join([n for n in name]))
+                op = LSet(variant_name, ".".join([n for n in name]))
                 node2.content += [(lexer.filename, lexer.linenum, op)]
 
             node3 = self._parse(lexer, node2, prev_indent=indent)
@@ -1124,12 +1123,10 @@ class Parser(object):
 
             node3.append_to_shortname = not is_default
 
-            op = LUpdateFileMap()
-            op.set_operands(lexer.filename, ".".join(str(x) for x in node3.name))
+            op = LUpdateFileMap(lexer.filename, ".".join(str(x) for x in node3.name))
             node3.content += [(lexer.filename, lexer.linenum, op)]
 
-            op = LUpdateFileMap()
-            op.set_operands(
+            op = LUpdateFileMap(
                 lexer.filename,
                 ".".join(str(x.name) for x in node3.name),
                 "_short_name_map_file",
@@ -1298,7 +1295,7 @@ class Parser(object):
                         Parser._apply_predict(lexer, node, pre_dict)
                     token_type, token_val = lexer.get_next_check([LIdentifier])
                     lexer.get_next_check([LEndL])
-                    suffix_operator = Suffix().set_operands(None, token_val.string)
+                    suffix_operator = Suffix(None, token_val.string)
                     # Suffix will be applied as all other elements in current node are processed:
                     suffix = (lexer.filename, lexer.linenum, suffix_operator)
 

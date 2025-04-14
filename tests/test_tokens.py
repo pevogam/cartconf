@@ -161,88 +161,77 @@ class TestTokens(unittest.TestCase):
         self.assertEqual(repr(t), "'include'")
 
     def test_lset(self):
-        t = LSet()
-        t.set_operands("name", "value")
+        t = LSet("name", "value")
         self.assertEqual(t.name, "name")
         self.assertEqual(t.value, "value")
         self.assertEqual(str(t), "=")
         self.assertEqual(repr(t), "'='")
 
     def test_lappend(self):
-        t = LAppend()
-        t.set_operands("name", "value")
+        t = LAppend("name", "value")
         self.assertEqual(t.name, "name")
         self.assertEqual(t.value, "value")
         self.assertEqual(str(t), "+=")
         self.assertEqual(repr(t), "'+='")
 
     def test_lprepend(self):
-        t = LPrepend()
-        t.set_operands("name", "value")
+        t = LPrepend("name", "value")
         self.assertEqual(t.name, "name")
         self.assertEqual(t.value, "value")
         self.assertEqual(str(t), "<=")
         self.assertEqual(repr(t), "'<='")
 
     def test_llazyset(self):
-        t = LLazySet()
-        t.set_operands("name", "value")
+        t = LLazySet("name", "value")
         self.assertEqual(t.name, "name")
         self.assertEqual(t.value, "value")
         self.assertEqual(str(t), "~=")
         self.assertEqual(repr(t), "'~='")
 
     def test_lregexp_set(self):
-        t = LRegExpSet()
-        t.set_operands("name", "value")
+        t = LRegExpSet("name", "value")
         self.assertEqual(t.name, "name")
         self.assertEqual(t.value, "value")
         self.assertEqual(str(t), "?=")
         self.assertEqual(repr(t), "'?='")
 
     def test_lregexp_append(self):
-        t = LRegExpAppend()
-        t.set_operands("name", "value")
+        t = LRegExpAppend("name", "value")
         self.assertEqual(t.name, "name")
         self.assertEqual(t.value, "value")
         self.assertEqual(str(t), "?+=")
         self.assertEqual(repr(t), "'?+='")
 
     def test_lregexp_prepend(self):
-        t = LRegExpPrepend()
-        t.set_operands("name", "value")
+        t = LRegExpPrepend("name", "value")
         self.assertEqual(t.name, "name")
         self.assertEqual(t.value, "value")
         self.assertEqual(str(t), "?<=")
         self.assertEqual(repr(t), "'?<='")
 
     def test_ldel(self):
-        t = LDel()
-        t.set_operands("name", "value")
+        t = LDel("name", "value")
         self.assertEqual(t.name, "name")
         self.assertEqual(t.value, "value")
         self.assertEqual(str(t), "del")
         self.assertEqual(repr(t), "'del'")
 
     def test_lapply_pred_dict(self):
-        t = LApplyPreDict()
-        t.set_operands("name", {"key": "value"})
+        t = LApplyPreDict("name", {"key": "value"})
         self.assertEqual(t.name, "name")
         self.assertEqual(t.value, {"key": "value"})
         self.assertEqual(str(t), "Apply_pre_dict: {'key': 'value'}")
         self.assertEqual(repr(t), "Apply_pre_dict: {'key': 'value'}")
 
     def test_lupdate_file_map(self):
-        t = LUpdateFileMap()
-        t.set_operands("filename", "name")
+        t = LUpdateFileMap("filename", "name")
         self.assertEqual(t.name, "name")
         self.assertEqual(t.shortname, "filename")
         self.assertEqual(str(t), "update_file_map")
         self.assertEqual(repr(t), "'update_file_map'")
 
     def test_suffix(self):
-        t = Suffix()
-        t.set_operands("name", "value")
+        t = Suffix("name", "value")
         self.assertEqual(t.name, "name")
         self.assertEqual(t.value, "value")
         self.assertEqual(str(t), "Suffix: value")

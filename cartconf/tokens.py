@@ -77,12 +77,11 @@ class LOperators(Token):
     identifier = ""
     function = None
 
-    def set_operands(self, name: str, value: str) -> "LOperators":
+    def __init__(self, name: str = "", value: str = "") -> None:
         # pylint: disable=W0201
         self.name = str(name)
         # pylint: disable=W0201
         self.value = str(value)
-        return self
 
 
 class LSet(LOperators):
@@ -182,10 +181,9 @@ class LApplyPreDict(LOperators):
     __slots__ = []
     identifier = "apply_pre_dict"
 
-    def set_operands(self, name: str, value: dict[str, Any]) -> "LApplyPreDict":
+    def __init__(self, name: str, value: dict[str, Any]) -> None:
         self.name = name  # pylint: disable=W0201,E0237
         self.value = value  # pylint: disable=W0201,E0237
-        return self
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
         d.update(self.value)
@@ -201,9 +199,7 @@ class LUpdateFileMap(LOperators):
     __slots__ = ["shortname", "dest"]
     identifier = "update_file_map"
 
-    def set_operands(
-        self, filename: str, name: str, dest: str = "_name_map_file"
-    ) -> "LUpdateFileMap":
+    def __init__(self, filename: str, name: str, dest: str = "_name_map_file") -> None:
         # pylint: disable=W0201
         self.name = name
         # pylint: disable=W0201
@@ -213,7 +209,6 @@ class LUpdateFileMap(LOperators):
             self.shortname = os.path.basename(filename)
 
         self.dest = dest
-        return self
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
         dest = self.dest
