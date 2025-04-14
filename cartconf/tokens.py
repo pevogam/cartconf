@@ -8,9 +8,7 @@ import re
 from typing import Any
 
 # python imports
-from .exceptions import ParserError
 from .constants import reserved_keys
-from .utils import drop_suffixes
 
 # rust imports
 # TODO: cannot import in a more natural way, see
@@ -93,7 +91,7 @@ class LSet(LOperators):
         :param d: Dictionary for apply value
         """
         if self.name not in reserved_keys:
-            d[self.name] = _substitution(self.value, d)
+            d[self.name] = tokens.substitution(self.value, d)
 
 
 class LAppend(LOperators):
@@ -102,7 +100,7 @@ class LAppend(LOperators):
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
         if self.name not in reserved_keys:
-            d[self.name] = d.get(self.name, "") + _substitution(self.value, d)
+            d[self.name] = d.get(self.name, "") + tokens.substitution(self.value, d)
 
 
 class LPrepend(LOperators):
@@ -111,7 +109,7 @@ class LPrepend(LOperators):
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
         if self.name not in reserved_keys:
-            d[self.name] = _substitution(self.value, d) + d.get(self.name, "")
+            d[self.name] = tokens.substitution(self.value, d) + d.get(self.name, "")
 
 
 class LLazySet(LOperators):
@@ -120,7 +118,7 @@ class LLazySet(LOperators):
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
         if self.name not in reserved_keys and self.name not in d:
-            d[self.name] = _substitution(self.value, d)
+            d[self.name] = tokens.substitution(self.value, d)
 
 
 class LRegExpSet(LOperators):
@@ -129,7 +127,7 @@ class LRegExpSet(LOperators):
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
         exp = re.compile("%s$" % self.name)
-        value = _substitution(self.value, d)
+        value = tokens.substitution(self.value, d)
         for key in d:
             keystr = "".join(key) if isinstance(key, tuple) else key
             if key not in reserved_keys and exp.match(keystr):
@@ -142,7 +140,7 @@ class LRegExpAppend(LOperators):
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
         exp = re.compile("%s$" % self.name)
-        value = _substitution(self.value, d)
+        value = tokens.substitution(self.value, d)
         for key in d:
             keystr = "".join(key) if isinstance(key, tuple) else key
             if key not in reserved_keys and exp.match(keystr):
@@ -155,7 +153,7 @@ class LRegExpPrepend(LOperators):
 
     def apply_to_dict(self, d: dict[str, Any]) -> None:
         exp = re.compile("%s$" % self.name)
-        value = _substitution(self.value, d)
+        value = tokens.substitution(self.value, d)
         for key in d:
             keystr = "".join(key) if isinstance(key, tuple) else key
             if key not in reserved_keys and exp.match(keystr):
@@ -271,35 +269,3 @@ tokens_oper = {
     "?+": LRegExpAppend,
     "?<": LRegExpPrepend,
 }
-
-
-# Helpers for all tokens
-def _substitution(value: str, d: dict[str, Any]) -> str:
-    """
-    Only optimization string Template substitute is quite expensive operation.
-
-    .. todo:: The current substitution is limited to simple cases when it comes
-        to using join and suffix operators.
-
-    :param value: String where could be $string for substitution.
-    :param d: Dictionary from which should be value substituted to value.
-
-    :return: Substituted string
-    """
-    if "$" in value:
-        start = 0
-        st = ""
-        d_flat = drop_suffixes(d)
-        try:
-            match = match_substitute.search(value, start)
-            while match:
-                val = d_flat[match.group(1)]
-                st += value[start : match.start()] + str(val)
-                start = match.end()
-                match = match_substitute.search(value, start)
-        except KeyError:
-            pass
-        st += value[start : len(value)]
-        return st
-    else:
-        return value
