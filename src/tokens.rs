@@ -4,8 +4,16 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyTuple};
 use pyo3::exceptions::PyAttributeError;
+
+const RESERVED_KEYS: &[&str] = &[
+    "name",
+    "shortname",
+    "dep",
+    "_short_name_map_file",
+    "_name_map_file",
+];
 
 // Define an enum for the different types of tokens
 #[pyclass(eq)]
@@ -133,6 +141,69 @@ impl Tokens {
     }
 }
 
+fn drop_suffixes(py_dict: &Bound<'_, PyDict>, skipdups: bool) -> HashMap<String, String> {
+    let mut d_flat = HashMap::new();
+
+    for (key, value) in py_dict.iter() {
+        let Ok(value_str) = value.extract::<String>() else {
+            continue;
+        };
+
+        if let Ok(key_str) = key.extract::<String>() {
+            if RESERVED_KEYS.contains(&key_str.as_str()) {
+                // treating reserved keys as regular string keys here
+            }
+            d_flat.insert(key_str, value_str);
+        } else if let Ok(key_tuple) = key.downcast::<PyTuple>() {
+            let gen_key = &key_tuple.get_item(0).unwrap().extract::<String>().unwrap();
+            let mut can_drop_all_suffixes = true;
+
+            if skipdups {
+                if let Ok(Some(gen_value)) = py_dict.get_item(gen_key) {
+                    if let Ok(gen_value_str) = gen_value.extract::<String>() {
+                        if gen_value_str == value_str {
+                            continue; // Skip duplicate suffixes
+                        } else {
+                            can_drop_all_suffixes = false;
+                        }
+                    }
+                }
+
+                if can_drop_all_suffixes {
+                    for (other_key, other_value) in py_dict.iter() {
+                        if let Ok(other_key_tuple) = other_key.downcast::<PyTuple>() {
+                            if other_key_tuple.get_item(0).unwrap().extract::<String>().unwrap() == *gen_key {
+                                if let Ok(other_value_str) = other_value.extract::<String>() {
+                                    if other_value_str != value_str {
+                                        can_drop_all_suffixes = false;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let new_key = if skipdups && can_drop_all_suffixes {
+                gen_key.clone()
+            } else {
+                let key_vec = key_tuple.iter()
+                    .map(|item| item.extract::<String>().unwrap())
+                    .collect::<Vec<_>>();
+                let mut suffix_parts = key_vec[1..].to_vec();
+                suffix_parts.reverse();
+                format!("{}{}", key_vec[0], suffix_parts.join(""))
+            };
+
+            d_flat.insert(new_key, value_str);
+        }
+
+    }
+
+    d_flat
+}
+
 static MATCH_SUBSTITUTE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\$\{(.+?)\}")
     .expect("Invalid MATCH_SUBSTITUTE pattern")
@@ -144,25 +215,8 @@ pub fn substitution(value: &str, py_dict: &Bound<'_, PyDict>) -> String {
         let mut start = 0;
         let mut result = String::new();
 
-        // Call the Python `drop_suffixes` function from the `utils` module
-        let d: HashMap<String, String> = Python::with_gil(|py| {
-            let utils = PyModule::import(py, "cartconf.utils").expect("Failed to import utils module");
-            let drop_suffixes = utils.getattr("drop_suffixes").expect("Failed to get drop_suffixes function");
-            let result = drop_suffixes
-            .call1((py_dict, true))
-            .expect("Failed to call drop_suffixes");
-            let d_flat = result.downcast::<PyDict>().unwrap();
-            // Convert the flattened PyDict to HashMap<String, String> to guarantee string values
-            d_flat
-                .iter()
-                .filter_map(|(key, value)| {
-                    let key = key.extract::<String>().ok()?;
-                    // ignore deps, mapped files, or other list-like key values
-                    let value = value.extract::<String>().ok()?;
-                    Some((key, value))
-                })
-                .collect()
-            });
+        // Use the Rust `drop_suffixes` function
+        let d = drop_suffixes(py_dict, true);
 
         while let Some(captures) = MATCH_SUBSTITUTE.captures(&value[start..]) {
             if let Some(matched) = captures.get(0) {
@@ -276,6 +330,114 @@ mod tests {
             ].into_py_dict(py).unwrap();
             let result = substitution("This is ${key1} and ${key2_s1}.", &py_dict);
             assert_eq!(result, "This is value1 and value2.");
+        });
+    }
+
+    #[test]
+    fn test_drop_suffixes_with_simple_keys() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let py_dict = [
+                ("key1", "value1"),
+                ("key2", "value2")
+            ].into_py_dict(py)
+            .unwrap();
+            let result = drop_suffixes(&py_dict, true);
+            assert_eq!(result.get("key1"), Some(&"value1".to_string()), "key1 is preserved");
+            assert_eq!(result.get("key2"), Some(&"value2".to_string()), "key2 is preserved");
+        });
+    }
+
+    #[test]
+    fn test_drop_suffixes_with_tuple_keys() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let py_dict = [
+                (("key1", "_s1"), "value1"),
+                (("key1", "_s2"), "value1"),
+                (("key2", "_s1"), "value2"),
+                (("key2", "_s2"), "value22"),
+                (("key3", "_sX"), "value3"),
+            ]
+            .into_py_dict(py)
+            .unwrap();
+            let result = drop_suffixes(&py_dict, true);
+            assert_eq!(result.get("key1"), Some(&"value1".to_string()), "single general key remains");
+            assert_eq!(result.get("key1_s1"), None, "duplicate suffix is skipped");
+            assert_eq!(result.get("key1_s2"), None, "duplicate suffix is skipped");
+            assert_eq!(result.get("key2"), None, "no general key is created for different suffix values");
+            assert_eq!(result.get("key2_s1"), Some(&"value2".to_string()), "nonduplicate suffix is preserved");
+            assert_eq!(result.get("key2_s2"), Some(&"value22".to_string()), "nonduplicate suffix is preserved");
+            assert_eq!(result.get("key3"), Some(&"value3".to_string()), "single suffix is converted to general key");
+        });
+    }
+
+    #[test]
+    fn test_drop_suffixes_with_mixed_keys() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let py_dict = [
+                (("key1", "_s2"), "value1"),
+                (("key2", "_s2"), "value22"),
+                (("key3", "_sX"), "value3"),
+            ]
+            .into_py_dict(py)
+            .unwrap();
+            py_dict.set_item("key1", "value1").unwrap();
+            py_dict.set_item(("key1", "_sY", "_sZ"), "value1").unwrap();
+            py_dict.set_item("key2", "value2").unwrap();
+            py_dict.set_item(("key2", "_sY", "_sZ"), "value222").unwrap();
+            py_dict.set_item("key4", "value4").unwrap();
+            py_dict.set_item(("key5", "_sY", "_sZ"), "value5").unwrap();
+            let result = drop_suffixes(&py_dict, true);
+            assert_eq!(result.get("key1"), Some(&"value1".to_string()), "single general key remains");
+            assert_eq!(result.get("key1_s2"), None, "duplicate suffix is skipped");
+            assert_eq!(result.get("key1_sZ_sY"), None, "duplicate double suffix is skipped");
+            assert_eq!(result.get("key2"), Some(&"value2".to_string()), "general key is preserved");
+            assert_eq!(result.get("key2_s2"), Some(&"value22".to_string()), "single suffix is preserved together with general key");
+            assert_eq!(result.get("key2_sZ_sY"), Some(&"value222".to_string()), "duplicate double suffix is preserved together with general key");
+            assert_eq!(result.get("key3"), Some(&"value3".to_string()), "single suffix is converted to general key");
+            assert_eq!(result.get("key4"), Some(&"value4".to_string()), "single general key is preserved");
+            assert_eq!(result.get("key5"), Some(&"value5".to_string()), "single general key is preserved");
+        });
+    }
+
+    #[test]
+    fn test_drop_suffixes_with_skipdups_false() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let py_dict = [
+                (("key1", "_s1"), "value1"),
+                (("key1", "_s2"), "value1"),
+            ]
+            .into_py_dict(py)
+            .unwrap();
+            py_dict.set_item("key1", "value1").unwrap();
+            let result = drop_suffixes(&py_dict, false);
+            assert_eq!(result.get("key1"), Some(&"value1".to_string()), "general key is preserved");
+            assert_eq!(result.get("key1_s1"), Some(&"value1".to_string()), "duplicate suffix is preserved");
+            assert_eq!(result.get("key1_s2"), Some(&"value1".to_string()), "duplicate suffix is preserved");
+        });
+    }
+
+    #[test]
+    fn test_drop_suffixes_with_reserved_keys() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let py_dict = [
+                (("key1", "_s1"), "value1"),
+            ]
+            .into_py_dict(py)
+            .unwrap();
+            for key in RESERVED_KEYS.iter() {
+                py_dict.set_item(*key, "reserved_value").unwrap();
+            }
+            let result = drop_suffixes(&py_dict, true);
+            assert_eq!(result.get("key1"), Some(&"value1".to_string()), "suffixed key is reduced as usual");
+            for key in RESERVED_KEYS.iter() {
+                py_dict.set_item(*key, "reserved_value").unwrap();
+                assert_eq!(result.get(*key), Some(&"reserved_value".to_string()), "reserved key is preserved");
+            }
         });
     }
 }
