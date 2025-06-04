@@ -9,4 +9,5 @@ name = "cartconf"
 crate-type = ["cdylib"]
 
 [dependencies]
+regex = "1.7"
 pyo3 = { version = "0.23.5" }

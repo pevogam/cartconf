@@ -259,10 +259,10 @@ class LexerTest(unittest.TestCase):
         self.assertIsInstance(token, parser.LColon)
         token = next(generator)
         self.assertIsInstance(token, parser.LWhite)
-        self.assertEqual(token, "")
+        self.assertEqual(token.string, "")
         token = next(generator)
         self.assertIsInstance(token, parser.LIdentifier)
-        self.assertEqual(token, "test")
+        self.assertEqual(token.string, "test")
 
     def test_get_until_gen(self):
         tokens = list(self.lexer.get_until_gen([parser.LOnly]))
@@ -290,7 +290,7 @@ class LexerTest(unittest.TestCase):
         self.lexer.flush_until([parser.LOnly])
         token = next(self.lexer.generator)
         self.assertIsInstance(token, parser.LIdentifier)
-        self.assertEqual(token, "test")
+        self.assertEqual(token.string, "test")
 
     def test_get_until_check(self):
         tokens = self.lexer.get_until_check(
@@ -307,7 +307,7 @@ class LexerTest(unittest.TestCase):
         self.assertIsInstance(tokens[0], parser.LIndent)
         self.assertIsInstance(tokens[1], parser.LVariants)
         self.assertIsInstance(tokens[2], parser.LColon)
-        self.assertIsInstance(tokens[3], parser.LIdentifier)
+        self.assertIsInstance(tokens[3], parser.LWhite)
         self.assertIsInstance(tokens[4], parser.LIdentifier)
         self.assertIsInstance(tokens[5], parser.LEndL)
         self.assertIsInstance(tokens[6], parser.LIndent)
@@ -334,14 +334,14 @@ class LexerTest(unittest.TestCase):
         self.assertIsInstance(tokens[0], parser.LIndent)
         self.assertIsInstance(tokens[1], parser.LVariants)
         self.assertIsInstance(tokens[2], parser.LColon)
-        self.assertIsInstance(tokens[3], parser.LIdentifier)
+        self.assertIsInstance(tokens[3], parser.LWhite)
 
     def test_rest_line(self):
         tokens = self.lexer.rest_line()
         self.assertIsInstance(tokens[0], parser.LIndent)
         self.assertIsInstance(tokens[1], parser.LVariants)
         self.assertIsInstance(tokens[2], parser.LColon)
-        self.assertIsInstance(tokens[3], parser.LIdentifier)
+        self.assertIsInstance(tokens[3], parser.LWhite)
 
     def test_rest_line_no_white(self):
         tokens = self.lexer.rest_line_no_white()
@@ -357,7 +357,7 @@ class LexerTest(unittest.TestCase):
         next(self.lexer.generator)  # colon
         token = self.lexer.rest_line_as_string_token()
         self.assertIsInstance(token, parser.LString)
-        self.assertEqual(token, "test")
+        self.assertEqual(token.string, "test")
 
         # only compatible line endings are possible
         with self.assertRaises(parser.ParserError):
@@ -530,6 +530,7 @@ class ParserTest(unittest.TestCase):
 
     def setUp(self):
         self.parser = parser.Parser()
+        self.maxDiff = None
 
     def test_initialization(self):
         self.assertIsInstance(self.parser.node, parser.Node)
@@ -588,7 +589,7 @@ class ParserTest(unittest.TestCase):
         self.assertIn("key = value", self.parser.assignments)
         self.assertEqual(self.parser.node.name, [])
         last_content = self.parser.node.content[-1]
-        self.assertIn("'key': 'value'", str(last_content[2]))
+        self.assertIn("\"key\": \"value\"", str(last_content[2]))
 
     def test_parse_filter(self):
         lexer = parser.Lexer(parser.StrReader("test.value"))
