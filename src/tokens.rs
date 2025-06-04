@@ -238,12 +238,12 @@ impl Tokens {
                         }
                     } else {
                         let key_tuple = key.downcast::<PyTuple>()?.as_slice();
-                        let mut key_str = String::new();
-                        for item in key_tuple.iter() {
+                        let key_str = key_tuple.iter().fold(String::new(), |mut acc, item| {
                             if let Ok(item_str) = item.extract::<String>() {
-                                key_str.push_str(&item_str);
+                                acc.push_str(&item_str);
                             }
-                        }
+                            acc
+                        });
                         if exp.is_match(&key_str) {
                             py_dict.set_item(key, &substituted_value)?;
                         }
@@ -264,12 +264,12 @@ impl Tokens {
                         }
                     } else {
                         let key_tuple = key.downcast::<PyTuple>()?.as_slice();
-                        let mut key_str = String::new();
-                        for item in key_tuple.iter() {
+                        let key_str = key_tuple.iter().fold(String::new(), |mut acc, item| {
                             if let Ok(item_str) = item.extract::<String>() {
-                                key_str.push_str(&item_str);
+                                acc.push_str(&item_str);
                             }
-                        }
+                            acc
+                        });
                         if exp.is_match(&key_str) {
                             let current_value = val.extract::<String>().unwrap_or_default();
                             let new_value = format!("{}{}", current_value, substituted_value);
@@ -292,12 +292,12 @@ impl Tokens {
                         }
                     } else {
                         let key_tuple = key.downcast::<PyTuple>()?.as_slice();
-                        let mut key_str = String::new();
-                        for item in key_tuple.iter() {
+                        let key_str = key_tuple.iter().fold(String::new(), |mut acc, item| {
                             if let Ok(item_str) = item.extract::<String>() {
-                                key_str.push_str(&item_str);
+                                acc.push_str(&item_str);
                             }
-                        }
+                            acc
+                        });
                         if exp.is_match(&key_str) {
                             let current_value = val.extract::<String>().unwrap_or_default();
                             let new_value = format!("{}{}", substituted_value, current_value);
@@ -312,6 +312,7 @@ impl Tokens {
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
                 let keys_to_delete: Vec<_> = py_dict
                     .iter()
+                    // TODO: using "?" doesn't propagate so now we just ignore errors using "ok()?" - try try_filter_map?
                     .filter_map(|(key, _)| {
                         if let Ok(key_str) = key.extract::<String>() {
                             if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
@@ -319,12 +320,12 @@ impl Tokens {
                             }
                         } else {
                             let key_tuple = key.downcast::<PyTuple>().ok()?.as_slice();
-                            let mut key_str = String::new();
-                            for item in key_tuple.iter() {
+                            let key_str = key_tuple.iter().fold(String::new(), |mut acc, item| {
                                 if let Ok(item_str) = item.extract::<String>() {
-                                    key_str.push_str(&item_str);
+                                    acc.push_str(&item_str);
                                 }
-                            }
+                                acc
+                            });
                             if exp.is_match(&key_str) {
                                 return Some(key);
                             }
@@ -377,26 +378,28 @@ impl Tokens {
             }
             Tokens::Suffix(_, value) => {
                 let py_value = value.into_bound_py_any(py_dict.py())?;
-                let suffixed_py_dict = PyDict::new(py_dict.py());
-                for (key, val) in py_dict.iter() {
+                let keyvals = py_dict.iter().filter_map(|(key, val)| {
                     let py_value_clone = py_value.clone();
                     let mut items = Vec::new();
                     if let Ok(key_str) = key.extract::<String>() {
                         if RESERVED_KEYS.contains(&key_str.as_str()) {
-                            suffixed_py_dict.set_item(key, val)?;
-                            continue;
+                            return Some((key, val));
                         } else {
                             items.push(&key);
                         }
                     } else {
-                        let key_tuple = key.downcast::<PyTuple>()?.as_slice();
+                        let key_tuple = key.downcast::<PyTuple>().ok()?.as_slice();
                         for item in key_tuple.iter() {
                             items.push(item);
                         }
                     }
                     items.push(&py_value_clone);
-                    let new_key = PyTuple::new(py_dict.py(), items)?;
-                    suffixed_py_dict.set_item(new_key, val)?;
+                    let new_key = PyTuple::new(py_dict.py(), items).ok()?;
+                    Some((new_key.into_bound_py_any(py_dict.py()).ok()?, val))
+                }).collect::<Vec<_>>();
+                let suffixed_py_dict = PyDict::new(py_dict.py());
+                for (k, v) in keyvals {
+                    suffixed_py_dict.set_item(k, v)?;
                 }
                 py_dict.clear();
                 py_dict.update(suffixed_py_dict.as_mapping())?;
@@ -408,65 +411,58 @@ impl Tokens {
 }
 
 fn drop_suffixes(py_dict: &Bound<'_, PyDict>, skipdups: bool) -> PyResult<HashMap<String, String>> {
-    let mut d_flat = HashMap::new();
+    let d_flat: HashMap<String, String> = py_dict
+        .iter()
+        .filter_map(|(key, value)| {
+            let value_str = value.extract::<String>().ok()?;
+            if let Ok(key_str) = key.extract::<String>() {
+                Some((key_str, value_str))
+            } else if let Ok(key_tuple) = key.downcast::<PyTuple>() {
+                let gen_key = key_tuple.get_item(0).ok()?.extract::<String>().ok()?;
+                let mut can_drop_all_suffixes = true;
 
-    for (key, value) in py_dict.iter() {
-        let Ok(value_str) = value.extract::<String>() else {
-            // some special values are allowed to not be strings
-            continue;
-        };
-
-        if let Ok(key_str) = key.extract::<String>() {
-            if RESERVED_KEYS.contains(&key_str.as_str()) {
-                // treating reserved keys as regular string keys here
-            }
-            d_flat.insert(key_str, value_str);
-        } else if let Ok(key_tuple) = key.downcast::<PyTuple>() {
-            let gen_key = &key_tuple.get_item(0)?.extract::<String>()?;
-            let mut can_drop_all_suffixes = true;
-
-            if skipdups {
-                if let Ok(Some(gen_value)) = py_dict.get_item(gen_key) {
-                    if let Ok(gen_value_str) = gen_value.extract::<String>() {
-                        if gen_value_str == value_str {
-                            continue; // Skip duplicate suffixes
-                        } else {
-                            can_drop_all_suffixes = false;
-                        }
-                    }
-                }
-
-                if can_drop_all_suffixes {
-                    for (other_key, other_value) in py_dict.iter() {
-                        if let Ok(other_key_tuple) = other_key.downcast::<PyTuple>() {
-                            if other_key_tuple.get_item(0)?.extract::<String>()? == *gen_key {
-                                if let Ok(other_value_str) = other_value.extract::<String>() {
-                                    if other_value_str != value_str {
-                                        can_drop_all_suffixes = false;
-                                        break;
-                                    }
-                                }
+                if skipdups {
+                    if let Ok(Some(gen_value)) = py_dict.get_item(&gen_key) {
+                        if let Ok(gen_value_str) = gen_value.extract::<String>() {
+                            if gen_value_str == value_str {
+                                return None; // Skip duplicate suffixes
+                            } else {
+                                can_drop_all_suffixes = false;
                             }
                         }
                     }
+
+                    if can_drop_all_suffixes {
+                        can_drop_all_suffixes = py_dict.iter()
+                            .filter_map(|(other_key, other_value)| {
+                                other_key.downcast::<PyTuple>().ok()?
+                                    .get_item(0).ok()?
+                                    .extract::<String>().ok()
+                                    .filter(|k| k == &gen_key)
+                                    .and_then(|_| other_value.extract::<String>().ok())
+                            })
+                            .all(|other_value_str| other_value_str == value_str);
+                    }
                 }
-            }
 
-            let new_key = if skipdups && can_drop_all_suffixes {
-                gen_key.clone()
+                let new_key = if skipdups && can_drop_all_suffixes {
+                    gen_key
+                } else {
+                    let key_vec = key_tuple.iter()
+                        .map(|item| item.extract::<String>())
+                        .collect::<Result<Vec<_>, _>>()
+                        .ok()?;
+                        let mut suffix_parts = key_vec[1..].to_vec();
+                        suffix_parts.reverse();
+                        format!("{}{}", key_vec[0], suffix_parts.join(""))
+                };
+
+                Some((new_key, value_str))
             } else {
-                 let key_vec = key_tuple.iter()
-                     .map(|item| item.extract::<String>())
-                     .collect::<Result<Vec<_>, _>>()?;
-                 let mut suffix_parts = key_vec[1..].to_vec();
-                 suffix_parts.reverse();
-                 format!("{}{}", key_vec[0], suffix_parts.join(""))
-            };
-
-            d_flat.insert(new_key, value_str);
-        }
-
-    }
+                None
+            }
+        })
+        .collect();
 
     Ok(d_flat)
 }
