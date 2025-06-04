@@ -189,7 +189,7 @@ impl Tokens {
             Tokens::LSet(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) {
                     let substituted_value = substitution(value, py_dict);
-                    py_dict.set_item(name, &substituted_value)?;
+                    py_dict.set_item(name, substituted_value)?;
                 }
                 Ok(())
             }
@@ -198,10 +198,10 @@ impl Tokens {
                     // TODO: ridiculously complicated way to get an empty python string
                     let empty_value: Bound<'_, PyAny> = PyString::new(py_dict.py(), "").into_bound_py_any(py_dict.py()).unwrap();
                     if let Ok(current_value) = py_dict.get_item(name) {
-                        let current_value = current_value.unwrap_or_else(|| empty_value);
+                        let current_value = current_value.unwrap_or(empty_value);
                         let substituted_value = substitution(value, py_dict);
                         let new_value = format!("{}{}", current_value.extract::<String>()?, substituted_value);
-                        py_dict.set_item(name, &new_value)?;
+                        py_dict.set_item(name, new_value)?;
                     }
                 }
                 Ok(())
@@ -211,10 +211,10 @@ impl Tokens {
                     // TODO: ridiculously complicated way to get an empty python string
                     let empty_value: Bound<'_, PyAny> = PyString::new(py_dict.py(), "").into_bound_py_any(py_dict.py()).unwrap();
                     if let Ok(current_value) = py_dict.get_item(name) {
-                        let current_value = current_value.unwrap_or_else(|| empty_value);
+                        let current_value = current_value.unwrap_or(empty_value);
                         let substituted_value = substitution(value, py_dict);
                         let new_value = format!("{}{}", substituted_value, current_value.extract::<String>()?);
-                        py_dict.set_item(name, &new_value)?;
+                        py_dict.set_item(name, new_value)?;
                     }
                 }
                 Ok(())
@@ -222,7 +222,7 @@ impl Tokens {
             Tokens::LLazySet(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) && !py_dict.contains(name)? {
                     let substituted_value = substitution(value, py_dict);
-                    py_dict.set_item(name, &substituted_value)?;
+                    py_dict.set_item(name, substituted_value)?;
                 }
                 Ok(())
             }
