@@ -169,7 +169,6 @@ impl Tokens {
             Tokens::LRegExpAppend(_name, value) => Ok(value.to_string()),
             Tokens::LRegExpPrepend(_name, value) => Ok(value.to_string()),
             Tokens::LDel(_name, value) => Ok(value.to_string()),
-            //Tokens::LApplyPreDict(_name, value) => Ok(value.to_string()),
             Tokens::LUpdateFileMap(_filename, _name, value) => Ok(value.to_string()),
             Tokens::Suffix(_name, value) => Ok(value.to_string()),
             _ => Err(PyAttributeError::new_err("value is not a valid attribute for this token")),
@@ -511,12 +510,14 @@ mod tests {
 
     #[test]
     fn test_display() {
+        // all tokens are tested via python tests to have end-to-end coverage
         let t1 = Tokens::LIndent(42);
         assert_eq!(format!("{}", t1), "indent 42");
     }
 
     #[test]
     fn test_debug() {
+        // all tokens are tested via python tests to have end-to-end coverage
         let t1 = Tokens::LIndent(42);
         assert_eq!(format!("{:?}", t1), "LIndent(42)");
     }
