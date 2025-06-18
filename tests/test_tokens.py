@@ -274,7 +274,7 @@ class TestTokens(unittest.TestCase):
         self.assertEqual(t.value, "value")
 
     def test_lregexp_set_apply(self):
-        t = LRegExpSet("key_\d", "value")
+        t = LRegExpSet(r"key_\d", "value")
         d = {}
         t.apply_to_dict(d)
         self.assertEqual(d, {})
@@ -297,7 +297,7 @@ class TestTokens(unittest.TestCase):
         self.assertEqual(t.value, "value")
 
     def test_lregexp_append_apply(self):
-        t = LRegExpAppend("key_\d", "value")
+        t = LRegExpAppend(r"key_\d", "value")
         d = {}
         t.apply_to_dict(d)
         self.assertEqual(d, {})
@@ -320,7 +320,7 @@ class TestTokens(unittest.TestCase):
         self.assertEqual(t.value, "value")
 
     def test_lregexp_prepend_apply(self):
-        t = LRegExpPrepend("key_\d", "value")
+        t = LRegExpPrepend(r"key_\d", "value")
         d = {}
         t.apply_to_dict(d)
         self.assertEqual(d, {})
