@@ -63,12 +63,12 @@ pub enum Tokens {
 impl fmt::Display for Tokens {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Tokens::LIndent(length) => write!(f, "indent {}", length),
+            Tokens::LIndent(length) => write!(f, "indent {length}"),
             Tokens::LEndL() => write!(f, "endl"),
-            Tokens::LEndBlock(length) => write!(f, "indent {}", length),
-            Tokens::LIdentifier(string) => write!(f, "Identifier re([A-Za-z0-9][A-Za-z0-9_-]*) \"{}\"", string),
-            Tokens::LWhite(string) => write!(f, "WhiteSpace re(\\s) \"{}\"", string),
-            Tokens::LString(string) => write!(f, "String re(.+) \"{}\"", string),
+            Tokens::LEndBlock(length) => write!(f, "indent {length}"),
+            Tokens::LIdentifier(string) => write!(f, "Identifier re([A-Za-z0-9][A-Za-z0-9_-]*) \"{string}\""),
+            Tokens::LWhite(string) => write!(f, "WhiteSpace re(\\s) \"{string}\""),
+            Tokens::LString(string) => write!(f, "String re(.+) \"{string}\""),
             Tokens::LColon() => write!(f, ":"),
             Tokens::LVariants() => write!(f, "variants"),
             Tokens::LDot() => write!(f, "."),
@@ -99,9 +99,9 @@ impl fmt::Display for Tokens {
             Tokens::LRegExpAppend(_name, _value) => write!(f, "?+="),
             Tokens::LRegExpPrepend(_name, _value) => write!(f, "?<="),
             Tokens::LDel(_name, _value) => write!(f, "del"),
-            Tokens::LApplyPreDict(_name, value) => write!(f, "apply_pre_dict {:?}", value),
+            Tokens::LApplyPreDict(_name, value) => write!(f, "apply_pre_dict {value:?}"),
             Tokens::LUpdateFileMap(_filename, _name, _value) => write!(f, "update_file_map"),
-            Tokens::Suffix(_name, value) => write!(f, "suffix {}", value),
+            Tokens::Suffix(_name, value) => write!(f, "suffix {value}"),
         }
     }
 }
@@ -118,7 +118,7 @@ impl Tokens {
 
     fn __repr__(&self) -> PyResult<String> {
         let s = self.__str__()?;
-        Ok(format!("'{}'", s))
+        Ok(format!("'{s}'"))
     }
 
     #[getter]
@@ -228,7 +228,7 @@ impl Tokens {
                 Ok(())
             }
             Tokens::LRegExpSet(name, value) => {
-                let exp = Regex::new(&format!(r"^{}$", name))
+                let exp = Regex::new(&format!(r"^{name}$"))
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
                 let substituted_value = substitution(value, py_dict)?;
                 for (key, _) in py_dict.iter() {
@@ -252,14 +252,14 @@ impl Tokens {
                 Ok(())
             }
             Tokens::LRegExpAppend(name, value) => {
-                let exp = Regex::new(&format!(r"^{}$", name))
+                let exp = Regex::new(&format!(r"^{name}$"))
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
                 let substituted_value = substitution(value, py_dict)?;
                 for (key, val) in py_dict.iter() {
                     if let Ok(key_str) = key.extract::<String>() {
                         if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
                             let current_value = val.extract::<String>().unwrap_or_default();
-                            let new_value = format!("{}{}", current_value, substituted_value);
+                            let new_value = format!("{current_value}{substituted_value}");
                             py_dict.set_item(key, new_value)?;
                         }
                     } else {
@@ -272,7 +272,7 @@ impl Tokens {
                         });
                         if exp.is_match(&key_str) {
                             let current_value = val.extract::<String>().unwrap_or_default();
-                            let new_value = format!("{}{}", current_value, substituted_value);
+                            let new_value = format!("{current_value}{substituted_value}");
                             py_dict.set_item(key, new_value)?;
                         }
                     }
@@ -280,14 +280,14 @@ impl Tokens {
                 Ok(())
             }
             Tokens::LRegExpPrepend(name, value) => {
-                let exp = Regex::new(&format!(r"^{}$", name))
+                let exp = Regex::new(&format!(r"^{name}$"))
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
                 let substituted_value = substitution(value, py_dict)?;
                 for (key, val) in py_dict.iter() {
                     if let Ok(key_str) = key.extract::<String>() {
                         if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
                             let current_value = val.extract::<String>().unwrap_or_default();
-                            let new_value = format!("{}{}", substituted_value, current_value);
+                            let new_value = format!("{substituted_value}{current_value}");
                             py_dict.set_item(key, new_value)?;
                         }
                     } else {
@@ -300,7 +300,7 @@ impl Tokens {
                         });
                         if exp.is_match(&key_str) {
                             let current_value = val.extract::<String>().unwrap_or_default();
-                            let new_value = format!("{}{}", substituted_value, current_value);
+                            let new_value = format!("{substituted_value}{current_value}");
                             py_dict.set_item(key, new_value)?;
                         }
                     }
@@ -308,7 +308,7 @@ impl Tokens {
                 Ok(())
             }
             Tokens::LDel(name, _) => {
-                let exp = Regex::new(&format!(r"^{}$", name))
+                let exp = Regex::new(&format!(r"^{name}$"))
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
                 let keys_to_delete: Vec<_> = py_dict
                     .iter()
@@ -362,14 +362,14 @@ impl Tokens {
                 let dest_dict = if let Ok(Some(dest_any)) = py_dict.get_item(dest) {
                     dest_any
                     .downcast::<PyDict>()
-                    .map_err(|_| PyAttributeError::new_err(format!("{} is not a dict", dest)))?
+                    .map_err(|_| PyAttributeError::new_err(format!("{dest} is not a dict")))?
                     .clone()
                 } else {
                     PyDict::new(py_dict.py())
                 };
                 if let Some(old_name) = dest_dict.get_item(&shortname)? {
                     let old_name_str = old_name.extract::<String>()?;
-                    let new_name = format!("{}.{}", name, old_name_str);
+                    let new_name = format!("{name}.{old_name_str}");
                     dest_dict.set_item(&shortname, new_name)?;
                 } else {
                     dest_dict.set_item(&shortname, name)?;
@@ -422,13 +422,12 @@ fn drop_suffixes(py_dict: &Bound<'_, PyDict>, skipdups: bool) -> PyResult<HashMa
                 let mut can_drop_all_suffixes = true;
 
                 if skipdups {
-                    if let Ok(Some(gen_value)) = py_dict.get_item(&gen_key) {
-                        if let Ok(gen_value_str) = gen_value.extract::<String>() {
-                            if gen_value_str == value_str {
-                                return None; // Skip duplicate suffixes
-                            } else {
-                                can_drop_all_suffixes = false;
-                            }
+                    if let Ok(Some(gen_value)) = py_dict.get_item(&gen_key) &&
+                            let Ok(gen_value_str) = gen_value.extract::<String>() {
+                        if gen_value_str == value_str {
+                            return None; // Skip duplicate suffixes
+                        } else {
+                            can_drop_all_suffixes = false;
                         }
                     }
 
@@ -508,14 +507,14 @@ mod tests {
     fn test_display() {
         // all tokens are tested via python tests to have end-to-end coverage
         let t1 = Tokens::LIndent(42);
-        assert_eq!(format!("{}", t1), "indent 42");
+        assert_eq!(format!("{t1}"), "indent 42");
     }
 
     #[test]
     fn test_debug() {
         // all tokens are tested via python tests to have end-to-end coverage
         let t1 = Tokens::LIndent(42);
-        assert_eq!(format!("{:?}", t1), "LIndent(42)");
+        assert_eq!(format!("{t1:?}"), "LIndent(42)");
     }
 
     #[test]
