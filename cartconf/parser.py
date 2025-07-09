@@ -12,9 +12,12 @@ from .exceptions import *
 from .utils import drop_suffixes, apply_suffix_bounds
 from .filters import *
 from .tokens import *
+from .cartconf import lexer
 
 
 LOG = logging.getLogger("avocado." + __name__)
+
+Reader = lexer.Reader
 
 
 class Label(object):
@@ -99,76 +102,6 @@ class Node(object):
         return "\n".join(dump_lines)
 
 
-class StrReader(object):
-    """
-    Preprocess an input string for easy reading.
-    """
-
-    def __init__(self, s: str) -> None:
-        """
-        Initialize the reader.
-
-        :param s: The string to parse.
-        """
-        self.filename = "<string>"
-        self._lines = []
-        self._line_index = 0
-        self._stored_line = None
-        for linenum, line in enumerate(s.splitlines()):
-            line = line.rstrip().expandtabs()
-            stripped_line = line.lstrip()
-            indent = len(line) - len(stripped_line)
-            if not stripped_line or stripped_line.startswith(("#", "//")):
-                continue
-            self._lines.append((stripped_line, indent, linenum + 1))
-
-    def get_next_line(self, prev_indent: int) -> tuple[str | None, int, int]:
-        """
-        Get the next line in the current block.
-
-        :param prev_indent: The indentation level of the previous block.
-        :returns: (line, indent, linenum), where indent is the line's
-            indentation level.  If no line is available, (None, -1, -1) is
-            returned.
-        """
-        if self._stored_line:
-            ret = self._stored_line
-            self._stored_line = None
-            return ret
-        if self._line_index >= len(self._lines):
-            return None, -1, -1
-        line, indent, linenum = self._lines[self._line_index]
-        if indent <= prev_indent:
-            return None, indent, linenum
-        self._line_index += 1
-        return line, indent, linenum
-
-    def set_next_line(self, line: str, indent: int, linenum: int) -> None:
-        """
-        Make the next call to get_next_line() return the given line instead of
-        the real next line.
-        """
-        line = line.strip()
-        if line:
-            self._stored_line = line, indent, linenum
-
-
-class FileReader(StrReader):
-    """
-    Preprocess an input file for easy reading.
-    """
-
-    def __init__(self, filename: str) -> None:
-        """
-        Initialize the reader.
-
-        :param filename: name of the input file
-        """
-        with open(filename) as f:
-            super().__init__(f.read())
-        self.filename = filename
-
-
 class Lexer(object):
 
     tokens_oper_re = [r"\=", r"\+\=", r"\<\=", r"\~\=", r"\?\=", r"\?\+\=", r"\?\<\="]
@@ -176,7 +109,7 @@ class Lexer(object):
     spec_iden = "_-.*+?|\\"
     spec_oper = "+<?~"
 
-    def __init__(self, reader: StrReader | FileReader) -> None:
+    def __init__(self, reader: Reader) -> None:
         """
         Initialize the lexer.
 
@@ -635,7 +568,7 @@ class Parser(object):
         :param cfgfile: configuration file path to parse
         """
         self.node.filename = cfgfile
-        self.node = self._parse(Lexer(FileReader(cfgfile)), self.node)
+        self.node = self._parse(Lexer(Reader(filename=cfgfile)), self.node)
         self.filename = cfgfile
 
     def parse_string(self, cfgstr: str) -> None:
@@ -644,8 +577,8 @@ class Parser(object):
 
         :param cfgstr: configuration string to parse
         """
-        self.node.filename = StrReader("").filename
-        self.node = self._parse(Lexer(StrReader(cfgstr)), self.node)
+        self.node.filename = Reader(content="").filename
+        self.node = self._parse(Lexer(Reader(content=cfgstr)), self.node)
 
     def only_filter(self, variant: str) -> None:
         """
@@ -851,12 +784,12 @@ class Parser(object):
         """
         path = lexer.rest_line_as_string_token()
         filename = os.path.expanduser(path.string)
-        if isinstance(lexer.reader, FileReader) and not os.path.isabs(filename):
+        if lexer.reader.filename != "<string>" and not os.path.isabs(filename):
             filename = os.path.join(os.path.dirname(lexer.filename), filename)
         if not os.path.isfile(filename):
             raise MissingIncludeError(lexer.line, lexer.filename, lexer.linenum)
         Parser._apply_predict(lexer, node, pre_dict)
-        lch = Lexer(FileReader(filename))
+        lch = Lexer(Reader(filename=filename))
         node = self._parse(lch, node, -1)
         return node
 
