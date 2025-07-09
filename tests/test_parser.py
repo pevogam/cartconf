@@ -228,17 +228,16 @@ class LexerTest(unittest.TestCase):
         self.assertEqual(self.lexer.reader, self.reader)
         self.assertEqual(self.lexer.filename, self.reader.filename)
         self.assertIsNone(self.lexer.line)
-        self.assertEqual(self.lexer.linenum, 0)
-        self.assertFalse(self.lexer.ignore_white)
-        self.assertFalse(self.lexer.rest_as_string)
-        self.assertEqual(self.lexer.match_func_index, 0)
+        self.assertEqual(self.lexer.inner.linenum, 0)
+        self.assertFalse(self.lexer.inner.ignore_white)
+        self.assertFalse(self.lexer.inner.rest_as_string)
         self.assertIsNotNone(self.lexer.generator)
-        self.assertEqual(self.lexer.prev_indent, -1)
+        self.assertEqual(self.lexer.inner.prev_indent, -1)
         self.assertFalse(self.lexer.fast)
 
     def test_set_prev_indent(self):
         self.lexer.set_prev_indent(4)
-        self.assertEqual(self.lexer.prev_indent, 4)
+        self.assertEqual(self.lexer.inner.prev_indent, 4)
 
     def test_set_fast(self):
         self.lexer.set_fast()

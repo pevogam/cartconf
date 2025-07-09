@@ -2,6 +2,7 @@ use std::io::{self};
 
 use pyo3::{prelude::*};
 
+use crate::tokens::Tokens;
 
 #[pyclass]
 pub struct Reader {
@@ -23,13 +24,11 @@ impl Reader {
         }
         let content = if let Some(content) = content {
             Ok(content.to_string())
-        } else {
-            if let Some(filename) = filename {
+        } else if let Some(filename) = filename {
                 Ok(std::fs::read_to_string(filename)?)
-            }
-            else {
-                Err(io::Error::new(io::ErrorKind::InvalidInput, "Either filename or content must be provided"))
-            }
+        }
+        else {
+            Err(io::Error::new(io::ErrorKind::InvalidInput, "Either filename or content must be provided"))
         }?;
         let filename = if let Some(filename) = filename {
             filename.to_string()
@@ -49,7 +48,7 @@ impl Reader {
         }
 
         Ok(Reader {
-            filename: filename,
+            filename,
             lines,
             line_index: 0,
             stored_line: None,
@@ -76,5 +75,50 @@ impl Reader {
         if !line.is_empty() {
             self.stored_line = Some((line.to_string(), indent, linenum));
         }
+    }
+}
+
+#[pyclass]
+pub struct Lexer {
+    // TODO: use the string or file reader inside a lexer
+    //pub reader: Reader,
+    #[pyo3(get)]
+    pub filename: String,
+    #[pyo3(get, set)]
+    pub line: Option<String>,
+    #[pyo3(get, set)]
+    pub linenum: isize,
+    #[pyo3(get)]
+    pub ignore_white: bool,
+    #[pyo3(get, set)]
+    pub rest_as_string: bool,
+    #[pyo3(get)]
+    pub prev_indent: isize,
+}
+
+#[pymethods]
+impl Lexer {
+    #[new]
+    pub fn new() -> Self {
+        //let filename = reader.filename.to_string();
+        Lexer {
+            //reader,
+            filename: "<string>".to_string(),
+            line: None,
+            linenum: 0,
+            ignore_white: false,
+            rest_as_string: false,
+            prev_indent: -1,
+        }
+    }
+
+    pub fn set_prev_indent(&mut self, prev_indent: isize) {
+        self.prev_indent = prev_indent;
+    }
+}
+
+impl Default for Lexer {
+    fn default() -> Self {
+        Self::new()
     }
 }

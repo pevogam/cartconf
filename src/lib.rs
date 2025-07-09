@@ -36,6 +36,7 @@ fn cartconf(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     let lexer_module = PyModule::new(m.py(), "lexer")?;
     lexer_module.add_class::<lexer::Reader>()?;
+    lexer_module.add_class::<lexer::Lexer>()?;
 
     m.add_submodule(&tokens_module)?;
     m.add_submodule(&lexer_module)?;

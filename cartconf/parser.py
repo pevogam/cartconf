@@ -109,7 +109,7 @@ class Lexer(object):
     spec_iden = "_-.*+?|\\"
     spec_oper = "+<?~"
 
-    def __init__(self, reader: Reader) -> None:
+    def __init__(self, reader: "Reader") -> None:
         """
         Initialize the lexer.
 
@@ -117,17 +117,13 @@ class Lexer(object):
         """
         self.reader = reader
         self.filename = reader.filename
-        self.line = None
-        self.linenum = 0
-        self.ignore_white = False
-        self.rest_as_string = False
-        self.match_func_index = 0
+        self.inner = lexer.Lexer()
+        self.line = self.inner.line
         self.generator = self.get_lexer()
-        self.prev_indent = -1
         self.fast = False
 
     def set_prev_indent(self, prev_indent: int) -> None:
-        self.prev_indent = prev_indent
+        self.inner.set_prev_indent(prev_indent)
 
     def set_fast(self) -> None:
         self.fast = True
@@ -198,8 +194,8 @@ class Lexer(object):
             m = Lexer._ops_exp.search(line[pos:])
 
         chars = []
-        if self.rest_as_string:
-            self.rest_as_string = False
+        if self.inner.rest_as_string:
+            self.inner.rest_as_string = False
             yield LString(line[pos:].lstrip())
         elif self.fast and m and (cind < 0 or cind > m.end()):
             chars = []
@@ -237,7 +233,7 @@ class Lexer(object):
                         space = char
                         for pos, char in li:
                             if not char.isspace():
-                                if not self.ignore_white:
+                                if not self.inner.ignore_white:
                                     yield LWhite(space)
                                 break
                             else:
@@ -266,7 +262,7 @@ class Lexer(object):
                                 "Unexpected character %s on" " pos %s" % (char, pos),
                                 self.line,
                                 self.filename,
-                                self.linenum,
+                                self.inner.linenum,
                             )
                         oper = []
                     elif char in tokens_map:
@@ -291,13 +287,13 @@ class Lexer(object):
                             " statement" % (char, pos),
                             line,
                             self.filename,
-                            self.linenum,
+                            self.inner.linenum,
                         )
                     if token is not None:
                         yield token
                         token = None
-                    if self.rest_as_string:
-                        self.rest_as_string = False
+                    if self.inner.rest_as_string:
+                        self.inner.rest_as_string = False
                         yield LString(line[pos + 1 :].lstrip())
                         break
         if chars:
@@ -317,7 +313,9 @@ class Lexer(object):
         cr = self.reader
         indent = 0
         while True:
-            (self.line, indent, self.linenum) = cr.get_next_line(self.prev_indent)
+            (self.line, indent, self.inner.linenum) = cr.get_next_line(
+                self.inner.prev_indent
+            )
 
             if not self.line:
                 yield LEndBlock(indent)
@@ -385,7 +383,7 @@ class Lexer(object):
                     "Expected %s got %s" % (allowed_tokens, type(token)),
                     self.line,
                     self.filename,
-                    self.linenum,
+                    self.inner.linenum,
                 )
         return tokens
 
@@ -435,7 +433,7 @@ class Lexer(object):
         :raises: :py:class:`ParserError` if the remaining token is not a string token
             followed by an end-of-line token
         """
-        self.rest_as_string = True
+        self.inner.rest_as_string = True
         remainder_string = next(self.generator)
         if type(remainder_string) is not LString:
             raise ParserError("Expected string, got %s" % type(remainder_string))
@@ -462,7 +460,7 @@ class Lexer(object):
                 % ([x.identifier for x in allowed_tokens], token.identifier, token),
                 self.line,
                 self.filename,
-                self.linenum,
+                self.inner.linenum,
             )
 
     def get_next_check_no_white(
@@ -486,7 +484,7 @@ class Lexer(object):
                 % ([x.identifier for x in allowed_tokens], token.identifier),
                 self.line,
                 self.filename,
-                self.linenum,
+                self.inner.linenum,
             )
 
     def check_token(
@@ -508,7 +506,7 @@ class Lexer(object):
                 % ([x.identifier for x in allowed_tokens], token.identifier),
                 self.line,
                 self.filename,
-                self.linenum,
+                self.inner.linenum,
             )
 
 
@@ -700,7 +698,7 @@ class Parser(object):
                         'Syntax Error expected "." between' " Identifier.",
                         lexer.line,
                         lexer.filename,
-                        lexer.linenum,
+                        lexer.inner.linenum,
                     )
 
                 dots = 0
@@ -712,7 +710,7 @@ class Parser(object):
                         "Syntax Error expected identifier between" ' "." and ",".',
                         lexer.line,
                         lexer.filename,
-                        lexer.linenum,
+                        lexer.inner.linenum,
                     )
                 if and_filter:
                     if con_filter:
@@ -730,7 +728,7 @@ class Parser(object):
                         'Syntax Error expected "," between' " Identifier.",
                         lexer.line,
                         lexer.filename,
-                        lexer.linenum,
+                        lexer.inner.linenum,
                     )
                 dots = 1
                 token = next(tokens)
@@ -769,7 +767,7 @@ class Parser(object):
         pre_dict: dict[str, str],
     ) -> None:
         predict = LApplyPreDict("", pre_dict.copy())
-        node.content += [(lexer.filename, lexer.linenum, predict)]
+        node.content += [(lexer.filename, lexer.inner.linenum, predict)]
         pre_dict.clear()
 
     def _apply_include(
@@ -787,7 +785,7 @@ class Parser(object):
         if lexer.reader.filename != "<string>" and not os.path.isabs(filename):
             filename = os.path.join(os.path.dirname(lexer.filename), filename)
         if not os.path.isfile(filename):
-            raise MissingIncludeError(lexer.line, lexer.filename, lexer.linenum)
+            raise MissingIncludeError(lexer.line, lexer.filename, lexer.inner.linenum)
         Parser._apply_predict(lexer, node, pre_dict)
         lch = Lexer(Reader(filename=filename))
         node = self._parse(lch, node, -1)
@@ -836,7 +834,7 @@ class Parser(object):
                     return
                 else:
                     Parser._apply_predict(lexer, node, pre_dict)
-            node.content += [(lexer.filename, lexer.linenum, op)]
+            node.content += [(lexer.filename, lexer.inner.linenum, op)]
         lexer.get_next_check([LEndL])
 
     def _apply_deletion(
@@ -854,7 +852,7 @@ class Parser(object):
         token = LDel(to_del.string, "")
 
         Parser._apply_predict(lexer, node, pre_dict)
-        node.content += [(lexer.filename, lexer.linenum, token)]
+        node.content += [(lexer.filename, lexer.inner.linenum, token)]
 
     def _apply_condition(
         self,
@@ -873,12 +871,14 @@ class Parser(object):
         cfilter = Parser.parse_filter(lexer, identifier + [LEndL()])
         next_line = lexer.rest_line_as_string_token()
         if next_line.string != "":
-            lexer.reader.set_next_line(next_line.string, indent + 1, lexer.linenum)
+            lexer.reader.set_next_line(
+                next_line.string, indent + 1, lexer.inner.linenum
+            )
         cond = Condition(cfilter, lexer.line)
         self._parse(lexer, cond, prev_indent=indent)
 
         Parser._apply_predict(lexer, node, pre_dict)
-        node.content += [(lexer.filename, lexer.linenum, cond)]
+        node.content += [(lexer.filename, lexer.inner.linenum, cond)]
 
     def _apply_notcondition(
         self,
@@ -896,12 +896,14 @@ class Parser(object):
         )
         next_line = lexer.rest_line_as_string_token()
         if next_line.string != "":
-            lexer.reader.set_next_line(next_line.string, indent + 1, lexer.linenum)
+            lexer.reader.set_next_line(
+                next_line.string, indent + 1, lexer.inner.linenum
+            )
         cond = NegativeCondition(lfilter, lexer.line)
         self._parse(lexer, cond, prev_indent=indent)
 
         Parser._apply_predict(lexer, node, pre_dict)
-        node.content += [(lexer.filename, lexer.linenum, cond)]
+        node.content += [(lexer.filename, lexer.inner.linenum, cond)]
 
     @staticmethod
     def _apply_variants(
@@ -917,7 +919,7 @@ class Parser(object):
                 "'variants' is not allowed inside a " "conditional block",
                 lexer.line,
                 lexer.reader.filename,
-                lexer.linenum,
+                lexer.inner.linenum,
             )
 
         lexer.set_strict()
@@ -933,7 +935,7 @@ class Parser(object):
                         "Syntax ERROR expected" ' "[" or ":"',
                         lexer.line,
                         lexer.filename,
-                        lexer.linenum,
+                        lexer.inner.linenum,
                     )
                 variant_name = tokens[0].string
             elif vtypet == LLBracket:  # [
@@ -954,7 +956,7 @@ class Parser(object):
                             "Syntax ERROR" ' expected "]"',
                             lexer.line,
                             lexer.filename,
-                            lexer.linenum,
+                            lexer.inner.linenum,
                         )
 
             varianst_allowed_in = [LLBracket, LColon, LIdentifier, LEndL]
@@ -968,7 +970,7 @@ class Parser(object):
                         "Syntax ERROR expected " "[default=xxx]",
                         lexer.line,
                         lexer.filename,
-                        lexer.linenum,
+                        lexer.inner.linenum,
                     )
 
         if vtypet == LEndL:
@@ -976,7 +978,7 @@ class Parser(object):
                 'Syntax ERROR expected ":"',
                 lexer.line,
                 lexer.filename,
-                lexer.linenum,
+                lexer.inner.linenum,
             )
         lexer.get_next_check_no_white([LEndL])
 
@@ -1055,7 +1057,7 @@ class Parser(object):
 
             if variant_name:
                 op = LSet(variant_name, ".".join([n for n in name]))
-                node2.content += [(lexer.filename, lexer.linenum, op)]
+                node2.content += [(lexer.filename, lexer.inner.linenum, op)]
 
             node3 = self._parse(lexer, node2, prev_indent=indent)
 
@@ -1084,14 +1086,14 @@ class Parser(object):
             op = LUpdateFileMap(
                 lexer.filename, ".".join(str(x) for x in node3.name), "_name_map_file"
             )
-            node3.content += [(lexer.filename, lexer.linenum, op)]
+            node3.content += [(lexer.filename, lexer.inner.linenum, op)]
 
             op = LUpdateFileMap(
                 lexer.filename,
                 ".".join(str(x.name) for x in node3.name),
                 "_short_name_map_file",
             )
-            node3.content += [(lexer.filename, lexer.linenum, op)]
+            node3.content += [(lexer.filename, lexer.inner.linenum, op)]
 
             if node3.default and self.defaults:
                 # Move default variant in front of rest
@@ -1108,7 +1110,7 @@ class Parser(object):
                 "Missing default variant %s" % (meta["default"]),
                 lexer.line,
                 lexer.filename,
-                lexer.linenum,
+                lexer.inner.linenum,
             )
         return node4
 
@@ -1195,7 +1197,7 @@ class Parser(object):
                             'Syntax ERROR expected ":" or' " operand",
                             lexer.line,
                             lexer.filename,
-                            lexer.linenum,
+                            lexer.inner.linenum,
                         )
                 elif typet == LDel:
                     self._apply_deletion(lexer, node, pre_dict)
@@ -1229,7 +1231,7 @@ class Parser(object):
                         node.content += [
                             (
                                 lexer.filename,
-                                lexer.linenum,
+                                lexer.inner.linenum,
                                 OnlyFilter(lfilter, lexer.line),
                             )
                         ]
@@ -1237,7 +1239,7 @@ class Parser(object):
                         node.content += [
                             (
                                 lexer.filename,
-                                lexer.linenum,
+                                lexer.inner.linenum,
                                 NoFilter(lfilter, lexer.line),
                             )
                         ]
@@ -1245,7 +1247,7 @@ class Parser(object):
                         node.content += [
                             (
                                 lexer.filename,
-                                lexer.linenum,
+                                lexer.inner.linenum,
                                 JoinFilter(lfilter, lexer.line),
                             )
                         ]
@@ -1259,17 +1261,19 @@ class Parser(object):
                     lexer.get_next_check([LEndL])
                     suffix_operator = Suffix("", token_val.string)
                     # Suffix will be applied as all other elements in current node are processed:
-                    suffix = (lexer.filename, lexer.linenum, suffix_operator)
+                    suffix = (lexer.filename, lexer.inner.linenum, suffix_operator)
 
                 else:
                     raise ParserError(
                         "Syntax ERROR expected",
                         lexer.line,
                         lexer.filename,
-                        lexer.linenum,
+                        lexer.inner.linenum,
                     )
         except Exception:
-            self._debug("%s  %s:  %s" % (lexer.filename, lexer.linenum, lexer.line))
+            self._debug(
+                "%s  %s:  %s" % (lexer.filename, lexer.inner.linenum, lexer.line)
+            )
             raise
 
     def get_dicts(
