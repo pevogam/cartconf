@@ -259,7 +259,7 @@ class LexerTest(unittest.TestCase):
         self.assertIsInstance(token, parser.LColon)
         token = next(generator)
         self.assertIsInstance(token, parser.LWhite)
-        self.assertEqual(token.string, "")
+        self.assertEqual(token.string, " ")
         token = next(generator)
         self.assertIsInstance(token, parser.LIdentifier)
         self.assertEqual(token.string, "test")

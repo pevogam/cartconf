@@ -293,7 +293,7 @@ class Lexer(object):
                         yield LIdentifier(chars_str)
                         chars = []
                     if char.isspace():  # Whitespace
-                        space = ""
+                        space = char
                         for pos, char in li:
                             if not char.isspace():
                                 if not self.ignore_white:
