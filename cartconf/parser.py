@@ -173,7 +173,7 @@ class Lexer(object):
 
     tokens_oper_re = [r"\=", r"\+\=", r"\<\=", r"\~\=", r"\?\=", r"\?\+\=", r"\?\<\="]
     _ops_exp = re.compile(r"|".join(tokens_oper_re))
-    spec_iden = "_-"
+    spec_iden = "_-.*+?|\\"
     spec_oper = "+<?~"
 
     def __init__(self, reader: StrReader | FileReader) -> None:
@@ -278,7 +278,15 @@ class Lexer(object):
             token = None
             li = enumerate(line[pos:], pos)
             for pos, char in li:
-                if char.isalnum() or char in Lexer.spec_iden:  # alfanum+_-
+                if (
+                    char.isalnum()
+                    or char in "_-"
+                    or (
+                        Lexer._ops_exp.search(line)
+                        and " " not in line[:pos]
+                        and char in Lexer.spec_iden
+                    )
+                ):
                     chars += [char]
                 elif char in Lexer.spec_oper:  # <+?=~
                     if chars:
@@ -298,12 +306,25 @@ class Lexer(object):
                                 if not self.ignore_white:
                                     yield LWhite()
                                 break
-                    if char.isalnum() or char in Lexer.spec_iden:
+                    if (
+                        char.isalnum()
+                        or char in "_-"
+                        or (
+                            Lexer._ops_exp.search(line)
+                            and " " not in line[:pos]
+                            and char in Lexer.spec_iden
+                        )
+                    ):
                         chars += [char]
                     elif char == "=":
                         oper_str = "".join(oper)
                         if oper_str in tokens_oper:
                             yield tokens_oper[oper_str]()
+                            # NOTE: the "=" is also used in expressions like "(a=b)" or "[a=b]"
+                            if (re.search(r"\((?![^)]*\))", line[:pos]) is None and
+                                    re.search(r"\[(?![^)]*\])", line[:pos]) is None):
+                                yield LString(line[pos + 1 :].lstrip())
+                                break
                         else:
                             raise LexerError(
                                 "Unexpected character %s on" " pos %s" % (char, pos),

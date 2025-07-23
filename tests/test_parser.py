@@ -422,8 +422,6 @@ class ParserApplyMethodsTest(unittest.TestCase):
 
     def test_apply_operator_set_optimized(self):
         self.lexer = parser.Lexer(parser.StrReader("key2 = value2"))
-        # TODO: this seems to be required and not optional for applying operators
-        self.lexer.set_fast()
         self.lexer.get_next_check([parser.LIndent])  # indent allowed
         _, token = self.lexer.get_next_check([parser.LIdentifier])  # block allowed
         identifier = self.lexer.get_until_no_white([parser.LSet])  # identifier allowed
@@ -434,8 +432,6 @@ class ParserApplyMethodsTest(unittest.TestCase):
 
     def test_apply_operator_append_safe(self):
         self.lexer = parser.Lexer(parser.StrReader("key1 += &value2"))
-        # TODO: this seems to be required and not optional for applying operators
-        self.lexer.set_fast()
         self.lexer.get_next_check([parser.LIndent])  # indent allowed
         _, token = self.lexer.get_next_check([parser.LIdentifier])  # block allowed
         identifier = self.lexer.get_until_no_white([parser.LAppend])  # identifier allowed
@@ -446,8 +442,6 @@ class ParserApplyMethodsTest(unittest.TestCase):
 
     def test_apply_operator_append_unsafe(self):
         self.lexer = parser.Lexer(parser.StrReader("key2 += &value2"))
-        # TODO: this seems to be required and not optional for applying operators
-        self.lexer.set_fast()
         self.lexer.get_next_check([parser.LIndent])  # indent allowed
         _, token = self.lexer.get_next_check([parser.LIdentifier])  # block allowed
         identifier = self.lexer.get_until_no_white([parser.LAppend])  # identifier allowed
@@ -1227,6 +1221,7 @@ class ParserTest(unittest.TestCase):
                     s.* ?= ${tests}ahoj4
                     s.* ?+= c
                     s.* ?<= d
+                    s(_.*)? ?= dsystem1
                     system += 4
                     var += "test"
                     1st = 1
