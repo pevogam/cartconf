@@ -233,19 +233,10 @@ class LexerTest(unittest.TestCase):
         self.assertFalse(self.lexer.inner.rest_as_string)
         self.assertIsNotNone(self.lexer.generator)
         self.assertEqual(self.lexer.inner.prev_indent, -1)
-        self.assertFalse(self.lexer.fast)
 
     def test_set_prev_indent(self):
         self.lexer.set_prev_indent(4)
         self.assertEqual(self.lexer.inner.prev_indent, 4)
-
-    def test_set_fast(self):
-        self.lexer.set_fast()
-        self.assertTrue(self.lexer.fast)
-
-    def test_set_strict(self):
-        self.lexer.set_strict()
-        self.assertFalse(self.lexer.fast)
 
     def test_match(self):
         line = "only test"
@@ -1226,7 +1217,9 @@ class ParserTest(unittest.TestCase):
                     s.* ?= ${tests}ahoj4
                     s.* ?+= c
                     s.* ?<= d
-                    s(_.*)? ?= dsystem1
+                    s(_.*)? ?= b1
+                    s(_.*)? ?= b2(c=d)
+                    system2.allowed: s = t
                     system += 4
                     var += "test"
                     1st = 1
@@ -1463,6 +1456,19 @@ class ParserTest(unittest.TestCase):
                  'run': 'test1',
                  'shortname': 'test2',
                  'tests': 'test2'},
+            ],
+            True)
+
+    def test_special_chars(self):
+        self._compare_string_config("""
+            FILE_2018年度公开课计划表.xlsx = type no_txt, desc (check that unicode filename is handled)
+            """,
+            [
+                {'dep': [],
+                 'name': '',
+                 'shortname': '',
+                 'FILE_2018年度公开课计划表.xlsx': 'type no_txt, desc (check that unicode filename is handled)',
+                 },
             ],
             True)
 

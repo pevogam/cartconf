@@ -18,6 +18,7 @@ from .cartconf import lexer
 LOG = logging.getLogger("avocado." + __name__)
 
 Reader = lexer.Reader
+LexerError = lexer.LexerError
 
 
 class Label(object):
@@ -104,11 +105,6 @@ class Node(object):
 
 class Lexer(object):
 
-    tokens_oper_re = [r"\=", r"\+\=", r"\<\=", r"\~\=", r"\?\=", r"\?\+\=", r"\?\<\="]
-    _ops_exp = re.compile(r"|".join(tokens_oper_re))
-    spec_iden = "_-.*+?|\\"
-    spec_oper = "+<?~"
-
     def __init__(self, reader: "Reader") -> None:
         """
         Initialize the lexer.
@@ -120,16 +116,9 @@ class Lexer(object):
         self.inner = lexer.Lexer()
         self.line = self.inner.line
         self.generator = self.get_lexer()
-        self.fast = False
 
     def set_prev_indent(self, prev_indent: int) -> None:
         self.inner.set_prev_indent(prev_indent)
-
-    def set_fast(self) -> None:
-        self.fast = True
-
-    def set_strict(self) -> None:
-        self.fast = False
 
     def match(self, line: str, pos: int) -> Generator["Token", None, None]:
         """
@@ -140,167 +129,16 @@ class Lexer(object):
         :returns: iterator of tokens that were read
         :raises: :py:class:`LexerError` if unexpected character is found
         """
-        l0 = line[0]
-        if l0 == "v":
-            if line.startswith("variants:"):
-                yield LVariants()
-                yield LColon()
-                pos = 9
-            elif line.startswith("variants "):
-                yield LVariants()
-                pos = 8
-        elif l0 == "-":
-            yield LVariant()
-            pos = 1
-        elif l0 == "o":
-            if line.startswith("only "):
-                yield LOnly()
-                pos = 4
-                while line[pos].isspace():
-                    pos += 1
-        elif l0 == "n":
-            if line.startswith("no "):
-                yield LNo()
-                pos = 2
-                while line[pos].isspace():
-                    pos += 1
-        elif l0 == "i":
-            if line.startswith("include "):
-                yield LInclude()
-                pos = 7
-        elif l0 == "d":
-            if line.startswith("del "):
-                yield LDel("", "")
-                pos = 3
-                while line[pos].isspace():
-                    pos += 1
-        elif l0 == "s":
-            if line.startswith("suffix "):
-                yield LSuffix()
-                pos = 6
-                while line[pos].isspace():
-                    pos += 1
-        elif l0 == "j":
-            if line.startswith("join "):
-                yield LJoin()
-                pos = 4
-                while line[pos].isspace():
-                    pos += 1
-
-        m = None
-        cind = 0
-        if self.fast and pos == 0:  # due to refexp
-            cind = line[pos:].find(":")
-            m = Lexer._ops_exp.search(line[pos:])
-
-        chars = []
-        if self.inner.rest_as_string:
-            self.inner.rest_as_string = False
-            yield LString(line[pos:].lstrip())
-        elif self.fast and m and (cind < 0 or cind > m.end()):
-            chars = []
-            yield LIdentifier(line[: m.start()].rstrip())
-            yield tokens_oper[m.group()[:-1]]("", "")
-            yield LString(line[m.end() :].lstrip())
-        else:
-            oper = []
-            token = None
-            li = enumerate(line[pos:], pos)
-            for pos, char in li:
-                if (
-                    char.isalnum()
-                    or char in "_-"
-                    or (
-                        Lexer._ops_exp.search(line)
-                        and " " not in line[:pos]
-                        and char in Lexer.spec_iden
-                    )
-                ):
-                    chars += [char]
-                elif char in Lexer.spec_oper:  # <+?=~
-                    if chars:
-                        chars_str = "".join(chars)
-                        yield LIdentifier(chars_str)
-                        oper = []
-                    chars = []
-                    oper += [char]
-                else:
-                    if chars:
-                        chars_str = "".join(chars)
-                        yield LIdentifier(chars_str)
-                        chars = []
-                    if char.isspace():  # Whitespace
-                        space = char
-                        for pos, char in li:
-                            if not char.isspace():
-                                if not self.inner.ignore_white:
-                                    yield LWhite(space)
-                                break
-                            else:
-                                space += char
-                    if (
-                        char.isalnum()
-                        or char in "_-"
-                        or (
-                            Lexer._ops_exp.search(line)
-                            and " " not in line[:pos]
-                            and char in Lexer.spec_iden
-                        )
-                    ):
-                        chars += [char]
-                    elif char == "=":
-                        oper_str = "".join(oper)
-                        if oper_str in tokens_oper:
-                            yield tokens_oper[oper_str]("", "")
-                            # NOTE: the "=" is also used in expressions like "(a=b)" or "[a=b]"
-                            if (re.search(r"\((?![^)]*\))", line[:pos]) is None and
-                                    re.search(r"\[(?![^)]*\])", line[:pos]) is None):
-                                yield LString(line[pos + 1 :].lstrip())
-                                break
-                        else:
-                            raise LexerError(
-                                "Unexpected character %s on" " pos %s" % (char, pos),
-                                self.line,
-                                self.filename,
-                                self.inner.linenum,
-                            )
-                        oper = []
-                    elif char in tokens_map:
-                        token = tokens_map[char]()
-                    elif char == '"':
-                        chars = []
-                        pos, char = next(li)
-                        while char != '"':
-                            chars += [char]
-                            pos, char = next(li)
-                        chars_str = "".join(chars)
-                        yield LString(chars_str)
-                    elif char == "#":
-                        break
-                    elif char in Lexer.spec_oper:
-                        oper += [char]
-                    else:
-                        raise LexerError(
-                            "Unexpected character %s on"
-                            " pos %s. Special chars are allowed"
-                            " only in variable assignation"
-                            " statement" % (char, pos),
-                            line,
-                            self.filename,
-                            self.inner.linenum,
-                        )
-                    if token is not None:
-                        yield token
-                        token = None
-                    if self.inner.rest_as_string:
-                        self.inner.rest_as_string = False
-                        yield LString(line[pos + 1 :].lstrip())
-                        break
-        if chars:
-            chars_str = "".join(chars)
-            yield LIdentifier(chars_str)
-            chars = []
-        yield LEndL()
+        token_set = self.inner.match_line(line, pos)
+        while len(token_set) > 0:
+            for token in token_set:
+                yield token
+            if type(token) is LEndL:
+                token_set = []
+                self.inner.restart()
+                self.inner.pos = 0
+            else:
+                token_set = self.inner.match_line(line, pos)
 
     def get_lexer(self) -> Generator["Token", None, None]:
         """
@@ -922,7 +760,6 @@ class Parser(object):
                 lexer.inner.linenum,
             )
 
-        lexer.set_strict()
         tokens = lexer.get_until_no_white([LLBracket, LColon, LIdentifier, LEndL])
         vtypet = type(tokens[-1])
         variant_name = ""
@@ -1152,7 +989,6 @@ class Parser(object):
         # pre_dict contains block of operation without collision with
         # others block or operation. Increase speed almost twice.
         pre_dict = {}
-        lexer.set_fast()
 
         # Suffix should be applied as the last operator in the dictionary
         # Reasons:
