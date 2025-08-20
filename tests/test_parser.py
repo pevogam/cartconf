@@ -224,8 +224,8 @@ class LexerTest(unittest.TestCase):
         self.lexer = parser.Lexer(content=self.sample_text)
 
     def test_initialization(self):
-        self.assertEqual(self.lexer.filename, "<string>")
-        self.assertIsNone(self.lexer.line)
+        self.assertEqual(self.lexer.inner.filename, "<string>")
+        self.assertIsNone(self.lexer.inner.line)
         self.assertEqual(self.lexer.inner.linenum, 0)
         self.assertFalse(self.lexer.inner.ignore_white)
         self.assertFalse(self.lexer.inner.rest_as_string)
@@ -233,17 +233,20 @@ class LexerTest(unittest.TestCase):
         self.assertEqual(self.lexer.inner.prev_indent, -1)
 
     def test_set_prev_indent(self):
-        self.lexer.set_prev_indent(4)
+        self.lexer.inner.set_prev_indent(4)
         self.assertEqual(self.lexer.inner.prev_indent, 4)
 
-    def test_match(self):
+    def test_match_line(self):
         line = "only test"
-        tokens = list(self.lexer.match(line, 0))
+        tokens = list(self.lexer.inner.match_line(line, 0))
+        self.assertEqual(len(tokens), 1)
         self.assertIsInstance(tokens[0], parser.LOnly)
-        self.assertIsInstance(tokens[1], parser.LIdentifier)
+        tokens = list(self.lexer.inner.match_line(line, 0))
+        self.assertEqual(len(tokens), 1)
+        self.assertIsInstance(tokens[0], parser.LIdentifier)
 
-    def test_get_lexer(self):
-        generator = self.lexer.get_lexer()
+    def test_get_gen(self):
+        generator = self.lexer.get_gen()
         token = next(generator)
         self.assertIsInstance(token, parser.LIndent)
         token = next(generator)
@@ -580,7 +583,7 @@ class ParserTest(unittest.TestCase):
 
     def test_parse_filter(self):
         lexer = parser.Lexer(content="test.value")
-        lexer.set_prev_indent(-1)
+        lexer.inner.set_prev_indent(-1)
         tokens = lexer.get_until([parser.LEndL])
         filters = parser.Parser.parse_filter(lexer, tokens[1:])
         self.assertEqual(len(filters), 1)
@@ -593,7 +596,7 @@ class ParserTest(unittest.TestCase):
         f = "only xxx.yyy..(xxx=333).aaa, ddd (eeee) rrr.aaa"
         self._compare_string_config(f, [], True)
         lexer = parser.Lexer(content=f)
-        lexer.set_prev_indent(-1)
+        lexer.inner.set_prev_indent(-1)
         lexer.get_next_check([parser.LIndent])
         lexer.get_next_check([parser.LOnly])
         p_filter = parser.Parser.parse_filter(lexer, lexer.rest_line())

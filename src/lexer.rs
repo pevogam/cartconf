@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io::{self};
 use std::sync::LazyLock;
 use regex::Regex;
@@ -150,6 +151,7 @@ pub struct Lexer {
     pub rest_as_string: bool,
     #[pyo3(get)]
     pub prev_indent: isize,
+    pub token_queue: VecDeque<Tokens>,
     // state machine parameters for the iterator
     #[pyo3(get, set)]
     pos : usize,
@@ -173,6 +175,7 @@ impl Lexer {
             ignore_white: false,
             rest_as_string: false,
             prev_indent: -1,
+            token_queue: VecDeque::new(),
             pos : 0,
             char_buffer : String::new(),
             oper_buffer : String::new(),
@@ -182,6 +185,7 @@ impl Lexer {
 
     pub fn restart(&mut self) {
         self.kind = LineKind::Unknown;
+        self.pos = 0;
     }
 
     pub fn set_prev_indent(&mut self, prev_indent: isize) {
@@ -462,8 +466,56 @@ impl Lexer {
         Ok(tokens)
     }
 
-    pub fn get_next_line(&mut self, prev_indent: isize) -> (Option<String>, isize, isize) {
-        self.reader.get_next_line(prev_indent)
+    /// Tokenize multiple lines.
+    pub fn match_multiline(&mut self) -> PyResult<Vec<Tokens>> {
+        let mut token_queue = Vec::new();
+        let (line_opt, indent, linenum) = self.reader.get_next_line(self.prev_indent);
+        self.line = line_opt.clone();
+        self.linenum = linenum;
+        if let Some(line) = line_opt {
+            if self.pos == 0 {
+                token_queue.push(Tokens::LIndent(indent as i32));
+
+            }
+            let tokens = self.match_line(&line, 0)?;
+            if let Some(last_token) = tokens.last() {
+                match last_token {
+                    Tokens::LEndL() => {
+                        self.restart();
+                    }
+                    _ => {
+                        // Keep the current line as the next line to to comply with the line state machine.
+                        self.reader.set_next_line(&line, indent as usize, linenum as usize);
+                    }
+                }
+            }
+            for t in tokens {
+                token_queue.push(t);
+            }
+        } else {
+            token_queue.push(Tokens::LEndBlock(indent as i32));
+        }
+        Ok(token_queue)
+    }
+
+    /// Get the next token from one or more tokenized lines.
+    pub fn get_next_token(& mut self) -> PyResult<Tokens> {
+        if self.token_queue.is_empty() {
+            let tokens = self.match_multiline()?;
+            self.token_queue.extend(tokens);
+        }
+        match self.token_queue.pop_front() {
+            Some(token) => Ok(token),
+            None => Err(PyErr::new::<LexerError, _>((
+                format!(
+                    "Lexer returned no token at position {}",
+                    self.pos,
+                ),
+                Some(self.line.clone()),
+                Some(self.filename.clone()),
+                Some(self.linenum),
+            )))
+        }
     }
 
     pub fn set_next_line(&mut self, line: &str, indent: usize, linenum: usize) {
