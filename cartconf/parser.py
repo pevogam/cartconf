@@ -105,15 +105,14 @@ class Node(object):
 
 class Lexer(object):
 
-    def __init__(self, reader: "Reader") -> None:
+    def __init__(self, content=None, filename=None) -> None:
         """
         Initialize the lexer.
 
         :param reader: file or string reader to get lines from
         """
-        self.reader = reader
-        self.filename = reader.filename
-        self.inner = lexer.Lexer()
+        self.inner = lexer.Lexer(content, filename)
+        self.filename = self.inner.filename
         self.line = self.inner.line
         self.generator = self.get_lexer()
 
@@ -148,10 +147,9 @@ class Lexer(object):
 
         ..warning:: This generator will never terminate and needs checks for end tokens.
         """
-        cr = self.reader
         indent = 0
         while True:
-            (self.line, indent, self.inner.linenum) = cr.get_next_line(
+            (self.line, indent, self.inner.linenum) = self.inner.get_next_line(
                 self.inner.prev_indent
             )
 
@@ -404,7 +402,7 @@ class Parser(object):
         :param cfgfile: configuration file path to parse
         """
         self.node.filename = cfgfile
-        self.node = self._parse(Lexer(Reader(filename=cfgfile)), self.node)
+        self.node = self._parse(Lexer(filename=cfgfile), self.node)
         self.filename = cfgfile
 
     def parse_string(self, cfgstr: str) -> None:
@@ -414,7 +412,7 @@ class Parser(object):
         :param cfgstr: configuration string to parse
         """
         self.node.filename = Reader(content="").filename
-        self.node = self._parse(Lexer(Reader(content=cfgstr)), self.node)
+        self.node = self._parse(Lexer(content=cfgstr), self.node)
 
     def only_filter(self, variant: str) -> None:
         """
@@ -620,12 +618,12 @@ class Parser(object):
         """
         path = lexer.rest_line_as_string_token()
         filename = os.path.expanduser(path.string)
-        if lexer.reader.filename != "<string>" and not os.path.isabs(filename):
+        if lexer.filename != "<string>" and not os.path.isabs(filename):
             filename = os.path.join(os.path.dirname(lexer.filename), filename)
         if not os.path.isfile(filename):
             raise MissingIncludeError(lexer.line, lexer.filename, lexer.inner.linenum)
         Parser._apply_predict(lexer, node, pre_dict)
-        lch = Lexer(Reader(filename=filename))
+        lch = Lexer(filename=filename)
         node = self._parse(lch, node, -1)
         return node
 
@@ -709,7 +707,7 @@ class Parser(object):
         cfilter = Parser.parse_filter(lexer, identifier + [LEndL()])
         next_line = lexer.rest_line_as_string_token()
         if next_line.string != "":
-            lexer.reader.set_next_line(
+            lexer.inner.set_next_line(
                 next_line.string, indent + 1, lexer.inner.linenum
             )
         cond = Condition(cfilter, lexer.line)
@@ -734,7 +732,7 @@ class Parser(object):
         )
         next_line = lexer.rest_line_as_string_token()
         if next_line.string != "":
-            lexer.reader.set_next_line(
+            lexer.inner.set_next_line(
                 next_line.string, indent + 1, lexer.inner.linenum
             )
         cond = NegativeCondition(lfilter, lexer.line)
@@ -756,7 +754,7 @@ class Parser(object):
             raise ParserError(
                 "'variants' is not allowed inside a " "conditional block",
                 lexer.line,
-                lexer.reader.filename,
+                lexer.filename,
                 lexer.inner.linenum,
             )
 

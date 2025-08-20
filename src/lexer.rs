@@ -137,8 +137,7 @@ static OPERATOR_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 
 #[pyclass]
 pub struct Lexer {
-    // TODO: use the string or file reader inside a lexer
-    //pub reader: Reader,
+    pub reader: Reader,
     #[pyo3(get)]
     pub filename: String,
     #[pyo3(get, set)]
@@ -162,11 +161,13 @@ pub struct Lexer {
 #[pymethods]
 impl Lexer {
     #[new]
-    pub fn new() -> Self {
-        //let filename = reader.filename.to_string();
-        Lexer {
-            //reader,
-            filename: "<string>".to_string(),
+    #[pyo3(signature = (content=None, filename=None))]
+    pub fn new(content: Option<&str>, filename: Option<&str>) -> io::Result<Self> {
+        let reader = Reader::new(content, filename)?;
+        let filename = reader.filename.clone();
+        Ok(Lexer {
+            reader,
+            filename,
             line: None,
             linenum: 0,
             ignore_white: false,
@@ -176,7 +177,7 @@ impl Lexer {
             char_buffer : String::new(),
             oper_buffer : String::new(),
             kind : LineKind::Unknown,
-        }
+        })
     }
 
     pub fn restart(&mut self) {
@@ -460,10 +461,13 @@ impl Lexer {
         tokens.push(Tokens::LEndL());
         Ok(tokens)
     }
-}
 
-impl Default for Lexer {
-    fn default() -> Self {
-        Self::new()
+    pub fn get_next_line(&mut self, prev_indent: isize) -> (Option<String>, isize, isize) {
+        self.reader.get_next_line(prev_indent)
     }
+
+    pub fn set_next_line(&mut self, line: &str, indent: usize, linenum: usize) {
+        self.reader.set_next_line(line, indent, linenum);
+    }
+
 }
