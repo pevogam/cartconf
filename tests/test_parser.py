@@ -260,18 +260,16 @@ class LexerTest(unittest.TestCase):
         self.assertIsInstance(token, parser.LIdentifier)
         self.assertEqual(token.string, "test")
 
-    def test_get_until_gen(self):
-        tokens = list(self.lexer.get_until_gen([parser.LOnly]))
+    def test_get_until(self):
+        tokens = list(self.lexer.get_until([]))
         self.assertIsInstance(tokens[0], parser.LIndent)
         self.assertIsInstance(tokens[1], parser.LVariants)
         self.assertIsInstance(tokens[2], parser.LColon)
         self.assertIsInstance(tokens[3], parser.LWhite)
         self.assertIsInstance(tokens[4], parser.LIdentifier)
         self.assertIsInstance(tokens[5], parser.LEndL)
-        self.assertIsInstance(tokens[6], parser.LIndent)
-        self.assertIsInstance(tokens[7], parser.LOnly)
 
-    def test_get_until(self):
+    def test_get_until_custom(self):
         tokens = self.lexer.get_until([parser.LOnly])
         self.assertIsInstance(tokens[0], parser.LIndent)
         self.assertIsInstance(tokens[1], parser.LVariants)
@@ -309,7 +307,7 @@ class LexerTest(unittest.TestCase):
         self.assertIsInstance(tokens[6], parser.LIndent)
         self.assertIsInstance(tokens[7], parser.LOnly)
 
-        with self.assertRaises(parser.ParserError):
+        with self.assertRaises(parser.LexerError):
             self.lexer.get_until_check(
                 [parser.LColon],
                 [parser.LOnly],
@@ -364,7 +362,7 @@ class LexerTest(unittest.TestCase):
         self.assertEqual(token_type, parser.LIndent)
         self.assertIsInstance(token, parser.LIndent)
 
-        with self.assertRaises(parser.ParserError):
+        with self.assertRaises(parser.LexerError):
             self.lexer.get_next_check([parser.LIndent])
 
     def test_get_next_check_nw(self):
@@ -1568,7 +1566,7 @@ class ParserTest(unittest.TestCase):
                           [],
                           True)
 
-        self.assertRaises(parser.ParserError,
+        self.assertRaises(parser.LexerError,
                           self._compare_string_config, """
                 variants tests:
                   wait:

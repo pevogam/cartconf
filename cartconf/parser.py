@@ -126,22 +126,6 @@ class Lexer(object):
         while True:
             yield self.inner.get_next_token()
 
-    def get_until_gen(
-        self, end_tokens: list[type] = None
-    ) -> Generator["Token", None, None]:
-        """
-        Generate tokens from a multi-line reader terminating at a list of end tokens.
-
-        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
-        :returns: iterator of tokens that were read
-        """
-        end_tokens = end_tokens or [LEndL]
-        token = next(self.generator)
-        while type(token) not in end_tokens:
-            yield token
-            token = next(self.generator)
-        yield token
-
     def get_until(self, end_tokens: list[type] = None) -> list["Token"]:
         """
         Get a full list of tokens from a multi-line reader terminating at a list of end tokens.
@@ -149,8 +133,7 @@ class Lexer(object):
         :param end_tokens: list of tokens to terminate reading on with default end-of-line token
         :returns: list of tokens that were read
         """
-        end_tokens = end_tokens or [LEndL]
-        return [x for x in self.get_until_gen(end_tokens)]
+        return self.inner.get_until(end_tokens)
 
     def flush_until(self, end_tokens: list[type] = None) -> None:
         """
@@ -158,9 +141,7 @@ class Lexer(object):
 
         :param end_tokens: list of tokens to terminate reading on with default end-of-line token
         """
-        end_tokens = end_tokens or [LEndL]
-        for _ in self.get_until_gen(end_tokens):
-            pass
+        self.inner.flush_until(end_tokens)
 
     def get_until_check(
         self, allowed_tokens: list[type], end_tokens: list[type] = None
@@ -173,20 +154,7 @@ class Lexer(object):
         :returns: list of tokens that were read
         :raises: :py:class:`ParserError` if unexpected token is found
         """
-        end_tokens = end_tokens or [LEndL]
-        tokens = []
-        allowed_tokens = allowed_tokens + end_tokens
-        for token in self.get_until_gen(end_tokens):
-            if type(token) in allowed_tokens:
-                tokens.append(token)
-            else:
-                raise ParserError(
-                    "Expected %s got %s" % (allowed_tokens, type(token)),
-                    self.inner.line,
-                    self.inner.filename,
-                    self.inner.linenum,
-                )
-        return tokens
+        return self.inner.get_until(end_tokens, allowed_tokens)
 
     def get_until_no_white(self, end_tokens: list[type] = None) -> list["Token"]:
         """
@@ -195,8 +163,7 @@ class Lexer(object):
         :param end_tokens: list of tokens to terminate reading on with default end-of-line token
         :returns: list of tokens that were read
         """
-        end_tokens = end_tokens or [LEndL]
-        return [x for x in self.get_until_gen(end_tokens) if not isinstance(x, LWhite)]
+        return self.inner.get_until(end_tokens, no_white=True)
 
     def rest_line_gen(self) -> Generator["Token", None, None]:
         """
@@ -252,17 +219,8 @@ class Lexer(object):
         :returns: the next acceptable token and its type
         :raises: :py:class:`ParserError` if token is not acceptable
         """
-        token = next(self.generator)
-        if type(token) in allowed_tokens:
-            return type(token), token
-        else:
-            raise ParserError(
-                "Expected %s got ['%s']=[%s]"
-                % ([x.identifier for x in allowed_tokens], token.identifier, token),
-                self.inner.line,
-                self.inner.filename,
-                self.inner.linenum,
-            )
+        token = self.inner.get_next_token(allowed_tokens)
+        return type(token), token
 
     def get_next_check_no_white(
         self, allowed_tokens: list[type]
@@ -274,19 +232,8 @@ class Lexer(object):
         :returns: the next acceptable token and its type
         :raises: :py:class:`ParserError` if token is not acceptable
         """
-        token = next(self.generator)
-        while isinstance(token, LWhite):
-            token = next(self.generator)
-        if type(token) in allowed_tokens:
-            return type(token), token
-        else:
-            raise ParserError(
-                "Expected %s got ['%s']"
-                % ([x.identifier for x in allowed_tokens], token.identifier),
-                self.inner.line,
-                self.inner.filename,
-                self.inner.linenum,
-            )
+        token = self.inner.get_next_token(allowed_tokens, no_white=True)
+        return type(token), token
 
     def check_token(
         self, token: "Token", allowed_tokens: list[type]

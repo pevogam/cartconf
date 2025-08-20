@@ -3,8 +3,9 @@ use std::io::{self};
 use std::sync::LazyLock;
 use regex::Regex;
 
-use pyo3::{prelude::*};
+use pyo3::{prelude::*, IntoPyObjectExt};
 use pyo3::exceptions::PyException;
+use pyo3::types::{PyList, PyType};
 
 use crate::tokens::Tokens;
 
@@ -499,13 +500,42 @@ impl Lexer {
     }
 
     /// Get the next token from one or more tokenized lines.
-    pub fn get_next_token(& mut self) -> PyResult<Tokens> {
+    #[pyo3(signature = (check_tokens=None, no_white=false))]
+    pub fn get_next_token(
+        &mut self,
+        check_tokens: Option<&Bound<'_, PyList>>,
+        no_white: bool,
+    ) -> PyResult<Tokens> {
         if self.token_queue.is_empty() {
             let tokens = self.match_multiline()?;
             self.token_queue.extend(tokens);
         }
         match self.token_queue.pop_front() {
-            Some(token) => Ok(token),
+            Some(token) => {
+                if no_white && matches!(token, Tokens::LWhite(_)) {
+                    return self.get_next_token(check_tokens, no_white);
+                }
+                let mut check_tokens_types = Vec::new();
+                if let Some(check_tokens_py) = check_tokens {
+                    for check_py in check_tokens_py.iter() {
+                        let check_type = check_py.downcast::<PyType>()?.clone();
+                        check_tokens_types.push(check_type);
+                    }
+                    let next_py = token.clone().into_bound_py_any(check_tokens_py.py())?;
+                    if !check_tokens_types.is_empty() && !check_tokens_types.iter().any(|t| t.eq(next_py.get_type()).unwrap_or(false)) {
+                        return Err(PyErr::new::<LexerError, _>((
+                            format!(
+                                "Unexpected token '{:?}' not among expected ones {:?}",
+                                token, check_tokens_types.iter(),
+                            ),
+                            Some(self.line.clone()),
+                            Some(self.filename.clone()),
+                            Some(self.linenum),
+                        )));
+                    }
+                }
+                Ok(token)
+            },
             None => Err(PyErr::new::<LexerError, _>((
                 format!(
                     "Lexer returned no token at position {}",
@@ -516,6 +546,68 @@ impl Lexer {
                 Some(self.linenum),
             )))
         }
+    }
+
+    /// Get all tokens until not allowed tokens or end tokens are found.
+    #[pyo3(signature = (end_tokens, check_tokens=None, no_white=false))]
+    pub fn get_until(
+        &mut self,
+        end_tokens: &Bound<'_, PyList>,
+        check_tokens: Option<&Bound<'_, PyList>>,
+        no_white: bool,
+    ) -> PyResult<Vec<Tokens>> {
+        let py = end_tokens.py();
+        let mut end_tokens_types = Vec::new();
+        for end_py in end_tokens.iter() {
+            let end_type = end_py.downcast::<PyType>()?.clone();
+            end_tokens_types.push(end_type);
+        }
+        if end_tokens_types.is_empty() {
+            let lendl_type = {
+                let lendl = Tokens::LEndL();
+                let lendl_py = lendl.into_bound_py_any(py)?;
+                lendl_py.get_type().to_owned()
+            };
+            end_tokens_types.push(lendl_type);
+        }
+        let mut check_tokens_types = Vec::new();
+        if let Some(check_tokens_py) = check_tokens {
+            for check_py in check_tokens_py.iter() {
+                let check_type = check_py.downcast::<PyType>()?.clone();
+                check_tokens_types.push(check_type);
+            }
+            check_tokens_types.extend(end_tokens_types.iter().cloned());
+        }
+
+        let mut tokens = Vec::new();
+        while let Ok(next_token) = self.get_next_token(None, false) {
+            let next_py = next_token.clone().into_bound_py_any(py)?;
+            if !check_tokens_types.is_empty() && !check_tokens_types.iter().any(|t| t.eq(next_py.get_type()).unwrap_or(false)) {
+                return Err(PyErr::new::<LexerError, _>((
+                    format!(
+                        "Unexpected token '{:?}' not among expected ones {:?}",
+                        next_token, check_tokens_types.iter(),
+                    ),
+                    Some(self.line.clone()),
+                    Some(self.filename.clone()),
+                    Some(self.linenum),
+                )));
+            }
+            if no_white && matches!(next_token, Tokens::LWhite(_)) {
+                continue;
+            }
+            tokens.push(next_token);
+            if end_tokens_types.iter().any(|t| t.eq(next_py.get_type()).unwrap_or(false)) {
+                break;
+            }
+        }
+        Ok(tokens)
+    }
+
+    /// Skip all tokens until end tokens are found.
+    pub fn flush_until(&mut self, end_tokens: &Bound<'_, PyList>) -> PyResult<()> {
+        let _ = self.get_until(end_tokens, None, false)?;
+        Ok(())
     }
 
     pub fn set_next_line(&mut self, line: &str, indent: usize, linenum: usize) {
