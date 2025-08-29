@@ -1,8 +1,7 @@
 use pyo3::prelude::*;
 
 mod tokens;
-use crate::tokens::Tokens;
-use crate::tokens::substitution;
+mod lexer;
 
 #[cfg(test)]
 mod tests {
@@ -30,10 +29,17 @@ fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
 fn cartconf(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     let tokens_module = PyModule::new(m.py(), "tokens")?;
-    tokens_module.add_class::<Tokens>()?;
-    tokens_module.add_function(wrap_pyfunction!(substitution, m)?)?;
+    tokens_module.add_class::<tokens::Tokens>()?;
+    tokens_module.add_function(wrap_pyfunction!(tokens::substitution, m)?)?;
+
+    let lexer_module = PyModule::new(m.py(), "lexer")?;
+    lexer_module.add_class::<lexer::Reader>()?;
+    lexer_module.add_class::<lexer::Lexer>()?;
+    lexer_module.add("LexerError", m.py().get_type::<lexer::LexerError>())?;
 
     m.add_submodule(&tokens_module)?;
+    m.add_submodule(&lexer_module)?;
     m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
+
     Ok(())
 }

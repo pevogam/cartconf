@@ -17,7 +17,7 @@ const RESERVED_KEYS: &[&str] = &[
 
 // Define an enum for the different types of tokens
 #[pyclass(eq)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Tokens {
     LIndent(i32),
     LEndL(),
@@ -105,6 +105,7 @@ impl fmt::Display for Tokens {
         }
     }
 }
+
 #[pymethods]
 impl Tokens {
     #[getter]

@@ -12,9 +12,14 @@ from .exceptions import *
 from .utils import drop_suffixes, apply_suffix_bounds
 from .filters import *
 from .tokens import *
+from .cartconf import lexer
 
 
 LOG = logging.getLogger("avocado." + __name__)
+
+Reader = lexer.Reader
+Lexer = lexer.Lexer
+LexerError = lexer.LexerError
 
 
 class Label(object):
@@ -99,486 +104,6 @@ class Node(object):
         return "\n".join(dump_lines)
 
 
-class StrReader(object):
-    """
-    Preprocess an input string for easy reading.
-    """
-
-    def __init__(self, s: str) -> None:
-        """
-        Initialize the reader.
-
-        :param s: The string to parse.
-        """
-        self.filename = "<string>"
-        self._lines = []
-        self._line_index = 0
-        self._stored_line = None
-        for linenum, line in enumerate(s.splitlines()):
-            line = line.rstrip().expandtabs()
-            stripped_line = line.lstrip()
-            indent = len(line) - len(stripped_line)
-            if not stripped_line or stripped_line.startswith(("#", "//")):
-                continue
-            self._lines.append((stripped_line, indent, linenum + 1))
-
-    def get_next_line(self, prev_indent: int) -> tuple[str | None, int, int]:
-        """
-        Get the next line in the current block.
-
-        :param prev_indent: The indentation level of the previous block.
-        :returns: (line, indent, linenum), where indent is the line's
-            indentation level.  If no line is available, (None, -1, -1) is
-            returned.
-        """
-        if self._stored_line:
-            ret = self._stored_line
-            self._stored_line = None
-            return ret
-        if self._line_index >= len(self._lines):
-            return None, -1, -1
-        line, indent, linenum = self._lines[self._line_index]
-        if indent <= prev_indent:
-            return None, indent, linenum
-        self._line_index += 1
-        return line, indent, linenum
-
-    def set_next_line(self, line: str, indent: int, linenum: int) -> None:
-        """
-        Make the next call to get_next_line() return the given line instead of
-        the real next line.
-        """
-        line = line.strip()
-        if line:
-            self._stored_line = line, indent, linenum
-
-
-class FileReader(StrReader):
-    """
-    Preprocess an input file for easy reading.
-    """
-
-    def __init__(self, filename: str) -> None:
-        """
-        Initialize the reader.
-
-        :param filename: name of the input file
-        """
-        with open(filename) as f:
-            super().__init__(f.read())
-        self.filename = filename
-
-
-class Lexer(object):
-
-    tokens_oper_re = [r"\=", r"\+\=", r"\<\=", r"\~\=", r"\?\=", r"\?\+\=", r"\?\<\="]
-    _ops_exp = re.compile(r"|".join(tokens_oper_re))
-    spec_iden = "_-.*+?|\\"
-    spec_oper = "+<?~"
-
-    def __init__(self, reader: StrReader | FileReader) -> None:
-        """
-        Initialize the lexer.
-
-        :param reader: file or string reader to get lines from
-        """
-        self.reader = reader
-        self.filename = reader.filename
-        self.line = None
-        self.linenum = 0
-        self.ignore_white = False
-        self.rest_as_string = False
-        self.match_func_index = 0
-        self.generator = self.get_lexer()
-        self.prev_indent = -1
-        self.fast = False
-
-    def set_prev_indent(self, prev_indent: int) -> None:
-        self.prev_indent = prev_indent
-
-    def set_fast(self) -> None:
-        self.fast = True
-
-    def set_strict(self) -> None:
-        self.fast = False
-
-    def match(self, line: str, pos: int) -> Generator["Token", None, None]:
-        """
-        Generate tokens from a string line in order of matching.
-
-        :param line: line to parse from
-        :param pos: position in the line to start parsing from
-        :returns: iterator of tokens that were read
-        :raises: :py:class:`LexerError` if unexpected character is found
-        """
-        l0 = line[0]
-        if l0 == "v":
-            if line.startswith("variants:"):
-                yield LVariants()
-                yield LColon()
-                pos = 9
-            elif line.startswith("variants "):
-                yield LVariants()
-                pos = 8
-        elif l0 == "-":
-            yield LVariant()
-            pos = 1
-        elif l0 == "o":
-            if line.startswith("only "):
-                yield LOnly()
-                pos = 4
-                while line[pos].isspace():
-                    pos += 1
-        elif l0 == "n":
-            if line.startswith("no "):
-                yield LNo()
-                pos = 2
-                while line[pos].isspace():
-                    pos += 1
-        elif l0 == "i":
-            if line.startswith("include "):
-                yield LInclude()
-                pos = 7
-        elif l0 == "d":
-            if line.startswith("del "):
-                yield LDel("", "")
-                pos = 3
-                while line[pos].isspace():
-                    pos += 1
-        elif l0 == "s":
-            if line.startswith("suffix "):
-                yield LSuffix()
-                pos = 6
-                while line[pos].isspace():
-                    pos += 1
-        elif l0 == "j":
-            if line.startswith("join "):
-                yield LJoin()
-                pos = 4
-                while line[pos].isspace():
-                    pos += 1
-
-        m = None
-        cind = 0
-        if self.fast and pos == 0:  # due to refexp
-            cind = line[pos:].find(":")
-            m = Lexer._ops_exp.search(line[pos:])
-
-        chars = []
-        if self.rest_as_string:
-            self.rest_as_string = False
-            yield LString(line[pos:].lstrip())
-        elif self.fast and m and (cind < 0 or cind > m.end()):
-            chars = []
-            yield LIdentifier(line[: m.start()].rstrip())
-            yield tokens_oper[m.group()[:-1]]("", "")
-            yield LString(line[m.end() :].lstrip())
-        else:
-            oper = []
-            token = None
-            li = enumerate(line[pos:], pos)
-            for pos, char in li:
-                if (
-                    char.isalnum()
-                    or char in "_-"
-                    or (
-                        Lexer._ops_exp.search(line)
-                        and " " not in line[:pos]
-                        and char in Lexer.spec_iden
-                    )
-                ):
-                    chars += [char]
-                elif char in Lexer.spec_oper:  # <+?=~
-                    if chars:
-                        chars_str = "".join(chars)
-                        yield LIdentifier(chars_str)
-                        oper = []
-                    chars = []
-                    oper += [char]
-                else:
-                    if chars:
-                        chars_str = "".join(chars)
-                        yield LIdentifier(chars_str)
-                        chars = []
-                    if char.isspace():  # Whitespace
-                        space = char
-                        for pos, char in li:
-                            if not char.isspace():
-                                if not self.ignore_white:
-                                    yield LWhite(space)
-                                break
-                            else:
-                                space += char
-                    if (
-                        char.isalnum()
-                        or char in "_-"
-                        or (
-                            Lexer._ops_exp.search(line)
-                            and " " not in line[:pos]
-                            and char in Lexer.spec_iden
-                        )
-                    ):
-                        chars += [char]
-                    elif char == "=":
-                        oper_str = "".join(oper)
-                        if oper_str in tokens_oper:
-                            yield tokens_oper[oper_str]("", "")
-                            # NOTE: the "=" is also used in expressions like "(a=b)" or "[a=b]"
-                            if (re.search(r"\((?![^)]*\))", line[:pos]) is None and
-                                    re.search(r"\[(?![^)]*\])", line[:pos]) is None):
-                                yield LString(line[pos + 1 :].lstrip())
-                                break
-                        else:
-                            raise LexerError(
-                                "Unexpected character %s on" " pos %s" % (char, pos),
-                                self.line,
-                                self.filename,
-                                self.linenum,
-                            )
-                        oper = []
-                    elif char in tokens_map:
-                        token = tokens_map[char]()
-                    elif char == '"':
-                        chars = []
-                        pos, char = next(li)
-                        while char != '"':
-                            chars += [char]
-                            pos, char = next(li)
-                        chars_str = "".join(chars)
-                        yield LString(chars_str)
-                    elif char == "#":
-                        break
-                    elif char in Lexer.spec_oper:
-                        oper += [char]
-                    else:
-                        raise LexerError(
-                            "Unexpected character %s on"
-                            " pos %s. Special chars are allowed"
-                            " only in variable assignation"
-                            " statement" % (char, pos),
-                            line,
-                            self.filename,
-                            self.linenum,
-                        )
-                    if token is not None:
-                        yield token
-                        token = None
-                    if self.rest_as_string:
-                        self.rest_as_string = False
-                        yield LString(line[pos + 1 :].lstrip())
-                        break
-        if chars:
-            chars_str = "".join(chars)
-            yield LIdentifier(chars_str)
-            chars = []
-        yield LEndL()
-
-    def get_lexer(self) -> Generator["Token", None, None]:
-        """
-        Generate tokens from a multi-line reader in order of matching.
-
-        :returns: iterator of tokens that were read
-
-        ..warning:: This generator will never terminate and needs checks for end tokens.
-        """
-        cr = self.reader
-        indent = 0
-        while True:
-            (self.line, indent, self.linenum) = cr.get_next_line(self.prev_indent)
-
-            if not self.line:
-                yield LEndBlock(indent)
-                continue
-
-            yield LIndent(indent)
-            for token in self.match(self.line, 0):
-                yield token
-
-    def get_until_gen(
-        self, end_tokens: list[type] = None
-    ) -> Generator["Token", None, None]:
-        """
-        Generate tokens from a multi-line reader terminating at a list of end tokens.
-
-        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
-        :returns: iterator of tokens that were read
-        """
-        end_tokens = end_tokens or [LEndL]
-        token = next(self.generator)
-        while type(token) not in end_tokens:
-            yield token
-            token = next(self.generator)
-        yield token
-
-    def get_until(self, end_tokens: list[type] = None) -> list["Token"]:
-        """
-        Get a full list of tokens from a multi-line reader terminating at a list of end tokens.
-
-        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
-        :returns: list of tokens that were read
-        """
-        end_tokens = end_tokens or [LEndL]
-        return [x for x in self.get_until_gen(end_tokens)]
-
-    def flush_until(self, end_tokens: list[type] = None) -> None:
-        """
-        Skip all tokens until any in a list of end tokens.
-
-        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
-        """
-        end_tokens = end_tokens or [LEndL]
-        for _ in self.get_until_gen(end_tokens):
-            pass
-
-    def get_until_check(
-        self, allowed_tokens: list[type], end_tokens: list[type] = None
-    ) -> list["Token"]:
-        """
-        Get a full list of tokens from acceptable ones terminating at a list of end ones.
-
-        :param allowed_tokens: list of allowed tokens
-        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
-        :returns: list of tokens that were read
-        :raises: :py:class:`ParserError` if unexpected token is found
-        """
-        end_tokens = end_tokens or [LEndL]
-        tokens = []
-        allowed_tokens = allowed_tokens + end_tokens
-        for token in self.get_until_gen(end_tokens):
-            if type(token) in allowed_tokens:
-                tokens.append(token)
-            else:
-                raise ParserError(
-                    "Expected %s got %s" % (allowed_tokens, type(token)),
-                    self.line,
-                    self.filename,
-                    self.linenum,
-                )
-        return tokens
-
-    def get_until_no_white(self, end_tokens: list[type] = None) -> list["Token"]:
-        """
-        Get a full list of tokens terminating at a list of end tokens and strip white space ones.
-
-        :param end_tokens: list of tokens to terminate reading on with default end-of-line token
-        :returns: list of tokens that were read
-        """
-        end_tokens = end_tokens or [LEndL]
-        return [x for x in self.get_until_gen(end_tokens) if not isinstance(x, LWhite)]
-
-    def rest_line_gen(self) -> Generator["Token", None, None]:
-        """
-        Generate tokens from the rest of the line terminating only at an end-of-line token.
-        :returns: iterator of tokens that were read
-
-        :returns: iterator of tokens that were read
-        """
-        token = next(self.generator)
-        while not isinstance(token, LEndL):
-            yield token
-            token = next(self.generator)
-
-    def rest_line(self) -> list["Token"]:
-        """
-        Get a full list of tokens from the rest of the line terminating only at an end-of-line token.
-
-        :returns: list of tokens that were read
-        """
-        return [x for x in self.rest_line_gen()]
-
-    def rest_line_no_white(self) -> list["Token"]:
-        """
-        Get a full list of tokens from the rest of the line and strip white space ones.
-
-        :returns: list of tokens that were read
-        """
-        return [x for x in self.rest_line_gen() if not isinstance(x, LWhite)]
-
-    def rest_line_as_string_token(self) -> LString:
-        """
-        Get a string token from the rest of the line.
-
-        :returns: rest of the line as a string token
-        :raises: :py:class:`ParserError` if the remaining token is not a string token
-            followed by an end-of-line token
-        """
-        self.rest_as_string = True
-        remainder_string = next(self.generator)
-        if type(remainder_string) is not LString:
-            raise ParserError("Expected string, got %s" % type(remainder_string))
-        # skip the end-of-line token
-        end_of_line = next(self.generator)
-        if type(end_of_line) is not LEndL:
-            raise ParserError("Expected end-of-line, got %s" % type(end_of_line))
-        return remainder_string
-
-    def get_next_check(self, allowed_tokens: list[type]) -> tuple[type, "Token"]:
-        """
-        Get the next token and throw an error if it is not acceptable.
-
-        :param allowed_tokens: list of allowed tokens
-        :returns: the next acceptable token and its type
-        :raises: :py:class:`ParserError` if token is not acceptable
-        """
-        token = next(self.generator)
-        if type(token) in allowed_tokens:
-            return type(token), token
-        else:
-            raise ParserError(
-                "Expected %s got ['%s']=[%s]"
-                % ([x.identifier for x in allowed_tokens], token.identifier, token),
-                self.line,
-                self.filename,
-                self.linenum,
-            )
-
-    def get_next_check_no_white(
-        self, allowed_tokens: list[type]
-    ) -> tuple[type, "Token"]:
-        """
-        Get the next acceptable token and strip white space tokens.
-
-        :param allowed_tokens: list of allowed tokens
-        :returns: the next acceptable token and its type
-        :raises: :py:class:`ParserError` if token is not acceptable
-        """
-        token = next(self.generator)
-        while isinstance(token, LWhite):
-            token = next(self.generator)
-        if type(token) in allowed_tokens:
-            return type(token), token
-        else:
-            raise ParserError(
-                "Expected %s got ['%s']"
-                % ([x.identifier for x in allowed_tokens], token.identifier),
-                self.line,
-                self.filename,
-                self.linenum,
-            )
-
-    def check_token(
-        self, token: "Token", allowed_tokens: list[type]
-    ) -> tuple[type, "Token"]:
-        """
-        Check that a token is acceptable (among the allowed ones).
-
-        :param token: token to check
-        :param allowed_tokens: list of allowed tokens
-        :returns: the acceptable token and its type
-        :raises: :py:class:`ParserError` if token is not acceptable
-        """
-        if type(token) in allowed_tokens:
-            return type(token), token
-        else:
-            raise ParserError(
-                "Expected %s got ['%s']"
-                % ([x.identifier for x in allowed_tokens], token.identifier),
-                self.line,
-                self.filename,
-                self.linenum,
-            )
-
-
 class Parser(object):
     # pylint: disable=W0102
 
@@ -635,7 +160,7 @@ class Parser(object):
         :param cfgfile: configuration file path to parse
         """
         self.node.filename = cfgfile
-        self.node = self._parse(Lexer(FileReader(cfgfile)), self.node)
+        self.node = self._parse(Lexer(filename=cfgfile), self.node)
         self.filename = cfgfile
 
     def parse_string(self, cfgstr: str) -> None:
@@ -644,8 +169,8 @@ class Parser(object):
 
         :param cfgstr: configuration string to parse
         """
-        self.node.filename = StrReader("").filename
-        self.node = self._parse(Lexer(StrReader(cfgstr)), self.node)
+        self.node.filename = Reader(content="").filename
+        self.node = self._parse(Lexer(content=cfgstr), self.node)
 
     def only_filter(self, variant: str) -> None:
         """
@@ -725,35 +250,35 @@ class Parser(object):
         """
         or_filters = []
         tokens = iter(tokens + [LEndL()])
-        typet, token = lexer.check_token(
-            next(tokens), [LIdentifier, LLRBracket, LEndL, LWhite]
-        )
         and_filter = []
         con_filter = []
         dots = 1
 
-        def next_nw(gener):
-            token = next(gener)
+        def check_token(
+            token: "Token", allowed_tokens: list[type]
+        ) -> tuple[type, "Token"]:
+            lexer.check_token(token, allowed_tokens)
+            return type(token), token
+
+        def next_nw(gen: Generator["Token", None, None]) -> "Token":
+            token = next(gen)
             while isinstance(token, LWhite):
-                token = next(gener)
+                token = next(gen)
             return token
 
+        typet, token = check_token(
+            next(tokens), [LIdentifier, LLRBracket, LEndL, LWhite]
+        )
         while typet not in [LEndL]:
             if typet in [LIdentifier, LLRBracket]:  # join    identifier
                 if typet == LLRBracket:  # (xxx=ttt)
-                    _, ident = lexer.check_token(
-                        next_nw(tokens), [LIdentifier]
-                    )  # (iden
-                    typet, _ = lexer.check_token(
-                        next_nw(tokens), [LSet, LRRBracket]
-                    )  # =
+                    _, ident = check_token(next_nw(tokens), [LIdentifier])  # (iden
+                    typet, _ = check_token(next_nw(tokens), [LSet, LRRBracket])  # =
                     if typet == LRRBracket:  # (xxx)
                         token = Label(ident.string)
                     elif typet == LSet:  # (xxx = yyyy)
-                        _, value = lexer.check_token(
-                            next_nw(tokens), [LIdentifier, LString]
-                        )
-                        lexer.check_token(next_nw(tokens), [LRRBracket])
+                        _, value = check_token(next_nw(tokens), [LIdentifier, LString])
+                        check_token(next_nw(tokens), [LRRBracket])
                         token = Label(ident.string, value.string)
                 else:
                     token = Label(token.string)
@@ -803,11 +328,11 @@ class Parser(object):
                 token = next(tokens)
                 while isinstance(token, LWhite):
                     token = next(tokens)
-                typet, token = lexer.check_token(
+                typet, token = check_token(
                     token, [LIdentifier, LComa, LDot, LLRBracket, LEndL]
                 )
                 continue
-            typet, token = lexer.check_token(
+            typet, token = check_token(
                 next(tokens), [LIdentifier, LComa, LDot, LLRBracket, LEndL, LWhite]
             )
         if and_filter:
@@ -849,14 +374,14 @@ class Parser(object):
         Parse:
            include relative file patch to working directory.
         """
-        path = lexer.rest_line_as_string_token()
+        path = lexer.get_rest_line_as_string_token()
         filename = os.path.expanduser(path.string)
-        if isinstance(lexer.reader, FileReader) and not os.path.isabs(filename):
+        if lexer.filename != "<string>" and not os.path.isabs(filename):
             filename = os.path.join(os.path.dirname(lexer.filename), filename)
         if not os.path.isfile(filename):
             raise MissingIncludeError(lexer.line, lexer.filename, lexer.linenum)
         Parser._apply_predict(lexer, node, pre_dict)
-        lch = Lexer(FileReader(filename))
+        lch = Lexer(filename=filename)
         node = self._parse(lch, node, -1)
         return node
 
@@ -881,7 +406,7 @@ class Parser(object):
         else:
             identifier = [token] + identifier[:-1]
             identifier_str = "".join([x.string for x in identifier])
-        _, value = lexer.get_next_check([LString])
+        value = lexer.get_next_token([LString])
         value_str = value.string
         if value_str and (
             value_str[0] == value_str[-1] == '"' or value_str[0] == value_str[-1] == "'"
@@ -899,12 +424,12 @@ class Parser(object):
                 # then the operations xxx +=, <=, .... are safe.
                 if op.name in pre_dict and d_nin_val:
                     op.apply_to_dict(pre_dict)
-                    lexer.get_next_check([LEndL])
+                    lexer.get_next_token([LEndL])
                     return
                 else:
                     Parser._apply_predict(lexer, node, pre_dict)
             node.content += [(lexer.filename, lexer.linenum, op)]
-        lexer.get_next_check([LEndL])
+        lexer.get_next_token([LEndL])
 
     def _apply_deletion(
         self,
@@ -916,8 +441,8 @@ class Parser(object):
         Parse:
             del operand
         """
-        _, to_del = lexer.get_next_check_no_white([LIdentifier])
-        lexer.get_next_check_no_white([LEndL])
+        to_del = lexer.get_next_token([LIdentifier], no_white=True)
+        lexer.get_next_token([LEndL], no_white=True)
         token = LDel(to_del.string, "")
 
         Parser._apply_predict(lexer, node, pre_dict)
@@ -938,9 +463,9 @@ class Parser(object):
         """
         identifier = [token] + identifier[:-1]
         cfilter = Parser.parse_filter(lexer, identifier + [LEndL()])
-        next_line = lexer.rest_line_as_string_token()
+        next_line = lexer.get_rest_line_as_string_token()
         if next_line.string != "":
-            lexer.reader.set_next_line(next_line.string, indent + 1, lexer.linenum)
+            lexer.set_next_line(next_line.string, indent + 1, lexer.linenum)
         cond = Condition(cfilter, lexer.line)
         self._parse(lexer, cond, prev_indent=indent)
 
@@ -959,11 +484,11 @@ class Parser(object):
            !xxx.yyy.(aaa=bbb): vvv
         """
         lfilter = Parser.parse_filter(
-            lexer, lexer.get_until_no_white([LColon, LEndL])[:-1]
+            lexer, lexer.get_until([LColon, LEndL], no_white=True)[:-1]
         )
-        next_line = lexer.rest_line_as_string_token()
+        next_line = lexer.get_rest_line_as_string_token()
         if next_line.string != "":
-            lexer.reader.set_next_line(next_line.string, indent + 1, lexer.linenum)
+            lexer.set_next_line(next_line.string, indent + 1, lexer.linenum)
         cond = NegativeCondition(lfilter, lexer.line)
         self._parse(lexer, cond, prev_indent=indent)
 
@@ -983,12 +508,11 @@ class Parser(object):
             raise ParserError(
                 "'variants' is not allowed inside a " "conditional block",
                 lexer.line,
-                lexer.reader.filename,
+                lexer.filename,
                 lexer.linenum,
             )
 
-        lexer.set_strict()
-        tokens = lexer.get_until_no_white([LLBracket, LColon, LIdentifier, LEndL])
+        tokens = lexer.get_until([LLBracket, LColon, LIdentifier, LEndL], no_white=True)
         vtypet = type(tokens[-1])
         variant_name = ""
         meta = {}
@@ -1004,14 +528,14 @@ class Parser(object):
                     )
                 variant_name = tokens[0].string
             elif vtypet == LLBracket:  # [
-                _, ident = lexer.get_next_check_no_white([LIdentifier])
-                typet, _ = lexer.get_next_check_no_white([LSet, LRBracket])
+                ident = lexer.get_next_token([LIdentifier], no_white=True)
+                typet = type(lexer.get_next_token([LSet, LRBracket], no_white=True))
                 if typet == LRBracket:  # [xxx]
                     if ident.string not in meta:
                         meta[ident.string] = []
                     meta[ident.string].append(True)
                 elif typet == LSet:  # [xxx = yyyy]
-                    tokens = lexer.get_until_no_white([LRBracket, LEndL])
+                    tokens = lexer.get_until([LRBracket, LEndL], no_white=True)
                     if isinstance(tokens[-1], LRBracket):
                         if ident.string not in meta:
                             meta[ident.string] = []
@@ -1025,8 +549,7 @@ class Parser(object):
                         )
 
             varianst_allowed_in = [LLBracket, LColon, LIdentifier, LEndL]
-            tokens = lexer.get_next_check_no_white(varianst_allowed_in)
-            vtypet = type(tokens[-1])
+            vtypet = type(lexer.get_next_token(varianst_allowed_in, no_white=True))
 
         if "default" in meta:
             for wd in meta["default"]:
@@ -1045,7 +568,7 @@ class Parser(object):
                 lexer.filename,
                 lexer.linenum,
             )
-        lexer.get_next_check_no_white([LEndL])
+        lexer.get_next_token([LEndL], no_white=True)
 
         return variant_name, meta
 
@@ -1081,22 +604,25 @@ class Parser(object):
         while True:
             lexer.set_prev_indent(variant_indent)
             # Get token from lexer and check syntax.
-            typet, token = lexer.get_next_check_no_white(
-                [LIdentifier, LDefault, LIndent, LEndBlock]
+            token = lexer.get_next_token(
+                [LIdentifier, LDefault, LIndent, LEndBlock],
+                no_white=True,
             )
+            typet = type(token)
             if typet == LEndBlock:
                 break
 
             if typet == LIndent:
-                lexer.get_next_check_no_white([LVariant])
-                typet, token = lexer.get_next_check_no_white([LIdentifier, LDefault])
+                lexer.get_next_token([LVariant], no_white=True)
+                token = lexer.get_next_token([LIdentifier, LDefault], no_white=True)
+                typet = type(token)
 
             if typet == LDefault:  # @
                 is_default = True
-                name = lexer.get_until_check([LIdentifier, LDot], [LColon])
+                name = lexer.get_until([LColon], [LIdentifier, LDot])
             else:  # identificator
                 is_default = False
-                name = [token] + lexer.get_until_check([LIdentifier, LDot], [LColon])
+                name = [token] + lexer.get_until([LColon], [LIdentifier, LDot])
 
             if len(name) == 2:
                 raw_name = name
@@ -1105,9 +631,9 @@ class Parser(object):
                 raw_name = [x for x in name[:-1]]
                 name = [x.string for x in name[:-1] if isinstance(x, LIdentifier)]
 
-            token = next(lexer.generator)
+            token = lexer.get_next_token()
             while isinstance(token, LWhite):
-                token = next(lexer.generator)
+                token = lexer.get_next_token()
             tokens = None
             if not isinstance(token, LEndL):
                 tokens = [token] + lexer.get_until([LEndL])
@@ -1149,7 +675,9 @@ class Parser(object):
             node3.append_to_shortname = not is_default
 
             op = LUpdateFileMap(
-                lexer.filename, ".".join(str(x) for x in node3.name), "_name_map_file"
+                lexer.filename,
+                ".".join(str(x) for x in node3.name),
+                "_name_map_file",
             )
             node3.content += [(lexer.filename, lexer.linenum, op)]
 
@@ -1217,7 +745,6 @@ class Parser(object):
         # pre_dict contains block of operation without collision with
         # others block or operation. Increase speed almost twice.
         pre_dict = {}
-        lexer.set_fast()
 
         # Suffix should be applied as the last operator in the dictionary
         # Reasons:
@@ -1228,7 +755,8 @@ class Parser(object):
         try:
             while True:
                 lexer.set_prev_indent(prev_indent)
-                typet, token = lexer.get_next_check(indent_allowed)
+                token = lexer.get_next_token(indent_allowed)
+                typet = type(token)
                 if typet == LEndBlock:
                     if pre_dict:
                         # flush pre_dict to node content.
@@ -1239,7 +767,8 @@ class Parser(object):
                     return node
 
                 indent = token.length
-                typet, token = lexer.get_next_check(allowed)
+                token = lexer.get_next_token(allowed)
+                typet = type(token)
 
                 if typet == LInclude:
                     node = self._apply_include(lexer, node, pre_dict)
@@ -1248,7 +777,7 @@ class Parser(object):
                 elif typet == LIdentifier:
                     # Parse:
                     #    identifier .....
-                    identifier = lexer.get_until_no_white(identifier_allowed)
+                    identifier = lexer.get_until(identifier_allowed, no_white=True)
                     if tokens_oper_key(identifier[-1]) in list(
                         tokens_oper
                     ):  # operand = <=
@@ -1290,7 +819,7 @@ class Parser(object):
                 elif typet in [LNo, LOnly, LJoin]:
                     # Parse:
                     #    only/no/join (filter=text)..aaa.bbb, xxxx
-                    lfilter = Parser.parse_filter(lexer, lexer.rest_line())
+                    lfilter = Parser.parse_filter(lexer, lexer.get_rest_line())
                     Parser._apply_predict(lexer, node, pre_dict)
                     if typet == LOnly:
                         node.content += [
@@ -1322,11 +851,15 @@ class Parser(object):
                     #    suffix SUFFIX
                     if pre_dict:
                         Parser._apply_predict(lexer, node, pre_dict)
-                    token_type, token_val = lexer.get_next_check([LIdentifier])
-                    lexer.get_next_check([LEndL])
+                    token_val = lexer.get_next_token([LIdentifier])
+                    lexer.get_next_token([LEndL])
                     suffix_operator = Suffix("", token_val.string)
                     # Suffix will be applied as all other elements in current node are processed:
-                    suffix = (lexer.filename, lexer.linenum, suffix_operator)
+                    suffix = (
+                        lexer.filename,
+                        lexer.linenum,
+                        suffix_operator,
+                    )
 
                 else:
                     raise ParserError(

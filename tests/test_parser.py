@@ -133,39 +133,51 @@ class NodeTest(unittest.TestCase):
         self.assertEqual(dump_str, expected_str)
 
 
-class StrReaderTest(unittest.TestCase):
+class ReaderTest(unittest.TestCase):
 
     def test_initialization(self):
         s = "line1\nline2\n  line3\n"
-        reader = parser.StrReader(s)
+        reader = parser.Reader(content=s)
         self.assertEqual(reader.filename, "<string>")
-        self.assertEqual(len(reader._lines), 3)
-        self.assertEqual(reader._lines[0], ("line1", 0, 1))
-        self.assertEqual(reader._lines[1], ("line2", 0, 2))
-        self.assertEqual(reader._lines[2], ("line3", 2, 3))
+        self.assertEqual(len(reader.lines), 3)
+        self.assertEqual(reader.lines[0], ("line1", 0, 1))
+        self.assertEqual(reader.lines[1], ("line2", 0, 2))
+        self.assertEqual(reader.lines[2], ("line3", 2, 3))
+
+    def test_initialization_filename(self):
+        with tempfile.NamedTemporaryFile() as temp_file:
+            temp_file.write(b"line1\nline2\n  line3\n")
+            temp_file.flush()
+            temp_file_name = temp_file.name
+            reader = parser.Reader(filename=temp_file_name)
+        self.assertEqual(reader.filename, temp_file_name)
+        self.assertEqual(len(reader.lines), 3)
+        self.assertEqual(reader.lines[0], ("line1", 0, 1))
+        self.assertEqual(reader.lines[1], ("line2", 0, 2))
+        self.assertEqual(reader.lines[2], ("line3", 2, 3))
 
     def test_initialization_comments(self):
         s = "line1\nline2\n#line3\n  line4\n//line5\nline6\n"
-        reader = parser.StrReader(s)
+        reader = parser.Reader(content=s)
         self.assertEqual(reader.filename, "<string>")
-        self.assertEqual(len(reader._lines), 4)
-        self.assertEqual(reader._lines[0], ("line1", 0, 1))
-        self.assertEqual(reader._lines[1], ("line2", 0, 2))
-        self.assertEqual(reader._lines[2], ("line4", 2, 4))
-        self.assertEqual(reader._lines[3], ("line6", 0, 6))
+        self.assertEqual(len(reader.lines), 4)
+        self.assertEqual(reader.lines[0], ("line1", 0, 1))
+        self.assertEqual(reader.lines[1], ("line2", 0, 2))
+        self.assertEqual(reader.lines[2], ("line4", 2, 4))
+        self.assertEqual(reader.lines[3], ("line6", 0, 6))
 
     def test_initialization_tabs(self):
         s = "line1\nline2  \n  line3	\n"
-        reader = parser.StrReader(s)
+        reader = parser.Reader(content=s)
         self.assertEqual(reader.filename, "<string>")
-        self.assertEqual(len(reader._lines), 3)
-        self.assertEqual(reader._lines[0], ("line1", 0, 1))
-        self.assertEqual(reader._lines[1], ("line2", 0, 2))
-        self.assertEqual(reader._lines[2], ("line3", 2, 3))
+        self.assertEqual(len(reader.lines), 3)
+        self.assertEqual(reader.lines[0], ("line1", 0, 1))
+        self.assertEqual(reader.lines[1], ("line2", 0, 2))
+        self.assertEqual(reader.lines[2], ("line3", 2, 3))
 
     def test_get_next_line(self):
-        s = "line1\nline2\n  line3\n"
-        reader = parser.StrReader(s)
+        s = "line1\nline2\n  line3\nline4\n"
+        reader = parser.Reader(content=s)
         line, indent, linenum = reader.get_next_line(-1)
         self.assertEqual(line, "line1")
         self.assertEqual(indent, 0)
@@ -178,6 +190,14 @@ class StrReaderTest(unittest.TestCase):
         self.assertEqual(line, "line3")
         self.assertEqual(indent, 2)
         self.assertEqual(linenum, 3)
+        line, indent, linenum = reader.get_next_line(2)
+        self.assertEqual(line, None)
+        self.assertEqual(indent, 0)
+        self.assertEqual(linenum, 4)
+        line, indent, linenum = reader.get_next_line(-1)
+        self.assertEqual(line, "line4")
+        self.assertEqual(indent, 0)
+        self.assertEqual(linenum, 4)
         line, indent, linenum = reader.get_next_line(-1)
         self.assertEqual(line, None)
         self.assertEqual(indent, -1)
@@ -185,7 +205,7 @@ class StrReaderTest(unittest.TestCase):
 
     def test_set_next_line(self):
         s = "line1\nline2\n  line3\n"
-        reader = parser.StrReader(s)
+        reader = parser.Reader(content=s)
         reader.set_next_line("new line", 1, 4)
         line, indent, linenum = reader.get_next_line(-1)
         self.assertEqual(line, "new line")
@@ -197,85 +217,58 @@ class StrReaderTest(unittest.TestCase):
         self.assertEqual(linenum, 1)
 
 
-class FileReaderTest(unittest.TestCase):
-
-    def test_initialization(self):
-        with tempfile.NamedTemporaryFile() as temp_file:
-            temp_file.write(b"line1\nline2\n  line3\n")
-            temp_file.flush()
-            temp_file_name = temp_file.name
-            reader = parser.FileReader(temp_file_name)
-        self.assertEqual(reader.filename, temp_file_name)
-        self.assertEqual(len(reader._lines), 3)
-        self.assertEqual(reader._lines[0], ("line1", 0, 1))
-        self.assertEqual(reader._lines[1], ("line2", 0, 2))
-        self.assertEqual(reader._lines[2], ("line3", 2, 3))
-
-
 class LexerTest(unittest.TestCase):
 
     def setUp(self):
         self.sample_text = "variants: test\n  only test\n  no test\n  join test\n  suffix test\n  include test\n  del test\n  !test\n"
-        self.reader = parser.StrReader(self.sample_text)
-        self.lexer = parser.Lexer(self.reader)
+        self.lexer = parser.Lexer(content=self.sample_text)
 
     def test_initialization(self):
-        self.assertEqual(self.lexer.reader, self.reader)
-        self.assertEqual(self.lexer.filename, self.reader.filename)
+        self.assertEqual(self.lexer.filename, "<string>")
         self.assertIsNone(self.lexer.line)
         self.assertEqual(self.lexer.linenum, 0)
         self.assertFalse(self.lexer.ignore_white)
         self.assertFalse(self.lexer.rest_as_string)
-        self.assertEqual(self.lexer.match_func_index, 0)
-        self.assertIsNotNone(self.lexer.generator)
         self.assertEqual(self.lexer.prev_indent, -1)
-        self.assertFalse(self.lexer.fast)
 
     def test_set_prev_indent(self):
         self.lexer.set_prev_indent(4)
         self.assertEqual(self.lexer.prev_indent, 4)
 
-    def test_set_fast(self):
-        self.lexer.set_fast()
-        self.assertTrue(self.lexer.fast)
-
-    def test_set_strict(self):
-        self.lexer.set_strict()
-        self.assertFalse(self.lexer.fast)
-
-    def test_match(self):
+    def test_match_line(self):
         line = "only test"
-        tokens = list(self.lexer.match(line, 0))
+        tokens = list(self.lexer.match_line(line, 0))
+        self.assertEqual(len(tokens), 1)
         self.assertIsInstance(tokens[0], parser.LOnly)
-        self.assertIsInstance(tokens[1], parser.LIdentifier)
+        tokens = list(self.lexer.match_line(line, 0))
+        self.assertEqual(len(tokens), 1)
+        self.assertIsInstance(tokens[0], parser.LIdentifier)
 
-    def test_get_lexer(self):
-        generator = self.lexer.get_lexer()
-        token = next(generator)
+    def test_get_next_token(self):
+        next = self.lexer.get_next_token
+        token = next()
         self.assertIsInstance(token, parser.LIndent)
-        token = next(generator)
+        token = next()
         self.assertIsInstance(token, parser.LVariants)
-        token = next(generator)
+        token = next()
         self.assertIsInstance(token, parser.LColon)
-        token = next(generator)
+        token = next()
         self.assertIsInstance(token, parser.LWhite)
         self.assertEqual(token.string, " ")
-        token = next(generator)
+        token = next()
         self.assertIsInstance(token, parser.LIdentifier)
         self.assertEqual(token.string, "test")
 
-    def test_get_until_gen(self):
-        tokens = list(self.lexer.get_until_gen([parser.LOnly]))
+    def test_get_until(self):
+        tokens = list(self.lexer.get_until([]))
         self.assertIsInstance(tokens[0], parser.LIndent)
         self.assertIsInstance(tokens[1], parser.LVariants)
         self.assertIsInstance(tokens[2], parser.LColon)
         self.assertIsInstance(tokens[3], parser.LWhite)
         self.assertIsInstance(tokens[4], parser.LIdentifier)
         self.assertIsInstance(tokens[5], parser.LEndL)
-        self.assertIsInstance(tokens[6], parser.LIndent)
-        self.assertIsInstance(tokens[7], parser.LOnly)
 
-    def test_get_until(self):
+    def test_get_until_custom(self):
         tokens = self.lexer.get_until([parser.LOnly])
         self.assertIsInstance(tokens[0], parser.LIndent)
         self.assertIsInstance(tokens[1], parser.LVariants)
@@ -288,12 +281,13 @@ class LexerTest(unittest.TestCase):
 
     def test_flush_until(self):
         self.lexer.flush_until([parser.LOnly])
-        token = next(self.lexer.generator)
+        token = self.lexer.get_next_token()
         self.assertIsInstance(token, parser.LIdentifier)
         self.assertEqual(token.string, "test")
 
     def test_get_until_check(self):
-        tokens = self.lexer.get_until_check(
+        tokens = self.lexer.get_until(
+            [parser.LOnly],
             [
                 parser.LIndent,
                 parser.LVariants,
@@ -302,7 +296,6 @@ class LexerTest(unittest.TestCase):
                 parser.LIdentifier,
                 parser.LEndL,
             ],
-            [parser.LOnly],
         )
         self.assertIsInstance(tokens[0], parser.LIndent)
         self.assertIsInstance(tokens[1], parser.LVariants)
@@ -313,14 +306,14 @@ class LexerTest(unittest.TestCase):
         self.assertIsInstance(tokens[6], parser.LIndent)
         self.assertIsInstance(tokens[7], parser.LOnly)
 
-        with self.assertRaises(parser.ParserError):
-            self.lexer.get_until_check(
-                [parser.LColon],
+        with self.assertRaises(parser.LexerError):
+            self.lexer.get_until(
                 [parser.LOnly],
+                [parser.LColon],
             )
 
     def test_get_until_no_white(self):
-        tokens = self.lexer.get_until_no_white([parser.LOnly])
+        tokens = self.lexer.get_until([parser.LOnly], no_white=True)
         self.assertIsInstance(tokens[0], parser.LIndent)
         self.assertIsInstance(tokens[1], parser.LVariants)
         self.assertIsInstance(tokens[2], parser.LColon)
@@ -329,66 +322,54 @@ class LexerTest(unittest.TestCase):
         self.assertIsInstance(tokens[5], parser.LIndent)
         self.assertIsInstance(tokens[6], parser.LOnly)
 
-    def test_rest_line_gen(self):
-        tokens = list(self.lexer.rest_line_gen())
+    def test_get_rest_line(self):
+        tokens = self.lexer.get_rest_line()
         self.assertIsInstance(tokens[0], parser.LIndent)
         self.assertIsInstance(tokens[1], parser.LVariants)
         self.assertIsInstance(tokens[2], parser.LColon)
         self.assertIsInstance(tokens[3], parser.LWhite)
 
-    def test_rest_line(self):
-        tokens = self.lexer.rest_line()
-        self.assertIsInstance(tokens[0], parser.LIndent)
-        self.assertIsInstance(tokens[1], parser.LVariants)
-        self.assertIsInstance(tokens[2], parser.LColon)
-        self.assertIsInstance(tokens[3], parser.LWhite)
-
-    def test_rest_line_no_white(self):
-        tokens = self.lexer.rest_line_no_white()
+    def test_get_rest_line_no_white(self):
+        tokens = self.lexer.get_rest_line(no_white=True)
         self.assertIsInstance(tokens[0], parser.LIndent)
         self.assertIsInstance(tokens[1], parser.LVariants)
         self.assertIsInstance(tokens[2], parser.LColon)
         # no white space token here
         self.assertIsInstance(tokens[3], parser.LIdentifier)
 
-    def test_rest_line_as_string_token(self):
-        next(self.lexer.generator)  # indent
-        next(self.lexer.generator)  # variant
-        next(self.lexer.generator)  # colon
-        token = self.lexer.rest_line_as_string_token()
+    def test_get_rest_line_as_string_token(self):
+        self.lexer.get_next_token()  # indent
+        self.lexer.get_next_token()  # variant
+        self.lexer.get_next_token()  # colon
+        token = self.lexer.get_rest_line_as_string_token()
         self.assertIsInstance(token, parser.LString)
         self.assertEqual(token.string, "test")
 
         # only compatible line endings are possible
-        with self.assertRaises(parser.ParserError):
-            self.lexer.rest_line_as_string_token()
+        with self.assertRaises(parser.LexerError):
+            self.lexer.get_rest_line_as_string_token()
 
-    def test_get_next_check(self):
-        token_type, token = self.lexer.get_next_check([parser.LIndent])
-        self.assertEqual(token_type, parser.LIndent)
+    def test_get_next_token_check(self):
+        token = self.lexer.get_next_token([parser.LIndent])
         self.assertIsInstance(token, parser.LIndent)
 
-        with self.assertRaises(parser.ParserError):
-            self.lexer.get_next_check([parser.LIndent])
+        with self.assertRaises(parser.LexerError):
+            self.lexer.get_next_token([parser.LIndent])
 
-    def test_get_next_check_nw(self):
-        token_type, token = self.lexer.get_next_check_no_white([parser.LIndent])
-        self.assertEqual(token_type, parser.LIndent)
+    def test_get_next_token_check_nw(self):
+        token = self.lexer.get_next_token([parser.LIndent], no_white=True)
         self.assertIsInstance(token, parser.LIndent)
 
-        self.lexer.get_next_check_no_white([parser.LVariants])
-        self.lexer.get_next_check_no_white([parser.LColon])
+        self.lexer.get_next_token([parser.LVariants], no_white=True)
+        self.lexer.get_next_token([parser.LColon], no_white=True)
         # no white space token here
-        self.lexer.get_next_check_no_white([parser.LIdentifier])
-        self.lexer.get_next_check_no_white([parser.LEndL])
+        self.lexer.get_next_token([parser.LIdentifier], no_white=True)
+        self.lexer.get_next_token([parser.LEndL], no_white=True)
 
     def test_check_token(self):
         token = parser.LIdentifier("test")
-        token_type, checked_token = self.lexer.check_token(token, [parser.LIdentifier])
-        self.assertEqual(token_type, parser.LIdentifier)
-        self.assertEqual(checked_token, token)
-
-        with self.assertRaises(parser.ParserError):
+        self.lexer.check_token(token, [parser.LIdentifier])
+        with self.assertRaises(parser.LexerError):
             self.lexer.check_token(token, [parser.LIndent])
 
 
@@ -397,7 +378,7 @@ class ParserApplyMethodsTest(unittest.TestCase):
     def setUp(self):
         self.parser = parser.Parser()
         self.node = parser.Node()
-        self.lexer = parser.Lexer(parser.StrReader(""))
+        self.lexer = parser.Lexer(content="")
 
     def test_apply_predict(self):
         pre_dict = {"key": "value"}
@@ -411,9 +392,9 @@ class ParserApplyMethodsTest(unittest.TestCase):
             temp_file.write(b"variants:\n  - test:\n")
             temp_file.flush()
             temp_file_name = temp_file.name
-            self.lexer = parser.Lexer(parser.StrReader(f"include {temp_file_name}"))
-            self.lexer.get_next_check([parser.LIndent])  # indent allowed
-            self.lexer.get_next_check([parser.LInclude])  # block allowed
+            self.lexer = parser.Lexer(content=f"include {temp_file_name}")
+            self.lexer.get_next_token([parser.LIndent])  # indent allowed
+            self.lexer.get_next_token([parser.LInclude])  # block allowed
             pre_dict = {"key": "value"}
             node = self.parser._apply_include(self.lexer, self.node, pre_dict)
         self.assertEqual(pre_dict, {})
@@ -421,30 +402,30 @@ class ParserApplyMethodsTest(unittest.TestCase):
         self.assertEqual(node.children[0].name, [parser.Label("test")])
 
     def test_apply_operator_set_optimized(self):
-        self.lexer = parser.Lexer(parser.StrReader("key2 = value2"))
-        self.lexer.get_next_check([parser.LIndent])  # indent allowed
-        _, token = self.lexer.get_next_check([parser.LIdentifier])  # block allowed
-        identifier = self.lexer.get_until_no_white([parser.LSet])  # identifier allowed
+        self.lexer = parser.Lexer(content="key2 = value2")
+        self.lexer.get_next_token([parser.LIndent])  # indent allowed
+        token = self.lexer.get_next_token([parser.LIdentifier])  # block allowed
+        identifier = self.lexer.get_until([parser.LSet], no_white=True)  # identifier allowed
         pre_dict = {"key1": "value1"}
         parser.Parser._apply_operator(identifier, token, self.lexer, self.node, pre_dict)
         self.assertEqual(pre_dict, {"key1": "value1", "key2": "value2"})
         self.assertEqual(len(self.node.content), 0)
 
     def test_apply_operator_append_safe(self):
-        self.lexer = parser.Lexer(parser.StrReader("key1 += &value2"))
-        self.lexer.get_next_check([parser.LIndent])  # indent allowed
-        _, token = self.lexer.get_next_check([parser.LIdentifier])  # block allowed
-        identifier = self.lexer.get_until_no_white([parser.LAppend])  # identifier allowed
+        self.lexer = parser.Lexer(content="key1 += &value2")
+        self.lexer.get_next_token([parser.LIndent])  # indent allowed
+        token = self.lexer.get_next_token([parser.LIdentifier])  # block allowed
+        identifier = self.lexer.get_until([parser.LAppend], no_white=True)  # identifier allowed
         pre_dict = {"key1": "value1"}
         parser.Parser._apply_operator(identifier, token, self.lexer, self.node, pre_dict)
         self.assertEqual(pre_dict, {"key1": "value1&value2"})
         self.assertEqual(len(self.node.content), 0)
 
     def test_apply_operator_append_unsafe(self):
-        self.lexer = parser.Lexer(parser.StrReader("key2 += &value2"))
-        self.lexer.get_next_check([parser.LIndent])  # indent allowed
-        _, token = self.lexer.get_next_check([parser.LIdentifier])  # block allowed
-        identifier = self.lexer.get_until_no_white([parser.LAppend])  # identifier allowed
+        self.lexer = parser.Lexer(content="key2 += &value2")
+        self.lexer.get_next_token([parser.LIndent])  # indent allowed
+        token = self.lexer.get_next_token([parser.LIdentifier])  # block allowed
+        identifier = self.lexer.get_until([parser.LAppend], no_white=True)  # identifier allowed
         pre_dict = {"key1": "value1"}
         parser.Parser._apply_operator(identifier, token, self.lexer, self.node, pre_dict)
         self.assertEqual(pre_dict, {})
@@ -453,9 +434,9 @@ class ParserApplyMethodsTest(unittest.TestCase):
         self.assertIsInstance(self.node.content[1][2], parser.LAppend)
 
     def test_apply_deletion(self):
-        self.lexer = parser.Lexer(parser.StrReader("del key"))
-        self.lexer.get_next_check([parser.LIndent])  # indent allowed
-        self.lexer.get_next_check([parser.LDel])  # block allowed
+        self.lexer = parser.Lexer(content="del key")
+        self.lexer.get_next_token([parser.LIndent])  # indent allowed
+        self.lexer.get_next_token([parser.LDel])  # block allowed
         pre_dict = {"key1": "value1"}
         self.parser._apply_deletion(self.lexer, self.node, pre_dict)
         self.assertEqual(pre_dict, {})
@@ -464,10 +445,10 @@ class ParserApplyMethodsTest(unittest.TestCase):
         self.assertIsInstance(self.node.content[1][2], parser.LDel)
 
     def test_apply_condition(self):
-        self.lexer = parser.Lexer(parser.StrReader("key:\nvalue"))
-        self.lexer.get_next_check([parser.LIndent])  # indent allowed
-        _, token = self.lexer.get_next_check([parser.LIdentifier])  # block allowed
-        identifier = self.lexer.get_until_no_white([parser.LColon])  # identifier allowed
+        self.lexer = parser.Lexer(content="key:\nvalue")
+        self.lexer.get_next_token([parser.LIndent])  # indent allowed
+        token = self.lexer.get_next_token([parser.LIdentifier])  # block allowed
+        identifier = self.lexer.get_until([parser.LColon], no_white=True)  # identifier allowed
         pre_dict = {"key1": "value1"}
         self.parser._apply_condition(identifier, token, self.lexer, self.node, pre_dict, 0)
         self.assertEqual(pre_dict, {})
@@ -476,9 +457,9 @@ class ParserApplyMethodsTest(unittest.TestCase):
         self.assertIsInstance(self.node.content[1][2], parser.Condition)
 
     def test_apply_notcondition(self):
-        self.lexer = parser.Lexer(parser.StrReader("!key:\nvalue"))
-        self.lexer.get_next_check([parser.LIndent])  # indent allowed
-        self.lexer.get_next_check([parser.LNotCond])  # block allowed
+        self.lexer = parser.Lexer(content="!key:\nvalue")
+        self.lexer.get_next_token([parser.LIndent])  # indent allowed
+        self.lexer.get_next_token([parser.LNotCond])  # block allowed
         pre_dict = {"key1": "value1"}
         self.parser._apply_notcondition(self.lexer, self.node, pre_dict, 0)
         self.assertEqual(pre_dict, {})
@@ -487,27 +468,27 @@ class ParserApplyMethodsTest(unittest.TestCase):
         self.assertIsInstance(self.node.content[1][2], parser.NegativeCondition)
 
     def test_apply_variants(self):
-        self.lexer = parser.Lexer(parser.StrReader("variants test:"))
-        self.lexer.get_next_check([parser.LIndent])  # indent allowed
-        self.lexer.get_next_check([parser.LVariants])  # block allowed
+        self.lexer = parser.Lexer(content="variants test:")
+        self.lexer.get_next_token([parser.LIndent])  # indent allowed
+        self.lexer.get_next_token([parser.LVariants])  # block allowed
         variant_name, meta = parser.Parser._apply_variants(self.lexer, self.node)
         self.assertEqual(variant_name, "test")
         self.assertEqual(meta, {})
         self.assertEqual(len(self.node.content), 0)
 
     def test_apply_variants_meta(self):
-        self.lexer = parser.Lexer(parser.StrReader("variants test [meta1] [meta2]:"))
-        self.lexer.get_next_check([parser.LIndent])  # indent allowed
-        self.lexer.get_next_check([parser.LVariants])  # block allowed
+        self.lexer = parser.Lexer(content="variants test [meta1] [meta2]:")
+        self.lexer.get_next_token([parser.LIndent])  # indent allowed
+        self.lexer.get_next_token([parser.LVariants])  # block allowed
         variant_name, meta = parser.Parser._apply_variants(self.lexer, self.node)
         self.assertEqual(variant_name, "test")
         self.assertEqual(meta, {"meta1": [True], "meta2": [True]})
         self.assertEqual(len(self.node.content), 0)
 
     def test_apply_variant(self):
-        self.lexer = parser.Lexer(parser.StrReader("- test:"))
-        self.lexer.get_next_check([parser.LIndent])  # indent allowed
-        token, _ = self.lexer.get_next_check([parser.LVariant])  # variants allowed
+        self.lexer = parser.Lexer(content="- test:")
+        self.lexer.get_next_token([parser.LIndent])  # indent allowed
+        token = self.lexer.get_next_token([parser.LVariant])  # variants allowed
         pre_dict = {"key1": "value1"}
         node = self.parser._apply_variant(token, self.lexer, self.node, pre_dict, 0, "test", 0, {})
         self.assertEqual(pre_dict, {})
@@ -586,7 +567,7 @@ class ParserTest(unittest.TestCase):
         self.assertIn("\"key\": \"value\"", str(last_content[2]))
 
     def test_parse_filter(self):
-        lexer = parser.Lexer(parser.StrReader("test.value"))
+        lexer = parser.Lexer(content="test.value")
         lexer.set_prev_indent(-1)
         tokens = lexer.get_until([parser.LEndL])
         filters = parser.Parser.parse_filter(lexer, tokens[1:])
@@ -599,11 +580,11 @@ class ParserTest(unittest.TestCase):
     def test_parse_filter_complicated(self):
         f = "only xxx.yyy..(xxx=333).aaa, ddd (eeee) rrr.aaa"
         self._compare_string_config(f, [], True)
-        lexer = parser.Lexer(parser.StrReader(f))
+        lexer = parser.Lexer(content=f)
         lexer.set_prev_indent(-1)
-        lexer.get_next_check([parser.LIndent])
-        lexer.get_next_check([parser.LOnly])
-        p_filter = parser.Parser.parse_filter(lexer, lexer.rest_line())
+        lexer.get_next_token([parser.LIndent])
+        lexer.get_next_token([parser.LOnly])
+        p_filter = parser.Parser.parse_filter(lexer, lexer.get_rest_line())
         self.assertEqual(p_filter,
                          [[[parser.Label("xxx"),
                             parser.Label("yyy")],
@@ -1222,7 +1203,9 @@ class ParserTest(unittest.TestCase):
                     s.* ?= ${tests}ahoj4
                     s.* ?+= c
                     s.* ?<= d
-                    s(_.*)? ?= dsystem1
+                    s(_.*)? ?= b1
+                    s(_.*)? ?= b2(c=d)
+                    system2.allowed: s = t
                     system += 4
                     var += "test"
                     1st = 1
@@ -1462,6 +1445,19 @@ class ParserTest(unittest.TestCase):
             ],
             True)
 
+    def test_special_chars(self):
+        self._compare_string_config("""
+            FILE_2018年度公开课计划表.xlsx = type no_txt, desc (check that unicode filename is handled)
+            """,
+            [
+                {'dep': [],
+                 'name': '',
+                 'shortname': '',
+                 'FILE_2018年度公开课计划表.xlsx': 'type no_txt, desc (check that unicode filename is handled)',
+                 },
+            ],
+            True)
+
     def test_syntax_errors(self):
         self.assertRaises(parser.LexerError,
                           self._compare_string_config, """
@@ -1557,7 +1553,7 @@ class ParserTest(unittest.TestCase):
                           [],
                           True)
 
-        self.assertRaises(parser.ParserError,
+        self.assertRaises(parser.LexerError,
                           self._compare_string_config, """
                 variants tests:
                   wait:
