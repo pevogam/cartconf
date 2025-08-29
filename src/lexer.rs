@@ -621,6 +621,39 @@ impl Lexer {
         Ok(())
     }
 
+    /// Get all tokens from the rest of the line terminating only at an end-of-line token.
+    #[pyo3(signature = (no_white=false))]
+    pub fn get_rest_line(&mut self, no_white: bool) -> PyResult<Vec<Tokens>> {
+        Python::with_gil(|py| self.get_until(&PyList::empty(py), None, no_white))
+    }
+
+    /// Get a string token from the rest of the line.
+    pub fn get_rest_line_as_string_token(&mut self) -> PyResult<Tokens> {
+        self.rest_as_string = true;
+        let lstring = Python::with_gil(|py| -> Result<Tokens, PyErr> {
+            let mut lstring_types = Vec::new();
+            let lstring_type = {
+                let lstring = Tokens::LString("".to_string());
+                let lstring_py = lstring.into_bound_py_any(py)?;
+                lstring_py.get_type().to_owned()
+            };
+            lstring_types.push(lstring_type);
+            let remainder_str = self.get_next_token(PyList::new(py, lstring_types).ok().as_ref(), false)?;
+
+            let mut lendl_types = Vec::new();
+            let lendl_type = {
+                let lendl = Tokens::LEndL();
+                let lendl_py = lendl.into_bound_py_any(py)?;
+                lendl_py.get_type().to_owned()
+            };
+            lendl_types.push(lendl_type);
+            let _ = self.get_next_token(PyList::new(py, lendl_types).ok().as_ref(), false)?;
+            Ok(remainder_str)
+        })?;
+        Ok(lstring)
+    }
+
+    /// Make the next line to get return the given line instead of the real next line.
     pub fn set_next_line(&mut self, line: &str, indent: usize, linenum: usize) {
         self.reader.set_next_line(line, indent, linenum);
     }

@@ -165,25 +165,13 @@ class Lexer(object):
         """
         return self.inner.get_until(end_tokens, no_white=True)
 
-    def rest_line_gen(self) -> Generator["Token", None, None]:
-        """
-        Generate tokens from the rest of the line terminating only at an end-of-line token.
-        :returns: iterator of tokens that were read
-
-        :returns: iterator of tokens that were read
-        """
-        token = next(self.generator)
-        while not isinstance(token, LEndL):
-            yield token
-            token = next(self.generator)
-
     def rest_line(self) -> list["Token"]:
         """
         Get a full list of tokens from the rest of the line terminating only at an end-of-line token.
 
         :returns: list of tokens that were read
         """
-        return [x for x in self.rest_line_gen()]
+        return self.inner.get_rest_line()
 
     def rest_line_no_white(self) -> list["Token"]:
         """
@@ -191,7 +179,7 @@ class Lexer(object):
 
         :returns: list of tokens that were read
         """
-        return [x for x in self.rest_line_gen() if not isinstance(x, LWhite)]
+        return self.inner.get_rest_line(no_white=True)
 
     def rest_line_as_string_token(self) -> LString:
         """
@@ -201,15 +189,7 @@ class Lexer(object):
         :raises: :py:class:`ParserError` if the remaining token is not a string token
             followed by an end-of-line token
         """
-        self.inner.rest_as_string = True
-        remainder_string = next(self.generator)
-        if type(remainder_string) is not LString:
-            raise ParserError("Expected string, got %s" % type(remainder_string))
-        # skip the end-of-line token
-        end_of_line = next(self.generator)
-        if type(end_of_line) is not LEndL:
-            raise ParserError("Expected end-of-line, got %s" % type(end_of_line))
-        return remainder_string
+        return self.inner.get_rest_line_as_string_token()
 
     def get_next_check(self, allowed_tokens: list[type]) -> tuple[type, "Token"]:
         """

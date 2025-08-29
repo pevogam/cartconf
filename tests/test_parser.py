@@ -323,13 +323,6 @@ class LexerTest(unittest.TestCase):
         self.assertIsInstance(tokens[5], parser.LIndent)
         self.assertIsInstance(tokens[6], parser.LOnly)
 
-    def test_rest_line_gen(self):
-        tokens = list(self.lexer.rest_line_gen())
-        self.assertIsInstance(tokens[0], parser.LIndent)
-        self.assertIsInstance(tokens[1], parser.LVariants)
-        self.assertIsInstance(tokens[2], parser.LColon)
-        self.assertIsInstance(tokens[3], parser.LWhite)
-
     def test_rest_line(self):
         tokens = self.lexer.rest_line()
         self.assertIsInstance(tokens[0], parser.LIndent)
@@ -354,7 +347,7 @@ class LexerTest(unittest.TestCase):
         self.assertEqual(token.string, "test")
 
         # only compatible line endings are possible
-        with self.assertRaises(parser.ParserError):
+        with self.assertRaises(parser.LexerError):
             self.lexer.rest_line_as_string_token()
 
     def test_get_next_check(self):
