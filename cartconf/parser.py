@@ -235,28 +235,6 @@ class Lexer(object):
         token = self.inner.get_next_token(allowed_tokens, no_white=True)
         return type(token), token
 
-    def check_token(
-        self, token: "Token", allowed_tokens: list[type]
-    ) -> tuple[type, "Token"]:
-        """
-        Check that a token is acceptable (among the allowed ones).
-
-        :param token: token to check
-        :param allowed_tokens: list of allowed tokens
-        :returns: the acceptable token and its type
-        :raises: :py:class:`ParserError` if token is not acceptable
-        """
-        if type(token) in allowed_tokens:
-            return type(token), token
-        else:
-            raise ParserError(
-                "Expected %s got ['%s']"
-                % ([x.identifier for x in allowed_tokens], token.identifier),
-                self.inner.line,
-                self.inner.filename,
-                self.inner.linenum,
-            )
-
 
 class Parser(object):
     # pylint: disable=W0102
@@ -404,35 +382,35 @@ class Parser(object):
         """
         or_filters = []
         tokens = iter(tokens + [LEndL()])
-        typet, token = lexer.check_token(
-            next(tokens), [LIdentifier, LLRBracket, LEndL, LWhite]
-        )
         and_filter = []
         con_filter = []
         dots = 1
 
-        def next_nw(gener):
-            token = next(gener)
+        def check_token(
+            token: "Token", allowed_tokens: list[type]
+        ) -> tuple[type, "Token"]:
+            lexer.inner.check_token(token, allowed_tokens)
+            return type(token), token
+
+        def next_nw(gen: Generator["Token", None, None]) -> "Token":
+            token = next(gen)
             while isinstance(token, LWhite):
-                token = next(gener)
+                token = next(gen)
             return token
 
+        typet, token = check_token(
+            next(tokens), [LIdentifier, LLRBracket, LEndL, LWhite]
+        )
         while typet not in [LEndL]:
             if typet in [LIdentifier, LLRBracket]:  # join    identifier
                 if typet == LLRBracket:  # (xxx=ttt)
-                    _, ident = lexer.check_token(
-                        next_nw(tokens), [LIdentifier]
-                    )  # (iden
-                    typet, _ = lexer.check_token(
-                        next_nw(tokens), [LSet, LRRBracket]
-                    )  # =
+                    _, ident = check_token(next_nw(tokens), [LIdentifier])  # (iden
+                    typet, _ = check_token(next_nw(tokens), [LSet, LRRBracket])  # =
                     if typet == LRRBracket:  # (xxx)
                         token = Label(ident.string)
                     elif typet == LSet:  # (xxx = yyyy)
-                        _, value = lexer.check_token(
-                            next_nw(tokens), [LIdentifier, LString]
-                        )
-                        lexer.check_token(next_nw(tokens), [LRRBracket])
+                        _, value = check_token(next_nw(tokens), [LIdentifier, LString])
+                        check_token(next_nw(tokens), [LRRBracket])
                         token = Label(ident.string, value.string)
                 else:
                     token = Label(token.string)
@@ -482,11 +460,11 @@ class Parser(object):
                 token = next(tokens)
                 while isinstance(token, LWhite):
                     token = next(tokens)
-                typet, token = lexer.check_token(
+                typet, token = check_token(
                     token, [LIdentifier, LComa, LDot, LLRBracket, LEndL]
                 )
                 continue
-            typet, token = lexer.check_token(
+            typet, token = check_token(
                 next(tokens), [LIdentifier, LComa, LDot, LLRBracket, LEndL, LWhite]
             )
         if and_filter:

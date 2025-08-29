@@ -378,12 +378,9 @@ class LexerTest(unittest.TestCase):
 
     def test_check_token(self):
         token = parser.LIdentifier("test")
-        token_type, checked_token = self.lexer.check_token(token, [parser.LIdentifier])
-        self.assertEqual(token_type, parser.LIdentifier)
-        self.assertEqual(checked_token, token)
-
-        with self.assertRaises(parser.ParserError):
-            self.lexer.check_token(token, [parser.LIndent])
+        self.lexer.inner.check_token(token, [parser.LIdentifier])
+        with self.assertRaises(parser.LexerError):
+            self.lexer.inner.check_token(token, [parser.LIndent])
 
 
 class ParserApplyMethodsTest(unittest.TestCase):

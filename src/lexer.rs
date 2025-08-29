@@ -499,6 +499,32 @@ impl Lexer {
         Ok(token_queue)
     }
 
+    /// Check that a token type is among the allowed token types.
+    #[pyo3(signature = (token, check_tokens))]
+    pub fn check_token(
+        &self,
+        token: &Bound<'_, PyAny>,
+        check_tokens: &Bound<'_, PyList>,
+    ) -> PyResult<()> {
+        let mut check_tokens_types = Vec::new();
+        for check_py in check_tokens.iter() {
+            let check_type = check_py.downcast::<PyType>()?.clone();
+            check_tokens_types.push(check_type);
+        }
+        if !check_tokens_types.is_empty() && !check_tokens_types.iter().any(|t| t.eq(token.get_type()).unwrap_or(false)) {
+            return Err(PyErr::new::<LexerError, _>((
+                format!(
+                    "Unexpected token '{:?}' not among expected ones {:?}",
+                    token, check_tokens_types.iter(),
+                ),
+                Some(self.line.clone()),
+                Some(self.filename.clone()),
+                Some(self.linenum),
+            )));
+        }
+        Ok(())
+    }
+
     /// Get the next token from one or more tokenized lines.
     #[pyo3(signature = (check_tokens=None, no_white=false))]
     pub fn get_next_token(
@@ -515,24 +541,9 @@ impl Lexer {
                 if no_white && matches!(token, Tokens::LWhite(_)) {
                     return self.get_next_token(check_tokens, no_white);
                 }
-                let mut check_tokens_types = Vec::new();
                 if let Some(check_tokens_py) = check_tokens {
-                    for check_py in check_tokens_py.iter() {
-                        let check_type = check_py.downcast::<PyType>()?.clone();
-                        check_tokens_types.push(check_type);
-                    }
                     let next_py = token.clone().into_bound_py_any(check_tokens_py.py())?;
-                    if !check_tokens_types.is_empty() && !check_tokens_types.iter().any(|t| t.eq(next_py.get_type()).unwrap_or(false)) {
-                        return Err(PyErr::new::<LexerError, _>((
-                            format!(
-                                "Unexpected token '{:?}' not among expected ones {:?}",
-                                token, check_tokens_types.iter(),
-                            ),
-                            Some(self.line.clone()),
-                            Some(self.filename.clone()),
-                            Some(self.linenum),
-                        )));
-                    }
+                    self.check_token(&next_py, check_tokens_py)?;
                 }
                 Ok(token)
             },
