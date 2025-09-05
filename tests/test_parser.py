@@ -78,21 +78,23 @@ class LabelTest(unittest.TestCase):
         label3 = parser.Label("test", "var")
         label4 = parser.Label("test", "var")
 
-        self.assertEqual(hash(label1), label1.hash_name())
+        self.assertEqual(hash(label1), label1.hash_internal(label1.name))
         self.assertEqual(hash(label1), label1.hash_val)
-        self.assertEqual(hash(label3), label3.hash_name())
+        self.assertEqual(hash(label3), label3.hash_internal(label3.name))
         self.assertEqual(hash(label3), label3.hash_val)
         self.assertIsNone(label1.hash_var)
-        self.assertEqual(label3.hash_var, label3.hash_variant())
+        self.assertEqual(label3.hash_var, label3.hash_internal(label3.long_name))
 
-        self.assertEqual(label1.hash_name(), label2.hash_name())
-        self.assertEqual(label1.hash_variant(), label2.hash_variant())
-        self.assertNotEqual(label1.hash_name(), label3.hash_name())
-        self.assertNotEqual(label1.hash_variant(), label3.hash_variant())
-        self.assertEqual(label3.hash_name(), label4.hash_name())
-        self.assertEqual(label3.hash_variant(), label4.hash_variant())
+        hash_name = label1.hash_internal
 
-        self.assertGreater(label3.hash_variant(), label3.hash_name())
+        self.assertEqual(hash_name(label1.name), hash_name(label2.name))
+        self.assertEqual(hash_name(label1.long_name), hash_name(label2.long_name))
+        self.assertNotEqual(hash_name(label1.name), hash_name(label3.name))
+        self.assertNotEqual(hash_name(label1.long_name), hash_name(label3.long_name))
+        self.assertEqual(hash_name(label3.name), hash_name(label4.name))
+        self.assertEqual(hash_name(label3.long_name), hash_name(label4.long_name))
+
+        self.assertGreater(hash_name(label3.long_name), hash_name(label3.name))
 
 
 class NodeTest(unittest.TestCase):
