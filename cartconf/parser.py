@@ -3,7 +3,6 @@ Module for readers, lexers, and parsers as well as their components.
 """
 
 import os
-import collections
 import logging
 import re
 from typing import Generator
@@ -23,60 +22,7 @@ Lexer = lexer.Lexer
 LexerError = lexer.LexerError
 
 Label = parser.Label
-
-
-class Node(object):
-    __slots__ = [
-        "var_name",
-        "name",
-        "filename",
-        "dep",
-        "content",
-        "children",
-        "labels",
-        "append_to_shortname",
-        "failed_cases",
-        "default",
-    ]
-
-    def __init__(self) -> None:
-        self.var_name = []
-        self.name = []
-        self.filename = ""
-        self.dep = []
-        self.content = []
-        self.children = []
-        self.labels = set()
-        self.append_to_shortname = False
-        self.failed_cases = collections.deque()
-        self.default = False
-
-    def dump(self, indent: int, recurse: bool = False) -> str:
-        """
-        Dump node information as separate lines.
-
-        :param indent: indentation level for the dump
-        :param recurse: whether to recurse into child nodes
-        :returns: string representation of the node data
-        """
-        dump_lines = [
-            f"{' ' * indent}name: {self.name}",
-            f"{' ' * indent}variable name: {self.var_name}",
-            f"{' ' * indent}content: {self.content}",
-            f"{' ' * indent}failed cases: {self.failed_cases}",
-        ]
-        if recurse:
-            for child in self.children:
-                dump_lines.append(child.dump(indent + 3, recurse))
-        return "\n".join(dump_lines)
-
-
-class ConditionalNode(Node):
-    __slots__ = ["condition"]
-
-    def __init__(self, condition: "Condition | NegativeCondition") -> None:
-        super().__init__()
-        self.condition = condition
+Node = parser.Node
 
 
 class Parser(object):
@@ -336,7 +282,7 @@ class Parser(object):
         pre_dict: dict[str, str],
     ) -> None:
         predict = LApplyPreDict("", pre_dict.copy())
-        node.content += [(lexer.filename, lexer.linenum, predict)]
+        node.add_content(lexer.filename, lexer.linenum, predict)
         pre_dict.clear()
 
     def _apply_include(
@@ -403,7 +349,7 @@ class Parser(object):
                     return
                 else:
                     Parser._apply_predict(lexer, node, pre_dict)
-            node.content += [(lexer.filename, lexer.linenum, op)]
+            node.add_content(lexer.filename, lexer.linenum, op)
         lexer.get_next_token([LEndL])
 
     def _apply_deletion(
@@ -421,7 +367,7 @@ class Parser(object):
         token = LDel(to_del.string, "")
 
         Parser._apply_predict(lexer, node, pre_dict)
-        node.content += [(lexer.filename, lexer.linenum, token)]
+        node.add_content(lexer.filename, lexer.linenum, token)
 
     def _apply_condition(
         self,
@@ -441,11 +387,12 @@ class Parser(object):
         next_line = lexer.get_rest_line_as_string_token()
         if next_line.string != "":
             lexer.set_next_line(next_line.string, indent + 1, lexer.linenum)
-        cond = ConditionalNode(Condition(cfilter, lexer.line))
+        cond = Node()
+        cond.condition = Condition(cfilter, lexer.line)
         self._parse(lexer, cond, prev_indent=indent)
 
         Parser._apply_predict(lexer, node, pre_dict)
-        node.content += [(lexer.filename, lexer.linenum, cond)]
+        node.add_content(lexer.filename, lexer.linenum, cond)
 
     def _apply_notcondition(
         self,
@@ -464,11 +411,12 @@ class Parser(object):
         next_line = lexer.get_rest_line_as_string_token()
         if next_line.string != "":
             lexer.set_next_line(next_line.string, indent + 1, lexer.linenum)
-        cond = ConditionalNode(NegativeCondition(lfilter, lexer.line))
+        cond = Node()
+        cond.condition = NegativeCondition(lfilter, lexer.line)
         self._parse(lexer, cond, prev_indent=indent)
 
         Parser._apply_predict(lexer, node, pre_dict)
-        node.content += [(lexer.filename, lexer.linenum, cond)]
+        node.add_content(lexer.filename, lexer.linenum, cond)
 
     @staticmethod
     def _apply_variants(
@@ -479,7 +427,7 @@ class Parser(object):
         Parse:
            variants _name_ [meta1] [meta2]:
         """
-        if type(node) is ConditionalNode:
+        if node.condition is not None:
             raise ParserError(
                 "'variants' is not allowed inside a " "conditional block",
                 lexer.line,
@@ -493,7 +441,7 @@ class Parser(object):
         meta = {}
         # [meta1=xxx] [yyy] [xxx]
         while vtypet not in [LColon, LEndL]:
-            if vtypet == LIdentifier:
+            if vtypet is LIdentifier:
                 if variant_name != "":
                     raise ParserError(
                         "Syntax ERROR expected" ' "[" or ":"',
@@ -502,19 +450,19 @@ class Parser(object):
                         lexer.linenum,
                     )
                 variant_name = tokens[0].string
-            elif vtypet == LLBracket:  # [
+            elif vtypet is LLBracket:  # [
                 ident = lexer.get_next_token([LIdentifier], no_white=True)
                 typet = type(lexer.get_next_token([LSet, LRBracket], no_white=True))
-                if typet == LRBracket:  # [xxx]
+                if typet is LRBracket:  # [xxx]
                     if ident.string not in meta:
                         meta[ident.string] = []
-                    meta[ident.string].append(True)
-                elif typet == LSet:  # [xxx = yyyy]
+                    meta[ident.string] += [True]
+                elif typet is LSet:  # [xxx = yyyy]
                     tokens = lexer.get_until([LRBracket, LEndL], no_white=True)
                     if isinstance(tokens[-1], LRBracket):
                         if ident.string not in meta:
                             meta[ident.string] = []
-                        meta[ident.string].append(tokens[:-1])
+                        meta[ident.string] += [tokens[:-1]]
                     else:
                         raise ParserError(
                             "Syntax ERROR" ' expected "]"',
@@ -618,23 +566,22 @@ class Parser(object):
 
             # Prepare data for dict generator.
             node2 = Node()
-            node2.children = [node]
-            node2.labels = node.labels
+            node2.append_child(node)
+            node2.update_labels(node.labels)
 
             if variant_name:
                 op = LSet(variant_name, ".".join([n for n in name]))
-                node2.content += [(lexer.filename, lexer.linenum, op)]
+                node2.add_content(lexer.filename, lexer.linenum, op)
 
             node3 = self._parse(lexer, node2, prev_indent=indent)
 
             if variant_name:
-                node3.var_name = variant_name
+                node3.var_name = [Label(variant_name)]
                 node3.name = [Label(variant_name, n) for n in name]
             else:
                 node3.name = [Label(n) for n in name]
 
             # Update mapping name to file
-
             node3.dep = deps
 
             if meta_with_default:
@@ -654,24 +601,24 @@ class Parser(object):
                 ".".join(str(x) for x in node3.name),
                 "_name_map_file",
             )
-            node3.content += [(lexer.filename, lexer.linenum, op)]
+            node3.add_content(lexer.filename, lexer.linenum, op)
 
             op = LUpdateFileMap(
                 lexer.filename,
                 ".".join(str(x.name) for x in node3.name),
                 "_short_name_map_file",
             )
-            node3.content += [(lexer.filename, lexer.linenum, op)]
+            node3.add_content(lexer.filename, lexer.linenum, op)
 
             if node3.default and self.defaults:
                 # Move default variant in front of rest
                 # of all variants.
                 # Speed optimization.
-                node4.children.insert(0, node3)
+                node4.prepend_child(node3)
             else:
-                node4.children += [node3]
-            node4.labels.update(node3.labels)
-            node4.labels.update(node3.name)
+                node4.append_child(node3)
+            node4.update_labels(node3.labels)
+            node4.update_labels(node3.name)
 
         if "default" in meta and meta["default"]:
             raise ParserError(
@@ -738,7 +685,7 @@ class Parser(object):
                         Parser._apply_predict(lexer, node, pre_dict)
                     if suffix:
                         # Node has suffix, apply it to all elements
-                        node.content.append(suffix)
+                        node.add_content(*suffix)
                     return node
 
                 indent = token.length
@@ -797,29 +744,23 @@ class Parser(object):
                     lfilter = Parser.parse_filter(lexer, lexer.get_rest_line())
                     Parser._apply_predict(lexer, node, pre_dict)
                     if typet == LOnly:
-                        node.content += [
-                            (
-                                lexer.filename,
-                                lexer.linenum,
-                                OnlyFilter(lfilter, lexer.line),
-                            )
-                        ]
+                        node.add_content(
+                            lexer.filename,
+                            lexer.linenum,
+                            OnlyFilter(lfilter, lexer.line),
+                        )
                     elif typet == LNo:
-                        node.content += [
-                            (
-                                lexer.filename,
-                                lexer.linenum,
-                                NoFilter(lfilter, lexer.line),
-                            )
-                        ]
+                        node.add_content(
+                            lexer.filename,
+                            lexer.linenum,
+                            NoFilter(lfilter, lexer.line),
+                        )
                     else:  # LJoin
-                        node.content += [
-                            (
-                                lexer.filename,
-                                lexer.linenum,
-                                JoinFilter(lfilter, lexer.line),
-                            )
-                        ]
+                        node.add_content(
+                            lexer.filename,
+                            lexer.linenum,
+                            JoinFilter(lfilter, lexer.line),
+                        )
 
                 elif typet == LSuffix:
                     # Parse:
@@ -917,7 +858,11 @@ class Parser(object):
                 if tokens_oper_key(obj) in list(tokens_oper):
                     new_content.append(t)
                     continue
-                filter = obj.condition if type(obj) is ConditionalNode else obj
+                filter = (
+                    obj.condition
+                    if hasattr(obj, "condition") and obj.condition is not None
+                    else obj
+                )
                 # obj is an OnlyFilter/NoFilter/Condition/NegativeCondition
                 if filter.requires_action(ctx, labels):
                     # This filter requires action now
@@ -929,7 +874,7 @@ class Parser(object):
                                 filename,
                                 linenum,
                             )
-                            failed_filters.append(t)
+                            failed_filters += [t]
                             return False
                         else:
                             continue
@@ -945,8 +890,8 @@ class Parser(object):
                         # new_internal_filters because we don't expect them to
                         # come from outside this node, even if the Condition
                         # itself was external)
-                        if not process_content(obj.content, new_internal_filters):
-                            failed_filters.append(t)
+                        if not process_content(obj.get_content(), new_internal_filters):
+                            failed_filters += [t]
                             return False
                         continue
                 elif filter.is_irrelevant(ctx, labels):
@@ -958,7 +903,7 @@ class Parser(object):
             return True
 
         def might_pass(failed_ctx, failed_external_filters, failed_internal_filters):
-            all_content = content + node.content
+            all_content = content + node.get_content()
             for t in failed_external_filters + failed_internal_filters:
                 if t not in all_content:
                     return True
@@ -967,7 +912,7 @@ class Parser(object):
                 if not external_filter.might_pass(failed_ctx, ctx, labels):
                     return False
             for t in failed_internal_filters:
-                if t not in node.content:
+                if t not in node.get_content():
                     return True
 
             for t in failed_internal_filters:
@@ -975,13 +920,6 @@ class Parser(object):
                 if not internal_filter.might_pass(failed_ctx, ctx, labels):
                     return False
             return True
-
-        def add_failed_case():
-            node.failed_cases.appendleft(
-                (ctx, new_external_filters, new_internal_filters)
-            )
-            if len(node.failed_cases) > Parser.num_failed_cases:
-                node.failed_cases.pop()
 
         # if self.debug:    #Print dict on which is working now.
         #    print(node.dump(0))
@@ -999,18 +937,17 @@ class Parser(object):
             self._debug("checking out %r", name)
 
         # Check previously failed filters
-        for i, failed_case in enumerate(node.failed_cases):
+        for i, failed_case in enumerate(node.get_failed_cases()):
             if not might_pass(*failed_case):
                 self._debug(
                     "\n*    this subtree has failed before %s\n"
                     "         content: %s\n"
                     "         failcase:%s\n",
                     name,
-                    content + node.content,
+                    content + node.get_content(),
                     failed_case,
                 )
-                del node.failed_cases[i]
-                node.failed_cases.appendleft(failed_case)
+                node.update_failed_case(i, *failed_case)
                 return
 
         # Check content and unpack it into new_content
@@ -1018,10 +955,15 @@ class Parser(object):
         new_external_filters = []
         new_internal_filters = []
         if not process_content(
-            node.content, new_internal_filters
+            node.get_content(), new_internal_filters
         ) or not process_content(content, new_external_filters):
-            add_failed_case()
-            self._debug("Failed_cases %s", node.failed_cases)
+            node.add_failed_case(
+                ctx,
+                new_external_filters,
+                new_internal_filters,
+                Parser.num_failed_cases,
+            )
+            self._debug("Failed_cases %s", node.get_failed_cases())
             return
 
         # Update shortname
@@ -1031,19 +973,19 @@ class Parser(object):
         # Recurse into children
         count = 0
         if self.defaults and node.var_name not in self.expand_defaults:
-            for n in node.children:
+            for n in node.get_children():
                 for d in self.get_dicts_joined(n, ctx, new_content, shortname, dep):
                     count += 1
                     yield d
                 if n.default and count:
                     break
         else:
-            for n in node.children:
+            for n in node.get_children():
                 for d in self.get_dicts_joined(n, ctx, new_content, shortname, dep):
                     count += 1
                     yield d
         # Reached leaf?
-        if not node.children:
+        if not node.get_children():
             self._debug("    reached leaf, returning it")
             d = {
                 "name": name,
@@ -1106,14 +1048,14 @@ class Parser(object):
             # No one else is
             self.parent_generator = False
 
-        # Node is a current block. It has content, its contents: node.content
+        # Node is a current block. It has content, its contents: node.get_content()
         # Content without joins
         new_content = []
 
         # All joins in current node
         joins = []
 
-        for t in node.content:
+        for t in node.get_content():
             filename, linenum, obj = t
 
             if not isinstance(obj, JoinFilter):
@@ -1136,11 +1078,11 @@ class Parser(object):
                     f = OnlyFilter([word], str(word))
                     onlys += [(filename, linenum, f)]
 
-            old_content = node.content[:]
-            node.content = new_content
+            old_content = node.get_content()
+            node.swap_content(new_content)
             for d in self.join_filters(onlys, node, ctx, content, shortname, dep):
                 yield drop_suffixes(d, skipdups=skipdups) if parent else d
-            node.content = old_content[:]
+            node.swap_content(old_content[:])
 
     def join_names(self, n1: str, n2: str) -> str:
         """
@@ -1192,8 +1134,9 @@ class Parser(object):
         only = onlys[:1]
         remains = onlys[1:]
 
-        content_orig = node.content[:]
-        node.content += only
+        content_orig = node.get_content()
+        for f, i, obj in only:
+            node.add_content(f, i, obj)
 
         if not remains:
             for d in self.get_dicts_plain(node, ctx, content, shortname, dep):
@@ -1201,7 +1144,7 @@ class Parser(object):
         else:
             for d1 in self.get_dicts_plain(node, ctx, content, shortname, dep):
                 # Current frame multiply by all variants from bottom
-                node.content = content_orig
+                node.swap_content(content_orig)
                 for d2 in self.join_filters(
                     remains, node, ctx, content, shortname, dep
                 ):
