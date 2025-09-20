@@ -201,16 +201,32 @@ impl Filters {
         }
         true
     }
+}
 
-    /*
-    pub fn __eq__(&self, other: &Filters) -> PyResult<bool> {
-        Ok(self == other)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_match_adjacent_basic() {
+        let a = Label {
+            name: "a".to_string(),
+            var_name: None,
+            long_name: "".to_string(),
+            hash_val: 0,
+            hash_var: None,
+        };
+        let b = Label {
+            name: "b".to_string(),
+            var_name: None,
+            long_name: "".to_string(),
+            hash_val: 1,
+            hash_var: None,
+        };
+        let block = vec![a.clone()];
+        let ctx = vec![a.clone(), b.clone()];
+        assert_eq!(Filters::match_adjacent(block, ctx), 1);
     }
-    def __eq__(self, o: "NoOnlyFilter") -> bool:
-        if isinstance(o, self.__class__):
-            if self.filter == o.filter:
-                return True
 
-        return False
-    */
+    //TODO: add local better isolating tests for functionality not exported to Python
 }
