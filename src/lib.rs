@@ -2,6 +2,7 @@ use pyo3::prelude::*;
 
 mod tokens;
 mod lexer;
+mod filters;
 mod parser;
 
 #[cfg(test)]
@@ -38,12 +39,16 @@ fn cartconf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     lexer_module.add_class::<lexer::Lexer>()?;
     lexer_module.add("LexerError", m.py().get_type::<lexer::LexerError>())?;
 
+    let filters_module = PyModule::new(m.py(), "filters")?;
+    filters_module.add_class::<filters::Filters>()?;
+
     let parser_module = PyModule::new(m.py(), "parser")?;
     parser_module.add_class::<parser::Label>()?;
     parser_module.add_class::<parser::Node>()?;
 
     m.add_submodule(&tokens_module)?;
     m.add_submodule(&lexer_module)?;
+    m.add_submodule(&filters_module)?;
     m.add_submodule(&parser_module)?;
     m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
 

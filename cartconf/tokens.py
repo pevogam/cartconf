@@ -4,7 +4,6 @@ Tokens module.
 
 # TODO: cannot import in a more natural way, see
 # https://github.com/PyO3/pyo3/issues/759
-# from .cartconf.tokens import Tokens
 from .cartconf import tokens
 
 
