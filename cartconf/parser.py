@@ -910,7 +910,7 @@ class Parser(object):
                     new_content.append(t)
                     continue
                 # obj is an OnlyFilter/NoFilter/Condition/NegativeCondition
-                if obj.requires_action(ctx, ctx_set, labels):
+                if obj.requires_action(ctx, labels):
                     # This filter requires action now
                     if type(obj) is OnlyFilter or type(obj) is NoFilter:
                         if obj not in blocked_filters:
@@ -940,7 +940,7 @@ class Parser(object):
                             failed_filters.append(t)
                             return False
                         continue
-                elif obj.is_irrelevant(ctx, ctx_set, labels):
+                elif obj.is_irrelevant(ctx, labels):
                     # This filter is no longer relevant and can be removed
                     continue
                 else:
@@ -948,18 +948,14 @@ class Parser(object):
                     new_content.append(t)
             return True
 
-        def might_pass(
-            failed_ctx, failed_ctx_set, failed_external_filters, failed_internal_filters
-        ):
+        def might_pass(failed_ctx, failed_external_filters, failed_internal_filters):
             all_content = content + node.content
             for t in failed_external_filters + failed_internal_filters:
                 if t not in all_content:
                     return True
             for t in failed_external_filters:
                 _, _, external_filter = t
-                if not external_filter.might_pass(
-                    failed_ctx, failed_ctx_set, ctx, ctx_set, labels
-                ):
+                if not external_filter.might_pass(failed_ctx, ctx, labels):
                     return False
             for t in failed_internal_filters:
                 if t not in node.content:
@@ -967,15 +963,13 @@ class Parser(object):
 
             for t in failed_internal_filters:
                 _, _, internal_filter = t
-                if not internal_filter.might_pass(
-                    failed_ctx, failed_ctx_set, ctx, ctx_set, labels
-                ):
+                if not internal_filter.might_pass(failed_ctx, ctx, labels):
                     return False
             return True
 
         def add_failed_case():
             node.failed_cases.appendleft(
-                (ctx, ctx_set, new_external_filters, new_internal_filters)
+                (ctx, new_external_filters, new_internal_filters)
             )
             if len(node.failed_cases) > Parser.num_failed_cases:
                 node.failed_cases.pop()
@@ -988,8 +982,7 @@ class Parser(object):
                 dep = dep + [".".join([str(label) for label in ctx + dd])]
         # Update ctx
         ctx = ctx + node.name
-        ctx_set = set(ctx)
-        labels = node.labels
+        labels = list(node.labels)
         # Get the current name
         name = ".".join([str(label) for label in ctx])
 

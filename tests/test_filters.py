@@ -7,66 +7,93 @@ basedir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if os.path.isdir(os.path.join(basedir, 'cartconf')):
     sys.path.append(basedir)
 
-from cartconf.filters import Filter, NoOnlyFilter, OnlyFilter, NoFilter, JoinFilter, BlockFilter, Condition, NegativeCondition
+from cartconf.filters import Filter, NoOnlyFilter, OnlyFilter, NoFilter, JoinFilter, BlockFilter, Condition, NegativeCondition, _match_adjacent, _might_match_adjacent
+from cartconf.parser import Label
 
 
 class TestFilters(unittest.TestCase):
 
     def setUp(self):
-        self.ctx = ['a', 'b', 'c']
-        self.ctx_set = set(self.ctx)
-        self.descendant_labels = set(['d', 'e', 'f'])
+        self.ctx = [Label('a'), Label('b'), Label('c')]
+        self.descendant_labels = [Label('d'), Label('e'), Label('f')]
 
     def test_filter_match(self):
-        f = Filter([[['a'], ['b']]])
-        self.assertTrue(f.match(self.ctx, self.ctx_set))
-        self.assertFalse(f.match(['x', 'y', 'z'], set(['x', 'y', 'z'])))
+        f = Filter([[[Label('a')], [Label('b')]]])
+        self.assertTrue(f.match(self.ctx))
+        self.assertFalse(f.match([Label('x'), Label('y'), Label('z')]))
 
     def test_filter_might_match(self):
-        f = Filter([[['a'], ['b']]])
-        self.assertTrue(f.might_match(self.ctx, self.ctx_set, self.descendant_labels))
-        self.assertFalse(f.might_match(['x', 'y', 'z'], set(['x', 'y', 'z']), self.descendant_labels))
+        f = Filter([[[Label('a')], [Label('b')]]])
+        self.assertTrue(f.might_match(self.ctx, self.descendant_labels))
+        self.assertFalse(f.might_match([Label('x'), Label('y'), Label('z')], self.descendant_labels))
 
     def test_no_only_filter(self):
-        f = NoOnlyFilter([[['a'], ['b']]], 'line')
+        f = NoOnlyFilter([[[Label('a')], [Label('b')]]], 'line')
         self.assertEqual(f.line, 'line')
-        self.assertTrue(f.match(self.ctx, self.ctx_set))
-        self.assertFalse(f.match(['x', 'y', 'z'], set(['x', 'y', 'z'])))
+        self.assertTrue(f.match(self.ctx))
+        self.assertFalse(f.match([Label('x'), Label('y'), Label('z')]))
 
     def test_only_filter(self):
-        f = OnlyFilter([[['a'], ['b']]], 'line')
-        self.assertTrue(f.is_irrelevant(self.ctx, self.ctx_set, self.descendant_labels))
-        self.assertFalse(f.requires_action(self.ctx, self.ctx_set, self.descendant_labels))
-        self.assertFalse(f.is_irrelevant(['x', 'y', 'z'], set(['x', 'y', 'z']), self.descendant_labels))
-        self.assertTrue(f.requires_action(['x', 'y', 'z'], set(['x', 'y', 'z']), self.descendant_labels))
-        self.assertFalse(f.requires_action(['a', 'b', 'c'], set(['a', 'b', 'c']), self.descendant_labels))
+        f = OnlyFilter([[[Label('a')], [Label('b')]]], 'line')
+        self.assertTrue(f.is_irrelevant(self.ctx, self.descendant_labels))
+        self.assertFalse(f.requires_action(self.ctx, self.descendant_labels))
+        self.assertFalse(f.is_irrelevant([Label('x'), Label('y'), Label('z')], self.descendant_labels))
+        self.assertTrue(f.requires_action([Label('x'), Label('y'), Label('z')], self.descendant_labels))
+        self.assertFalse(f.requires_action([Label('a'), Label('b'), Label('c')], self.descendant_labels))
 
     def test_no_filter(self):
-        f = NoFilter([[['a'], ['b']]], 'line')
-        self.assertFalse(f.is_irrelevant(self.ctx, self.ctx_set, self.descendant_labels))
-        self.assertTrue(f.requires_action(self.ctx, self.ctx_set, self.descendant_labels))
-        self.assertTrue(f.is_irrelevant(['x', 'y', 'z'], set(['x', 'y', 'z']), self.descendant_labels))
-        self.assertFalse(f.requires_action(['x', 'y', 'z'], set(['x', 'y', 'z']), self.descendant_labels))
-        self.assertFalse(f.is_irrelevant(['a', 'b', 'c'], set(['a', 'b', 'c']), self.descendant_labels))
+        f = NoFilter([[[Label('a')], [Label('b')]]], 'line')
+        self.assertFalse(f.is_irrelevant(self.ctx, self.descendant_labels))
+        self.assertTrue(f.requires_action(self.ctx, self.descendant_labels))
+        self.assertTrue(f.is_irrelevant([Label('x'), Label('y'), Label('z')], self.descendant_labels))
+        self.assertFalse(f.requires_action([Label('x'), Label('y'), Label('z')], self.descendant_labels))
+        self.assertFalse(f.is_irrelevant([Label('a'), Label('b'), Label('c')], self.descendant_labels))
 
     def test_join_filter(self):
-        f = JoinFilter([[['a'], ['b']]], 'line')
-        self.assertEqual(str(f), "Join [[['a'], ['b']]]")
-        self.assertEqual(repr(f), "Join [[['a'], ['b']]]")
+        f = JoinFilter([[[Label('a')], [Label('b')]]], 'line')
+        self.assertEqual(str(f), "Join [[[a], [b]]]")
+        self.assertEqual(repr(f), "Join [[[a], [b]]]")
 
     def test_block_filter(self):
         f = BlockFilter(['blocked'])
         self.assertEqual(f.blocked, ['blocked'])
 
     def test_condition(self):
-        f = Condition([[['a'], ['b']]], 'line')
-        self.assertEqual(str(f), "Condition [[['a'], ['b']]]:[]")
-        self.assertEqual(repr(f), "Condition [[['a'], ['b']]]:[]")
+        f = Condition([[[Label('a')], [Label('b')]]], 'line')
+        self.assertEqual(str(f), "Condition [[[a], [b]]]:[]")
+        self.assertEqual(repr(f), "Condition [[[a], [b]]]:[]")
 
     def test_negative_condition(self):
-        f = NegativeCondition([[['a'], ['b']]], 'line')
-        self.assertEqual(str(f), "NotCond [[['a'], ['b']]]:[]")
-        self.assertEqual(repr(f), "NotCond [[['a'], ['b']]]:[]")
+        f = NegativeCondition([[[Label('a')], [Label('b')]]], 'line')
+        self.assertEqual(str(f), "NotCond [[[a], [b]]]:[]")
+        self.assertEqual(repr(f), "NotCond [[[a], [b]]]:[]")
+
+    def test_match_adjacent_basic(self):
+        block = [Label('a')]
+        ctx = [Label('a'), Label('b')]
+        self.assertEqual(_match_adjacent(block, ctx), 1)
+
+    def test_match_adjacent_full_match(self):
+        block = [Label('a'), Label('b')]
+        ctx = [Label('a'), Label('b'), Label('c')]
+        self.assertEqual(_match_adjacent(block, ctx), 2)
+
+    def test_match_adjacent_no_match(self):
+        block = [Label('x')]
+        ctx = [Label('a'), Label('b')]
+        self.assertEqual(_match_adjacent(block, ctx), 0)
+
+    def test_might_match_adjacent_true(self):
+        block = [Label('a'), Label('b'), Label('e')]
+        ctx = [Label('a'), Label('b')]
+        descendant_labels = [Label('d'), Label('e')]
+        self.assertTrue(_might_match_adjacent(block, ctx, descendant_labels))
+
+    def test_might_match_adjacent_false(self):
+        block = [Label('a'), Label('x')]
+        ctx = [Label('a'), Label('b')]
+        descendant_labels = [Label('d'), Label('e')]
+        self.assertFalse(_might_match_adjacent(block, ctx, descendant_labels))
 
 if __name__ == '__main__':
     unittest.main()

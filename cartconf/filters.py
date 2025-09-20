@@ -19,41 +19,37 @@ __all__ = [
 class Filter(object):
     __slots__ = ["filter"]
 
-    def __init__(self, lfilter: list[list[list[str]]]) -> None:
+    def __init__(self, lfilter: list[list[list["Label"]]]) -> None:
         self.filter = lfilter
 
-    def match(self, ctx: list[str], ctx_set: set[str]) -> bool:
+    def match(self, ctx: list["Label"]) -> bool:
         """
         Check if filter matches in context.
 
         :param ctx: context to check
-        :param ctx_set: set of context elements
         :return: whether filter matches in context
         """
         for word in self.filter:  # Go through ,
             for block in word:  # Go through ..
-                if _match_adjacent(block, ctx, ctx_set) != len(block):
+                if _match_adjacent(block, ctx) != len(block):
                     break
             else:
                 # print "Filter pass: %s ctx: %s" % (self.filter, ctx)
                 return True  # All match
         return False
 
-    def might_match(
-        self, ctx: list[str], ctx_set: set[str], descendant_labels: set[str]
-    ) -> bool:
+    def might_match(self, ctx: list["Label"], descendant_labels: list["Label"]) -> bool:
         """
         Check if filter might match in context.
 
         :param ctx: context to check
-        :param ctx_set: set of context elements
-        :param descendant_labels: set of descendant labels
+        :param descendant_labels: descendant labels to include
         :return: whether filter might matche in context
         """
         # There is some possibility to match in children blocks.
         for word in self.filter:
             for block in word:
-                if not _might_match_adjacent(block, ctx, ctx_set, descendant_labels):
+                if not _might_match_adjacent(block, ctx, descendant_labels):
                     break
             else:
                 return True
@@ -64,7 +60,7 @@ class Filter(object):
 class NoOnlyFilter(Filter):
     __slots__ = "line"
 
-    def __init__(self, lfilter: list[list[list[str]]], line: str) -> None:
+    def __init__(self, lfilter: list[list[list["Label"]]], line: str) -> None:
         super(NoOnlyFilter, self).__init__(lfilter)
         self.line = line
 
@@ -80,31 +76,27 @@ class OnlyFilter(NoOnlyFilter):
     # pylint: disable=W0613
 
     def is_irrelevant(
-        self, ctx: list[str], ctx_set: set[str], descendant_labels: set[str]
+        self, ctx: list["Label"], descendant_labels: list["Label"]
     ) -> bool:
         # Matched in this tree.
-        return self.match(ctx, ctx_set)
+        return self.match(ctx)
 
     def requires_action(
-        self, ctx: list[str], ctx_set: set[str], descendant_labels: set[str]
+        self, ctx: list["Label"], descendant_labels: list["Label"]
     ) -> bool:
         # Impossible to match in this tree.
-        return not self.might_match(ctx, ctx_set, descendant_labels)
+        return not self.might_match(ctx, descendant_labels)
 
     def might_pass(
         self,
-        failed_ctx: list[str],
-        failed_ctx_set: set[str],
-        ctx: list[str],
-        ctx_set: set[str],
-        descendant_labels: set[str],
+        failed_ctx: list["Label"],
+        ctx: list["Label"],
+        descendant_labels: list["Label"],
     ) -> bool:
         for word in self.filter:
             for block in word:
-                if _match_adjacent(block, ctx, ctx_set) > _match_adjacent(
-                    block, failed_ctx, failed_ctx_set
-                ):
-                    return self.might_match(ctx, ctx_set, descendant_labels)
+                if _match_adjacent(block, ctx) > _match_adjacent(block, failed_ctx):
+                    return self.might_match(ctx, descendant_labels)
         return False
 
     def __str__(self) -> str:
@@ -117,31 +109,27 @@ class OnlyFilter(NoOnlyFilter):
 class NoFilter(NoOnlyFilter):
 
     def is_irrelevant(
-        self, ctx: list[str], ctx_set: set[str], descendant_labels: set[str]
+        self, ctx: list["Label"], descendant_labels: list["Label"]
     ) -> bool:
-        return not self.might_match(ctx, ctx_set, descendant_labels)
+        return not self.might_match(ctx, descendant_labels)
 
     # pylint: disable=W0613
     def requires_action(
-        self, ctx: list[str], ctx_set: set[str], descendant_labels: set[str]
+        self, ctx: list["Label"], descendant_labels: list["Label"]
     ) -> bool:
-        return self.match(ctx, ctx_set)
+        return self.match(ctx)
 
     # pylint: disable=W0613
     def might_pass(
         self,
-        failed_ctx: list[str],
-        failed_ctx_set: set[str],
-        ctx: list[str],
-        ctx_set: set[str],
-        descendant_labels: set[str],
+        failed_ctx: list["Label"],
+        ctx: list["Label"],
+        descendant_labels: list["Label"],
     ) -> bool:
         for word in self.filter:
             for block in word:
-                if _match_adjacent(block, ctx, ctx_set) < _match_adjacent(
-                    block, failed_ctx, failed_ctx_set
-                ):
-                    return not self.match(ctx, ctx_set)
+                if _match_adjacent(block, ctx) < _match_adjacent(block, failed_ctx):
+                    return not self.match(ctx)
         return False
 
     def __str__(self) -> str:
@@ -174,7 +162,7 @@ class Condition(NoFilter):
     __slots__ = ["content"]
 
     # pylint: disable=W0231
-    def __init__(self, lfilter: list[list[list[str]]], line: str) -> None:
+    def __init__(self, lfilter: list[list[list["Label"]]], line: str) -> None:
         super(Condition, self).__init__(lfilter, line)
         self.content = []
 
@@ -189,7 +177,7 @@ class NegativeCondition(OnlyFilter):
     __slots__ = ["content"]
 
     # pylint: disable=W0231
-    def __init__(self, lfilter: list[list[list[str]]], line: str) -> None:
+    def __init__(self, lfilter: list[list[list["Label"]]], line: str) -> None:
         super(NegativeCondition, self).__init__(lfilter, line)
         self.content = []
 
@@ -201,20 +189,19 @@ class NegativeCondition(OnlyFilter):
 
 
 # Helpers for all filters
-def _match_adjacent(block: list[str], ctx: list[str], ctx_set: set[str]) -> int:
+def _match_adjacent(block: list["Label"], ctx: list["Label"]) -> int:
     """
     Try to match as many blocks as possible from context.
 
     :param block: block to match
     :param ctx: context to match
-    :param ctx_set: set of context elements
     :return: count of matched blocks
     """
-    if block[0] not in ctx_set:
+    if block[0] not in ctx:
         return 0
     if len(block) == 1:
         return 1  # First match and length is 1.
-    if block[1] not in ctx_set:
+    if block[1] not in ctx:
         return int(ctx[-1] == block[0])  # Check match with last from ctx.
     k = 0
     i = ctx.index(block[0])
@@ -226,24 +213,23 @@ def _match_adjacent(block: list[str], ctx: list[str], ctx_set: set[str]) -> int:
             k += 1
             if k >= len(block):  # match all of blocks
                 break
-            if block[k] not in ctx_set:  # block in not in whole ctx.
+            if block[k] not in ctx:  # block in not in whole ctx.
                 break
         i += 1
     return k
 
 
 def _might_match_adjacent(
-    block: list[str], ctx: list[str], ctx_set: set[str], descendant_labels: set[str]
+    block: list["Label"], ctx: list["Label"], descendant_labels: list["Label"]
 ) -> bool:
     """
     Try to maybe match as many blocks as possible from context.
 
     :param block: block to maybe match
     :param ctx: context to maybe match
-    :param ctx_set: set of context elements
     :return: count of maybe matched blocks
     """
-    matched = _match_adjacent(block, ctx, ctx_set)
+    matched = _match_adjacent(block, ctx)
     for elem in block[matched:]:  # Try to find rest of blocks in subtree
         if elem not in descendant_labels:
             # print "Can't match %s, ctx %s" % (block, ctx)
