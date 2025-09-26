@@ -456,7 +456,8 @@ class ParserApplyMethodsTest(unittest.TestCase):
         self.assertEqual(pre_dict, {})
         self.assertEqual(len(self.node.content), 2)
         self.assertIsInstance(self.node.content[0][2], parser.LApplyPreDict)
-        self.assertIsInstance(self.node.content[1][2], parser.Condition)
+        self.assertIsInstance(self.node.content[1][2], parser.ConditionalNode)
+        self.assertIsInstance(self.node.content[1][2].condition, parser.Condition)
 
     def test_apply_notcondition(self):
         self.lexer = parser.Lexer(content="!key:\nvalue")
@@ -467,7 +468,8 @@ class ParserApplyMethodsTest(unittest.TestCase):
         self.assertEqual(pre_dict, {})
         self.assertEqual(len(self.node.content), 2)
         self.assertIsInstance(self.node.content[0][2], parser.LApplyPreDict)
-        self.assertIsInstance(self.node.content[1][2], parser.NegativeCondition)
+        self.assertIsInstance(self.node.content[1][2], parser.ConditionalNode)
+        self.assertIsInstance(self.node.content[1][2].condition, parser.NegativeCondition)
 
     def test_apply_variants(self):
         self.lexer = parser.Lexer(content="variants test:")

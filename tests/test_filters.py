@@ -60,13 +60,13 @@ class TestFilters(unittest.TestCase):
 
     def test_condition(self):
         f = Condition([[[Label('a')], [Label('b')]]], 'line')
-        self.assertEqual(str(f), "Condition [[[a], [b]]]:[]")
-        self.assertEqual(repr(f), "Condition [[[a], [b]]]:[]")
+        self.assertEqual(str(f), "Condition [[[a], [b]]]")
+        self.assertEqual(repr(f), "Condition [[[a], [b]]]")
 
     def test_negative_condition(self):
         f = NegativeCondition([[[Label('a')], [Label('b')]]], 'line')
-        self.assertEqual(str(f), "NotCond [[[a], [b]]]:[]")
-        self.assertEqual(repr(f), "NotCond [[[a], [b]]]:[]")
+        self.assertEqual(str(f), "NotCond [[[a], [b]]]")
+        self.assertEqual(repr(f), "NotCond [[[a], [b]]]")
 
     def test_match_adjacent_basic(self):
         block = [Label('a')]
