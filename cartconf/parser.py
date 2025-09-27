@@ -260,16 +260,6 @@ class Parser(object):
             con_filter = []
         return or_filters
 
-    @staticmethod
-    def _apply_predict(
-        lexer: Lexer,
-        node: Node,
-        pre_dict: dict[str, str],
-    ) -> None:
-        predict = LApplyPreDict("", pre_dict.copy())
-        node.add_content(lexer.filename, lexer.linenum, predict)
-        pre_dict.clear()
-
     def _apply_include(
         self,
         lexer: Lexer,
@@ -286,7 +276,7 @@ class Parser(object):
             filename = os.path.join(os.path.dirname(lexer.filename), filename)
         if not os.path.isfile(filename):
             raise MissingIncludeError(lexer.line, lexer.filename, lexer.linenum)
-        Parser._apply_predict(lexer, node, pre_dict)
+        node.apply_predict(lexer, pre_dict)
         lch = Lexer(filename=filename)
         node = self._parse(lch, node, -1)
         return node
@@ -333,12 +323,12 @@ class Parser(object):
                     lexer.get_next_token([LEndL])
                     return
                 else:
-                    Parser._apply_predict(lexer, node, pre_dict)
+                    node.apply_predict(lexer, pre_dict)
             node.add_content(lexer.filename, lexer.linenum, op)
         lexer.get_next_token([LEndL])
 
+    @staticmethod
     def _apply_deletion(
-        self,
         lexer: Lexer,
         node: Node,
         pre_dict: dict[str, str],
@@ -351,7 +341,7 @@ class Parser(object):
         lexer.get_next_token([LEndL], no_white=True)
         token = LDel(to_del.string, "")
 
-        Parser._apply_predict(lexer, node, pre_dict)
+        node.apply_predict(lexer, pre_dict)
         node.add_content(lexer.filename, lexer.linenum, token)
 
     def _apply_condition(
@@ -376,7 +366,7 @@ class Parser(object):
         cond.condition = Condition(cfilter, lexer.line)
         self._parse(lexer, cond, prev_indent=indent)
 
-        Parser._apply_predict(lexer, node, pre_dict)
+        node.apply_predict(lexer, pre_dict)
         node.add_content(lexer.filename, lexer.linenum, cond)
 
     def _apply_notcondition(
@@ -400,7 +390,7 @@ class Parser(object):
         cond.condition = NegativeCondition(lfilter, lexer.line)
         self._parse(lexer, cond, prev_indent=indent)
 
-        Parser._apply_predict(lexer, node, pre_dict)
+        node.apply_predict(lexer, pre_dict)
         node.add_content(lexer.filename, lexer.linenum, cond)
 
     @staticmethod
@@ -499,7 +489,7 @@ class Parser(object):
              block2
         """
         if pre_dict:
-            Parser._apply_predict(lexer, node, pre_dict)
+            node.apply_predict(lexer, pre_dict)
         already_default = False
         is_default = False
         meta_with_default = False
@@ -670,7 +660,7 @@ class Parser(object):
                 if typet == LEndBlock:
                     if pre_dict:
                         # flush pre_dict to node content.
-                        Parser._apply_predict(lexer, node, pre_dict)
+                        node.apply_predict(lexer, pre_dict)
                     if suffix:
                         # Node has suffix, apply it to all elements
                         node.add_content(*suffix)
@@ -704,7 +694,7 @@ class Parser(object):
                             lexer.linenum,
                         )
                 elif typet == LDel:
-                    self._apply_deletion(lexer, node, pre_dict)
+                    Parser._apply_deletion(lexer, node, pre_dict)
                 elif typet == LNotCond:
                     self._apply_notcondition(lexer, node, pre_dict, indent)
                     lexer.set_prev_indent(prev_indent)
@@ -730,7 +720,7 @@ class Parser(object):
                     # Parse:
                     #    only/no/join (filter=text)..aaa.bbb, xxxx
                     lfilter = Parser.parse_filter(lexer, lexer.get_rest_line())
-                    Parser._apply_predict(lexer, node, pre_dict)
+                    node.apply_predict(lexer, pre_dict)
                     if typet == LOnly:
                         node.add_content(
                             lexer.filename,
@@ -754,7 +744,7 @@ class Parser(object):
                     # Parse:
                     #    suffix SUFFIX
                     if pre_dict:
-                        Parser._apply_predict(lexer, node, pre_dict)
+                        node.apply_predict(lexer, pre_dict)
                     token_val = lexer.get_next_token([LIdentifier])
                     lexer.get_next_token([LEndL])
                     suffix_operator = Suffix("", token_val.string)

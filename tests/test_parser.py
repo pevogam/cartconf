@@ -384,7 +384,7 @@ class ParserApplyMethodsTest(unittest.TestCase):
 
     def test_apply_predict(self):
         pre_dict = {"key": "value"}
-        parser.Parser._apply_predict(self.lexer, self.node, pre_dict)
+        self.node.apply_predict(self.lexer, pre_dict)
         self.assertEqual(pre_dict, {})
         self.assertEqual(len(self.node.get_content()), 1)
         self.assertIsInstance(self.node.get_content()[0][2], parser.LApplyPreDict)

@@ -1,10 +1,11 @@
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::rc::Rc;
 use std::cell::RefCell;
 
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
+use pyo3::types::{PyAny, PyDict};
 
 use crate::tokens::Tokens;
 use crate::filters::Filters;
@@ -315,5 +316,26 @@ impl Node {
             }
         }
         Ok(dump_lines.join("\n"))
+    }
+
+    #[pyo3(signature = (lexer, pre_dict))]
+    pub fn apply_predict(&mut self, lexer: &Bound<'_, PyAny>, pre_dict: &Bound<'_, PyDict>) -> PyResult<()> {
+        // TODO: we do not provide lexer auto-conversion and instead treat it within python
+        // since we would need cloning trait not just for it but also for the reader enum
+        // Extract filename and linenum from the lexer object
+        let filename: String = lexer.getattr("filename")?.extract()?;
+        let linenum: i32 = lexer.getattr("linenum")?.extract()?;
+
+        // Build a LApplyPreDict from the original Python dict
+        let map: HashMap<String, String> = pre_dict.extract()?;
+        let content_type = ContentType::Tokens(Tokens::LApplyPreDict(String::new(), map));
+
+        // Add pre-dictionary content to this node
+        self.add_content(filename, linenum, content_type)?;
+
+        // Clear the original pre_dict in-place
+        pre_dict.call_method0("clear")?;
+
+        Ok(())
     }
 }
