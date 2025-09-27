@@ -71,6 +71,14 @@ class Node(object):
         return "\n".join(dump_lines)
 
 
+class ConditionalNode(Node):
+    __slots__ = ["condition"]
+
+    def __init__(self, condition: "Condition | NegativeCondition") -> None:
+        super().__init__()
+        self.condition = condition
+
+
 class Parser(object):
     # pylint: disable=W0102
 
@@ -433,7 +441,7 @@ class Parser(object):
         next_line = lexer.get_rest_line_as_string_token()
         if next_line.string != "":
             lexer.set_next_line(next_line.string, indent + 1, lexer.linenum)
-        cond = Condition(cfilter, lexer.line)
+        cond = ConditionalNode(Condition(cfilter, lexer.line))
         self._parse(lexer, cond, prev_indent=indent)
 
         Parser._apply_predict(lexer, node, pre_dict)
@@ -456,7 +464,7 @@ class Parser(object):
         next_line = lexer.get_rest_line_as_string_token()
         if next_line.string != "":
             lexer.set_next_line(next_line.string, indent + 1, lexer.linenum)
-        cond = NegativeCondition(lfilter, lexer.line)
+        cond = ConditionalNode(NegativeCondition(lfilter, lexer.line))
         self._parse(lexer, cond, prev_indent=indent)
 
         Parser._apply_predict(lexer, node, pre_dict)
@@ -471,7 +479,7 @@ class Parser(object):
         Parse:
            variants _name_ [meta1] [meta2]:
         """
-        if type(node) in [Condition, NegativeCondition]:
+        if type(node) is ConditionalNode:
             raise ParserError(
                 "'variants' is not allowed inside a " "conditional block",
                 lexer.line,
@@ -909,14 +917,15 @@ class Parser(object):
                 if tokens_oper_key(obj) in list(tokens_oper):
                     new_content.append(t)
                     continue
+                filter = obj.condition if type(obj) is ConditionalNode else obj
                 # obj is an OnlyFilter/NoFilter/Condition/NegativeCondition
-                if obj.requires_action(ctx, labels):
+                if filter.requires_action(ctx, labels):
                     # This filter requires action now
-                    if type(obj) is OnlyFilter or type(obj) is NoFilter:
-                        if obj not in blocked_filters:
+                    if type(filter) is OnlyFilter or type(filter) is NoFilter:
+                        if filter not in blocked_filters:
                             self._debug(
                                 "    filter did not pass: %r (%s:%s)",
-                                obj.line,
+                                filter.line,
                                 filename,
                                 linenum,
                             )
@@ -927,7 +936,7 @@ class Parser(object):
                     else:
                         self._debug(
                             "    conditional block matches:" " %r (%s:%s)",
-                            obj.line,
+                            filter.line,
                             filename,
                             linenum,
                         )
@@ -940,7 +949,7 @@ class Parser(object):
                             failed_filters.append(t)
                             return False
                         continue
-                elif obj.is_irrelevant(ctx, labels):
+                elif filter.is_irrelevant(ctx, labels):
                     # This filter is no longer relevant and can be removed
                     continue
                 else:
