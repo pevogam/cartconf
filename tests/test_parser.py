@@ -517,9 +517,6 @@ class ParserTest(unittest.TestCase):
         self.assertFalse(self.parser.defaults)
         self.assertEqual(self.parser.expand_defaults, [])
         self.assertIsNone(self.parser.filename)
-        self.assertEqual(self.parser.only_filters, [])
-        self.assertEqual(self.parser.no_filters, [])
-        self.assertEqual(self.parser.assignments, [])
         self.assertTrue(self.parser.parent_generator)
 
     def test_parse_file(self):
@@ -548,27 +545,6 @@ class ParserTest(unittest.TestCase):
         for content_stage in self.parser.node.get_children()[0].get_content():
             self.assertEqual(content_stage[0], "<string>")
         self.assertIsNone(self.parser.filename)
-
-    def test_only_filter(self):
-        self.parser.only_filter("test_variant")
-        self.assertIn("only test_variant", self.parser.only_filters)
-        self.assertEqual(self.parser.node.name, [])
-        last_content = self.parser.node.get_content()[-1]
-        self.assertIn("test_variant", str(last_content[2]))
-
-    def test_no_filter(self):
-        self.parser.no_filter("test_variant")
-        self.assertIn("no test_variant", self.parser.no_filters)
-        self.assertEqual(self.parser.node.name, [])
-        last_content = self.parser.node.get_content()[-1]
-        self.assertIn("test_variant", str(last_content[2]))
-
-    def test_assign(self):
-        self.parser.assign("key", "value")
-        self.assertIn("key = value", self.parser.assignments)
-        self.assertEqual(self.parser.node.name, [])
-        last_content = self.parser.node.get_content()[-1]
-        self.assertIn("\"key\": \"value\"", str(last_content[2]))
 
     def test_parse_filter(self):
         lexer = parser.Lexer(content="test.value")

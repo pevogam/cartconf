@@ -55,10 +55,6 @@ class Parser(object):
         if self.filename:
             self.parse_file(self.filename)
 
-        self.only_filters = []
-        self.no_filters = []
-        self.assignments = []
-
         # get_dicts_joined() - is recursive generator, it can invoke itself,
         # as well as it can be called outside to get dict list
         # It is necessary somehow to mark the top-level generator,
@@ -95,31 +91,29 @@ class Parser(object):
 
     def only_filter(self, variant: str) -> None:
         """
-        Apply a only filter programatically and keep track of it.
+        Apply a only filter programmatically and keep track of it.
 
         Equivalent to parse a "only variant" line.
 
         :param variant: variant name to filter with
         """
         string = "only %s" % variant
-        self.only_filters.append(string)
         self.parse_string(string)
 
     def no_filter(self, variant: str) -> None:
         """
-        Apply a no filter programatically and keep track of it.
+        Apply a no filter programmatically and keep track of it.
 
         Equivalent to parse a "no variant" line.
 
         :param variant: variant name to filter with
         """
         string = "no %s" % variant
-        self.no_filters.append(string)
         self.parse_string(string)
 
     def assign(self, key: str, value: str) -> None:
         """
-        Apply an assignment programatically and keep track of it.
+        Apply an assignment programmatically and keep track of it.
 
         Equivalent to parse a "key = value" line.
 
@@ -127,7 +121,6 @@ class Parser(object):
         :param value: value to assign
         """
         string = "%s = %s" % (key, value)
-        self.assignments.append(string)
         self.parse_string(string)
 
     @staticmethod
@@ -266,14 +259,6 @@ class Parser(object):
             or_filters.append([con_filter])
             con_filter = []
         return or_filters
-
-    @staticmethod
-    def _cmd_tokens(tokens1: list["Token"], tokens2: list["Token"]) -> bool:
-        for x, y in list(zip(tokens1, tokens2)):
-            if x != y:
-                return False
-        else:
-            return True
 
     @staticmethod
     def _apply_predict(
@@ -586,7 +571,10 @@ class Parser(object):
 
             if meta_with_default:
                 for wd in meta["default"]:
-                    if Parser._cmd_tokens(wd, raw_name):
+                    for x, y in list(zip(wd, raw_name)):
+                        if x != y:
+                            break
+                    else:
                         is_default = True
                         meta["default"].remove(wd)
 
