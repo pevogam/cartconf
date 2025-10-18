@@ -296,36 +296,7 @@ class Parser(object):
            identifier ?= xxx
            etc..
         """
-        op = identifier[-1]
-        if len(identifier) == 1:
-            identifier_str = token.string
-        else:
-            identifier = [token] + identifier[:-1]
-            identifier_str = "".join([x.string for x in identifier])
-        value = lexer.get_next_token([LString])
-        value_str = value.string
-        if value_str and (
-            value_str[0] == value_str[-1] == '"' or value_str[0] == value_str[-1] == "'"
-        ):
-            value_str = value_str[1:-1]
-
-        op = type(op)(identifier_str, value_str)
-        d_nin_val = "$" not in value_str
-        if isinstance(op, LSet) and d_nin_val:  # Optimization
-            op.apply_to_dict(pre_dict)
-        else:
-            if pre_dict:
-                # Flush pre_dict to node content.
-                # If block already contains xxx = yyyy
-                # then the operations xxx +=, <=, .... are safe.
-                if op.name in pre_dict and d_nin_val:
-                    op.apply_to_dict(pre_dict)
-                    lexer.get_next_token([LEndL])
-                    return
-                else:
-                    node.apply_predict(lexer, pre_dict)
-            node.add_content(lexer.filename, lexer.linenum, op)
-        lexer.get_next_token([LEndL])
+        node.apply_operator(identifier, token, lexer, pre_dict)
 
     @staticmethod
     def _apply_deletion(
@@ -337,12 +308,7 @@ class Parser(object):
         Parse:
             del operand
         """
-        to_del = lexer.get_next_token([LIdentifier], no_white=True)
-        lexer.get_next_token([LEndL], no_white=True)
-        token = LDel(to_del.string, "")
-
-        node.apply_predict(lexer, pre_dict)
-        node.add_content(lexer.filename, lexer.linenum, token)
+        node.apply_deletion(lexer, pre_dict)
 
     def _apply_condition(
         self,

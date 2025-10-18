@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict};
+use pyo3::types::{PyAny, PyList, PyDict};
 
 use crate::tokens::Tokens;
 use crate::filters::Filters;
@@ -336,6 +336,144 @@ impl Node {
         // Clear the original pre_dict in-place
         pre_dict.call_method0("clear")?;
 
+        Ok(())
+    }
+
+    #[pyo3(signature = (identifier, token, lexer, pre_dict))]
+    pub fn apply_operator(
+        &mut self,
+        identifier: &Bound<'_, PyAny>,
+        token: &Bound<'_, PyAny>,
+        lexer: &Bound<'_, PyAny>,
+        pre_dict: &Bound<'_, PyDict>,
+    ) -> PyResult<()> {
+        let py = identifier.py();
+
+        // Convert identifier sequence to Vec<PyObject>
+        let id_vec: Vec<PyObject> = identifier.extract()?;
+        if id_vec.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err("Empty identifier"));
+        }
+
+        // Determine operator type (type of last identifier element)
+        let last = id_vec.last().unwrap();
+        let op_type = last.bind(py).get_type();
+
+        // Build identifier_str
+        let identifier_str = if id_vec.len() == 1 {
+            token.getattr("string")?.extract::<String>()?
+        } else {
+            // [token] + identifier[:-1]
+            let mut parts: Vec<String> = Vec::with_capacity(id_vec.len());
+            // token first
+            parts.push(token.getattr("string")?.extract::<String>()?);
+            // then all except last
+            for obj in &id_vec[..id_vec.len() - 1] {
+                parts.push(obj.bind(py).getattr("string")?.extract::<String>()?);
+            }
+            parts.join("")
+        };
+
+        // Get the next token for the value (LString)
+        let tokens_mod = py.import("cartconf.tokens")?;
+        let lstring = tokens_mod.getattr("LString")?;
+        let lendl = tokens_mod.getattr("LEndL")?;
+        let req_list = PyList::new(py, &[lstring])?;
+        let value = lexer.call_method1("get_next_token", (req_list,))?;
+        let mut value_str: String = value.getattr("string")?.extract()?;
+        // strip surrounding quotes if present
+        if value_str.len() >= 2 {
+            let first = value_str.chars().next().unwrap();
+            let lastc = value_str.chars().last().unwrap();
+            if (first == '"' && lastc == '"') || (first == '\'' && lastc == '\'') {
+                value_str = value_str[1..value_str.len() - 1].to_string();
+            }
+        }
+
+        // Construct operator instance by calling its Python type
+        let op_obj = op_type.call1((identifier_str.clone(), value_str.clone()))?;
+
+        let d_nin_val = !value_str.contains('$');
+
+        // If it's an LSet and value has no '$', apply directly to pre_dict
+        let op_type_name: String = op_type.getattr("__name__")?.extract()?;
+        if op_type_name == "Tokens_LSet" && d_nin_val {
+            op_obj.call_method1("apply_to_dict", (pre_dict,))?;
+        } else {
+            // If pre_dict has pending entries, either optimize or flush
+            let pre_nonempty = pre_dict.len() != 0;
+            if pre_nonempty {
+                // try to get op.name and check if it's present in pre_dict
+                let op_name = match op_obj.getattr("name") {
+                    Ok(n) => n.extract::<String>()?,
+                    Err(_) => String::new(),
+                };
+                if !op_name.is_empty() && d_nin_val && pre_dict.contains(op_name.as_str())? {
+                    // apply and consume EOL
+                    op_obj.call_method1("apply_to_dict", (pre_dict,))?;
+                    let req_end = PyList::new(py, &[lendl])?;
+                    lexer.call_method1("get_next_token", (req_end,))?;
+                    return Ok(());
+                } else {
+                    // flush pre_dict into node
+                    self.apply_predict(lexer, pre_dict)?;
+                }
+            }
+
+            // Add operator token as content
+            let content_type: ContentType = op_obj.extract()?;
+            let filename: String = lexer.getattr("filename")?.extract()?;
+            let linenum: i32 = lexer.getattr("linenum")?.extract()?;
+            self.add_content(filename, linenum, content_type)?;
+        }
+
+        // consume end-of-line
+        let req_end = PyList::new(py, &[lendl])?;
+        lexer.call_method1("get_next_token", (req_end,))?;
+        Ok(())
+    }
+
+    #[pyo3(signature = (lexer, pre_dict))]
+    pub fn apply_deletion(
+        &mut self,
+        lexer: &Bound<'_, PyAny>,
+        pre_dict: &Bound<'_, PyDict>,
+    ) -> PyResult<()> {
+        let py = lexer.py();
+
+        // import token classes
+        let tokens_mod = py.import("cartconf.tokens")?;
+        let lidentifier = tokens_mod.getattr("LIdentifier")?;
+        let lendl = tokens_mod.getattr("LEndL")?;
+        let ldel = tokens_mod.getattr("LDel")?;
+
+        // to_del = lexer.get_next_token([LIdentifier], no_white=True)
+        let args = PyList::new(py, &[lidentifier])?;
+        let kwargs = {
+            let d = PyDict::new(py);
+            d.set_item("no_white", true)?;
+            d
+        };
+        let to_del = lexer.call_method("get_next_token", (args,), Some(&kwargs))?;
+        // consume EOL
+        let args_end = PyList::new(py, &[lendl])?;
+        let kwargs_end = {
+            let d = PyDict::new(py);
+            d.set_item("no_white", true)?;
+            d
+        };
+        lexer.call_method("get_next_token", (args_end,), Some(&kwargs_end))?;
+
+        // token = LDel(to_del.string, "")
+        let to_del_str: String = to_del.getattr("string")?.extract()?;
+        let token_obj = ldel.call1((to_del_str, ""))?;
+
+        // flush pre_dict and add token as content
+        self.apply_predict(lexer, pre_dict)?;
+        let content_type: ContentType = token_obj.extract()?;
+        let filename: String = lexer.getattr("filename")?.extract()?;
+        let linenum: i32 = lexer.getattr("linenum")?.extract()?;
+        self.add_content(filename, linenum, content_type)?;
         Ok(())
     }
 }
