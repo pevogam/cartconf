@@ -111,7 +111,6 @@ pub enum ContentType {
     Node(Node),
     String(String),
 }
-
 impl<'py> IntoPyObject<'py> for ContentType {
     type Target = PyAny;
     type Output = Bound<'py, Self::Target>;
@@ -146,6 +145,36 @@ impl<'py> FromPyObject<'_, 'py> for ContentType {
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct ContentStep {
+    filename: String,
+    linenum: i32,
+    content_type: ContentType,
+}
+impl<'py> IntoPyObject<'py> for ContentStep {
+    type Target = PyAny;
+    type Output = Bound<'py, Self::Target>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        use pyo3::IntoPyObjectExt;
+
+        (self.filename, self.linenum, self.content_type).into_bound_py_any(py)
+    }
+}
+impl<'py> FromPyObject<'_, 'py> for ContentStep {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'_, 'py, PyAny>) -> Result<Self, Self::Error> {
+        if let Ok((filename, linenum, content_type)) = object.extract::<(String, i32, ContentType)>() {
+            return Ok(ContentStep { filename, linenum, content_type });
+        }
+        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "Failed to extract ContentStep from python object",
+        ))
+    }
+}
+
 #[pyclass(unsendable)]
 #[derive(Debug, PartialEq, Clone)]
 pub struct Node {
@@ -159,14 +188,14 @@ pub struct Node {
     pub dep: Vec<Vec<Vec<Label>>>,
     #[pyo3(get, set)]
     pub condition: Option<Filters>,
-    pub content: Vec<(String, i32, ContentType)>,
+    pub content: Vec<ContentStep>,
     children: VecDeque<Rc<RefCell<Node>>>,
     #[pyo3(get)]
     pub labels: Vec<Label>,
     #[pyo3(get, set)]
     pub append_to_shortname: bool,
     #[allow(clippy::type_complexity)]
-    pub failed_cases: VecDeque<(Vec<Label>, Vec<(String, i32, ContentType)>, Vec<(String, i32, ContentType)>)>,
+    pub failed_cases: VecDeque<(Vec<Label>, Vec<ContentStep>, Vec<ContentStep>)>,
     #[pyo3(get, set)]
     pub default: bool,
 }
@@ -227,30 +256,30 @@ impl Node {
         Ok(())
     }
 
-    pub fn get_content(&self) -> PyResult<Vec<(String, i32, ContentType)>> {
+    pub fn get_content(&self) -> PyResult<Vec<ContentStep>> {
         Ok(self.content.clone())
     }
 
-    pub fn add_content(&mut self, filename: String, linenum: i32, content: ContentType) -> PyResult<()> {
-        self.content.push((filename, linenum, content));
+    pub fn add_content(&mut self, filename: String, linenum: i32, content_type: ContentType) -> PyResult<()> {
+        self.content.push(ContentStep { filename, linenum, content_type });
         Ok(())
     }
 
-    pub fn swap_content(&mut self, new_content: Vec<(String, i32, ContentType)>) -> PyResult<()> {
+    pub fn swap_content(&mut self, new_content: Vec<ContentStep>) -> PyResult<()> {
         self.content = new_content;
         Ok(())
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn get_failed_cases(&self) -> PyResult<Vec<(Vec<Label>, Vec<(String, i32, ContentType)>, Vec<(String, i32, ContentType)>)>> {
+    pub fn get_failed_cases(&self) -> PyResult<Vec<(Vec<Label>, Vec<ContentStep>, Vec<ContentStep>)>> {
         Ok(self.failed_cases.clone().into())
     }
 
     pub fn add_failed_case(
         &mut self,
         ctx: Vec<Label>,
-        external_filters: Vec<(String, i32, ContentType)>,
-        internal_filters: Vec<(String, i32, ContentType)>,
+        external_filters: Vec<ContentStep>,
+        internal_filters: Vec<ContentStep>,
         capacity: usize,
     ) -> PyResult<()> {
         self.failed_cases.push_front((ctx, external_filters, internal_filters));
@@ -264,8 +293,8 @@ impl Node {
         &mut self,
         idx: usize,
         ctx: Vec<Label>,
-        external_filters: Vec<(String, i32, ContentType)>,
-        internal_filters: Vec<(String, i32, ContentType)>,
+        external_filters: Vec<ContentStep>,
+        internal_filters: Vec<ContentStep>,
     ) -> PyResult<()> {
         self.failed_cases.push_front((ctx, external_filters, internal_filters));
         _ = self.failed_cases.remove(idx);

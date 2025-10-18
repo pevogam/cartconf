@@ -18,7 +18,6 @@ from cartconf import parser
 testdir = os.path.dirname(__file__)
 testdatadir = os.path.join(testdir, 'data')
 
-
 class LabelTest(unittest.TestCase):
 
     def test_initialization(self):
@@ -123,7 +122,7 @@ class NodeTest(unittest.TestCase):
         failed_labels = [parser.Label("fail")]
         node.add_failed_case(failed_labels, [("<string>", 1, "str")], [], 5)
         dump_str = node.dump(2)
-        expected_str = "  name: [test_name]\n  variable name: [test_var_name]\n  content: [(\"test_content\", 0, Tokens(LString(\"test_content\")))]\n  failed cases: [([fail], [(\"<string>\", 1, String(\"str\"))], [])]"
+        expected_str = "  name: [test_name]\n  variable name: [test_var_name]\n  content: [ContentStep { filename: \"test_content\", linenum: 0, content_type: Tokens(LString(\"test_content\")) }]\n  failed cases: [([fail], [ContentStep { filename: \"<string>\", linenum: 1, content_type: String(\"str\") }], [])]"
         self.assertEqual(expected_str, dump_str)
 
     def test_dump_with_recurse(self):
