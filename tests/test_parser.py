@@ -409,7 +409,7 @@ class ParserApplyMethodsTest(unittest.TestCase):
         token = self.lexer.get_next_token([parser.LIdentifier])  # block allowed
         identifier = self.lexer.get_until([parser.LSet], no_white=True)  # identifier allowed
         pre_dict = {"key1": "value1"}
-        parser.Parser._apply_operator(identifier, token, self.lexer, self.node, pre_dict)
+        self.node.apply_operator(identifier, token, self.lexer, pre_dict)
         self.assertEqual(pre_dict, {"key1": "value1", "key2": "value2"})
         self.assertEqual(len(self.node.get_content()), 0)
 
@@ -419,7 +419,7 @@ class ParserApplyMethodsTest(unittest.TestCase):
         token = self.lexer.get_next_token([parser.LIdentifier])  # block allowed
         identifier = self.lexer.get_until([parser.LAppend], no_white=True)  # identifier allowed
         pre_dict = {"key1": "value1"}
-        parser.Parser._apply_operator(identifier, token, self.lexer, self.node, pre_dict)
+        self.node.apply_operator(identifier, token, self.lexer, pre_dict)
         self.assertEqual(pre_dict, {"key1": "value1&value2"})
         self.assertEqual(len(self.node.get_content()), 0)
 
@@ -429,7 +429,7 @@ class ParserApplyMethodsTest(unittest.TestCase):
         token = self.lexer.get_next_token([parser.LIdentifier])  # block allowed
         identifier = self.lexer.get_until([parser.LAppend], no_white=True)  # identifier allowed
         pre_dict = {"key1": "value1"}
-        parser.Parser._apply_operator(identifier, token, self.lexer, self.node, pre_dict)
+        self.node.apply_operator(identifier, token, self.lexer, pre_dict)
         self.assertEqual(pre_dict, {})
         self.assertEqual(len(self.node.get_content()), 2)
         self.assertIsInstance(self.node.get_content()[0][2], parser.LApplyPreDict)
@@ -440,7 +440,7 @@ class ParserApplyMethodsTest(unittest.TestCase):
         self.lexer.get_next_token([parser.LIndent])  # indent allowed
         self.lexer.get_next_token([parser.LDel])  # block allowed
         pre_dict = {"key1": "value1"}
-        self.parser._apply_deletion(self.lexer, self.node, pre_dict)
+        self.node.apply_deletion(self.lexer, pre_dict)
         self.assertEqual(pre_dict, {})
         self.assertEqual(len(self.node.get_content()), 2)
         self.assertIsInstance(self.node.get_content()[0][2], parser.LApplyPreDict)

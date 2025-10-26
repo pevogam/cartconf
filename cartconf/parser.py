@@ -281,35 +281,6 @@ class Parser(object):
         node = self._parse(lch, node, -1)
         return node
 
-    @staticmethod
-    def _apply_operator(
-        identifier: list["Token"],
-        token: "Token",
-        lexer: Lexer,
-        node: Node,
-        pre_dict: dict[str, str],
-    ) -> None:
-        """
-        Parse:
-           identifier = xxx
-           identifier <= xxx
-           identifier ?= xxx
-           etc..
-        """
-        node.apply_operator(identifier, token, lexer, pre_dict)
-
-    @staticmethod
-    def _apply_deletion(
-        lexer: Lexer,
-        node: Node,
-        pre_dict: dict[str, str],
-    ) -> None:
-        """
-        Parse:
-            del operand
-        """
-        node.apply_deletion(lexer, pre_dict)
-
     def _apply_condition(
         self,
         identifier: list["Token"],
@@ -647,7 +618,7 @@ class Parser(object):
                     if tokens_oper_key(identifier[-1]) in list(
                         tokens_oper
                     ):  # operand = <=
-                        Parser._apply_operator(identifier, token, lexer, node, pre_dict)
+                        node.apply_operator(identifier, token, lexer, pre_dict)
                     elif isinstance(identifier[-1], LColon):  # condition:
                         self._apply_condition(
                             identifier, token, lexer, node, pre_dict, indent
@@ -660,7 +631,7 @@ class Parser(object):
                             lexer.linenum,
                         )
                 elif typet == LDel:
-                    Parser._apply_deletion(lexer, node, pre_dict)
+                    node.apply_deletion(lexer, pre_dict)
                 elif typet == LNotCond:
                     self._apply_notcondition(lexer, node, pre_dict, indent)
                     lexer.set_prev_indent(prev_indent)
