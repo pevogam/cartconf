@@ -9,6 +9,7 @@ use pyo3::types::{PyAny, PyList, PyDict};
 
 use crate::tokens::Tokens;
 use crate::filters::Filters;
+use crate::lexer::Lexer;
 
 #[pyclass]
 #[derive(Clone)]
@@ -481,5 +482,62 @@ impl Node {
         let linenum: i32 = lexer.getattr("linenum")?.extract()?;
         self.add_content(filename, linenum, content_type)?;
         Ok(())
+    }
+
+    /*
+    Parse:
+        include relative file path to working directory.
+    */
+    #[pyo3(signature = (lexer, pre_dict))]
+    pub fn apply_include(
+        &mut self,
+        lexer: &Bound<'_, PyAny>,
+        pre_dict: &Bound<'_, PyDict>,
+    ) -> PyResult<Node> {
+        let py = lexer.py();
+
+        // Get path from rest of line
+        let path = lexer.call_method0("get_rest_line_as_string_token")?;
+        let path_str: String = path.getattr("string")?.extract()?;
+
+        // Expand user path (~ -> $HOME)
+        let expanded_path = if path_str.starts_with('~') {
+            let home = std::env::var("HOME").unwrap_or_default();
+            path_str.replacen('~', &home, 1)
+        } else {
+            path_str
+        };
+
+        // Make path absolute if needed
+        let mut filepath = std::path::PathBuf::from(&expanded_path);
+        let current_file: String = lexer.getattr("filename")?.extract()?;
+        if current_file != "<string>" && !filepath.is_absolute()
+            && let Some(parent) = std::path::Path::new(&current_file).parent() {
+                filepath = parent.join(filepath);
+        }
+
+        // Check file exists
+        if !filepath.is_file() {
+            let line: String = lexer.getattr("line")?.extract()?;
+            let filename: String = lexer.getattr("filename")?.extract()?;
+            let linenum: i32 = lexer.getattr("linenum")?.extract()?;
+
+            let exceptions = py.import("cartconf.exceptions")?;
+            let err = exceptions.getattr("MissingIncludeError")?;
+            return Err(PyErr::from_value(err.call1((line, filename, linenum))?));
+        }
+
+        // Apply current pre_dict and create new lexer for included file
+        self.apply_predict(lexer, pre_dict)?;
+
+        let filepath_str = filepath.to_str()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid filepath"))?;
+        let new_lexer = Lexer::new(None, Some(filepath_str))?;
+
+        // Parse with new lexer
+        let parser_type = py.import("cartconf.parser")?.getattr("Parser")?;
+        let parser = parser_type.call0()?;
+        let new_node = parser.call_method("_parse", (new_lexer, self.clone(), -1), None)?;
+        Ok(new_node.extract::<Node>()?)
     }
 }

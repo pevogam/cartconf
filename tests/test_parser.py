@@ -398,7 +398,7 @@ class ParserApplyMethodsTest(unittest.TestCase):
             self.lexer.get_next_token([parser.LIndent])  # indent allowed
             self.lexer.get_next_token([parser.LInclude])  # block allowed
             pre_dict = {"key": "value"}
-            node = self.parser._apply_include(self.lexer, self.node, pre_dict)
+            node = self.node.apply_include(self.lexer, pre_dict)
         self.assertEqual(pre_dict, {})
         self.assertEqual(len(node.get_children()), 1)
         self.assertEqual(node.get_children()[0].name, [parser.Label("test")])

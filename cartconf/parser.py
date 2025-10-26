@@ -260,27 +260,6 @@ class Parser(object):
             con_filter = []
         return or_filters
 
-    def _apply_include(
-        self,
-        lexer: Lexer,
-        node: Node,
-        pre_dict: dict[str, str],
-    ) -> Node:
-        """
-        Parse:
-           include relative file patch to working directory.
-        """
-        path = lexer.get_rest_line_as_string_token()
-        filename = os.path.expanduser(path.string)
-        if lexer.filename != "<string>" and not os.path.isabs(filename):
-            filename = os.path.join(os.path.dirname(lexer.filename), filename)
-        if not os.path.isfile(filename):
-            raise MissingIncludeError(lexer.line, lexer.filename, lexer.linenum)
-        node.apply_predict(lexer, pre_dict)
-        lch = Lexer(filename=filename)
-        node = self._parse(lch, node, -1)
-        return node
-
     def _apply_condition(
         self,
         identifier: list["Token"],
@@ -608,7 +587,7 @@ class Parser(object):
                 typet = type(token)
 
                 if typet == LInclude:
-                    node = self._apply_include(lexer, node, pre_dict)
+                    node = node.apply_include(lexer, pre_dict)
                     lexer.set_prev_indent(prev_indent)
 
                 elif typet == LIdentifier:
