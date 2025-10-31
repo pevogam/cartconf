@@ -508,7 +508,7 @@ impl Lexer {
     ) -> PyResult<()> {
         let mut check_tokens_types = Vec::new();
         for check_py in check_tokens.iter() {
-            let check_type = check_py.downcast::<PyType>()?.clone();
+            let check_type = check_py.cast::<PyType>()?.clone();
             check_tokens_types.push(check_type);
         }
         if !check_tokens_types.is_empty() && !check_tokens_types.iter().any(|t| t.eq(token.get_type()).unwrap_or(false)) {
@@ -570,7 +570,7 @@ impl Lexer {
         let py = end_tokens.py();
         let mut end_tokens_types = Vec::new();
         for end_py in end_tokens.iter() {
-            let end_type = end_py.downcast::<PyType>()?.clone();
+            let end_type = end_py.cast::<PyType>()?.clone();
             end_tokens_types.push(end_type);
         }
         if end_tokens_types.is_empty() {
@@ -584,7 +584,7 @@ impl Lexer {
         let mut check_tokens_types = Vec::new();
         if let Some(check_tokens_py) = check_tokens {
             for check_py in check_tokens_py.iter() {
-                let check_type = check_py.downcast::<PyType>()?.clone();
+                let check_type = check_py.cast::<PyType>()?.clone();
                 check_tokens_types.push(check_type);
             }
             check_tokens_types.extend(end_tokens_types.iter().cloned());
@@ -624,13 +624,13 @@ impl Lexer {
     /// Get all tokens from the rest of the line terminating only at an end-of-line token.
     #[pyo3(signature = (no_white=false))]
     pub fn get_rest_line(&mut self, no_white: bool) -> PyResult<Vec<Tokens>> {
-        Python::with_gil(|py| self.get_until(&PyList::empty(py), None, no_white))
+        Python::attach(|py| self.get_until(&PyList::empty(py), None, no_white))
     }
 
     /// Get a string token from the rest of the line.
     pub fn get_rest_line_as_string_token(&mut self) -> PyResult<Tokens> {
         self.rest_as_string = true;
-        let lstring = Python::with_gil(|py| -> Result<Tokens, PyErr> {
+        let lstring = Python::attach(|py| -> Result<Tokens, PyErr> {
             let mut lstring_types = Vec::new();
             let lstring_type = {
                 let lstring = Tokens::LString("".to_string());

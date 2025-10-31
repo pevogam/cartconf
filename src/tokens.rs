@@ -238,7 +238,7 @@ impl Tokens {
                             py_dict.set_item(key, &substituted_value)?;
                         }
                     } else {
-                        let key_tuple = key.downcast::<PyTuple>()?.as_slice();
+                        let key_tuple = key.cast::<PyTuple>()?.as_slice();
                         let key_str = key_tuple.iter().fold(String::new(), |mut acc, item| {
                             if let Ok(item_str) = item.extract::<String>() {
                                 acc.push_str(&item_str);
@@ -264,7 +264,7 @@ impl Tokens {
                             py_dict.set_item(key, new_value)?;
                         }
                     } else {
-                        let key_tuple = key.downcast::<PyTuple>()?.as_slice();
+                        let key_tuple = key.cast::<PyTuple>()?.as_slice();
                         let key_str = key_tuple.iter().fold(String::new(), |mut acc, item| {
                             if let Ok(item_str) = item.extract::<String>() {
                                 acc.push_str(&item_str);
@@ -292,7 +292,7 @@ impl Tokens {
                             py_dict.set_item(key, new_value)?;
                         }
                     } else {
-                        let key_tuple = key.downcast::<PyTuple>()?.as_slice();
+                        let key_tuple = key.cast::<PyTuple>()?.as_slice();
                         let key_str = key_tuple.iter().fold(String::new(), |mut acc, item| {
                             if let Ok(item_str) = item.extract::<String>() {
                                 acc.push_str(&item_str);
@@ -320,7 +320,7 @@ impl Tokens {
                                 return Some(key);
                             }
                         } else {
-                            let key_tuple = key.downcast::<PyTuple>().ok()?.as_slice();
+                            let key_tuple = key.cast::<PyTuple>().ok()?.as_slice();
                             let key_str = key_tuple.iter().fold(String::new(), |mut acc, item| {
                                 if let Ok(item_str) = item.extract::<String>() {
                                     acc.push_str(&item_str);
@@ -362,7 +362,7 @@ impl Tokens {
 
                 let dest_dict = if let Ok(Some(dest_any)) = py_dict.get_item(dest) {
                     dest_any
-                    .downcast::<PyDict>()
+                    .cast::<PyDict>()
                     .map_err(|_| PyAttributeError::new_err(format!("{dest} is not a dict")))?
                     .clone()
                 } else {
@@ -389,7 +389,7 @@ impl Tokens {
                             items.push(&key);
                         }
                     } else {
-                        let key_tuple = key.downcast::<PyTuple>().ok()?.as_slice();
+                        let key_tuple = key.cast::<PyTuple>().ok()?.as_slice();
                         for item in key_tuple.iter() {
                             items.push(item);
                         }
@@ -418,7 +418,7 @@ fn drop_suffixes(py_dict: &Bound<'_, PyDict>, skipdups: bool) -> PyResult<HashMa
             let value_str = value.extract::<String>().ok()?;
             if let Ok(key_str) = key.extract::<String>() {
                 Some((key_str, value_str))
-            } else if let Ok(key_tuple) = key.downcast::<PyTuple>() {
+            } else if let Ok(key_tuple) = key.cast::<PyTuple>() {
                 let gen_key = key_tuple.get_item(0).ok()?.extract::<String>().ok()?;
                 let mut can_drop_all_suffixes = true;
 
@@ -435,7 +435,7 @@ fn drop_suffixes(py_dict: &Bound<'_, PyDict>, skipdups: bool) -> PyResult<HashMa
                     if can_drop_all_suffixes {
                         can_drop_all_suffixes = py_dict.iter()
                             .filter_map(|(other_key, other_value)| {
-                                other_key.downcast::<PyTuple>().ok()?
+                                other_key.cast::<PyTuple>().ok()?
                                     .get_item(0).ok()?
                                     .extract::<String>().ok()
                                     .filter(|k| k == &gen_key)
@@ -535,8 +535,8 @@ mod tests {
 
     #[test]
     fn test_substitution_with_placeholders() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::initialize();
+        Python::attach(|py| {
             let py_dict = [("key1", "value1"), ("key2", "value2")].into_py_dict(py).unwrap();
             let result = substitution("This is ${key1} and ${key2}.", &py_dict).unwrap();
             assert_eq!(result, "This is value1 and value2.");
@@ -545,8 +545,8 @@ mod tests {
 
     #[test]
     fn test_substitution_missing_placeholder() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::initialize();
+        Python::attach(|py| {
             let py_dict = [("key1", "value1")].into_py_dict(py).unwrap();
             let result = substitution("This is ${key1} and ${key2}.", &py_dict).unwrap();
             assert_eq!(result, "This is value1 and ${key2}.");
@@ -555,8 +555,8 @@ mod tests {
 
     #[test]
     fn test_substitution_no_placeholders() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::initialize();
+        Python::attach(|py| {
             let py_dict = [("key1", "value1"), ("key2", "value2")].into_py_dict(py).unwrap();
             let result = substitution("no placeholders here", &py_dict).unwrap();
             assert_eq!(result, "no placeholders here");
@@ -565,8 +565,8 @@ mod tests {
 
     #[test]
     fn test_substitution_empty_dict() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::initialize();
+        Python::attach(|py| {
             let py_dict = PyDict::new(py);
             let result = substitution("This is ${key1}.", &py_dict).unwrap();
             assert_eq!(result, "This is ${key1}.");
@@ -575,8 +575,8 @@ mod tests {
 
     #[test]
     fn test_substitution_with_dollar_sign_but_no_placeholders() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::initialize();
+        Python::attach(|py| {
             let py_dict = [("key1", "value1")].into_py_dict(py).unwrap();
             let result = substitution("This costs $5.", &py_dict).unwrap();
             assert_eq!(result, "This costs $5.");
@@ -585,8 +585,8 @@ mod tests {
 
     #[test]
     fn test_substitution_with_suffixed_dict() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::initialize();
+        Python::attach(|py| {
             let py_dict = [
                 (("key1", "_s1"), "value1"),
                 (("key2", "_s1"), "value2"),
@@ -599,8 +599,8 @@ mod tests {
 
     #[test]
     fn test_drop_suffixes_with_simple_keys() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::initialize();
+        Python::attach(|py| {
             let py_dict = [
                 ("key1", "value1"),
                 ("key2", "value2")
@@ -614,8 +614,8 @@ mod tests {
 
     #[test]
     fn test_drop_suffixes_with_tuple_keys() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::initialize();
+        Python::attach(|py| {
             let py_dict = [
                 (("key1", "_s1"), "value1"),
                 (("key1", "_s2"), "value1"),
@@ -638,8 +638,8 @@ mod tests {
 
     #[test]
     fn test_drop_suffixes_with_mixed_keys() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::initialize();
+        Python::attach(|py| {
             let py_dict = [
                 (("key1", "_s2"), "value1"),
                 (("key2", "_s2"), "value22"),
@@ -668,8 +668,8 @@ mod tests {
 
     #[test]
     fn test_drop_suffixes_with_skipdups_false() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::initialize();
+        Python::attach(|py| {
             let py_dict = [
                 (("key1", "_s1"), "value1"),
                 (("key1", "_s2"), "value1"),
@@ -686,8 +686,8 @@ mod tests {
 
     #[test]
     fn test_drop_suffixes_with_reserved_keys() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::initialize();
+        Python::attach(|py| {
             let py_dict = [
                 (("key1", "_s1"), "value1"),
             ]
