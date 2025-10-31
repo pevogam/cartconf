@@ -475,7 +475,7 @@ class ParserApplyMethodsTest(unittest.TestCase):
         self.lexer = parser.Lexer(content="variants test:")
         self.lexer.get_next_token([parser.LIndent])  # indent allowed
         self.lexer.get_next_token([parser.LVariants])  # block allowed
-        variant_name, meta = parser.Parser._apply_variants(self.lexer, self.node)
+        variant_name, meta = self.node.apply_variants(self.lexer)
         self.assertEqual(variant_name, "test")
         self.assertEqual(meta, {})
         self.assertEqual(len(self.node.get_content()), 0)
@@ -486,7 +486,7 @@ class ParserApplyMethodsTest(unittest.TestCase):
         )
         self.lexer.get_next_token([parser.LIndent])  # indent allowed
         self.lexer.get_next_token([parser.LVariants])  # block allowed
-        variant_name, meta = parser.Parser._apply_variants(self.lexer, self.node)
+        variant_name, meta = self.node.apply_variants(self.lexer)
         self.assertEqual(variant_name, "test")
         self.assertEqual(
             meta,

@@ -668,4 +668,163 @@ impl Node {
 
         Ok(())
     }
+
+    /*
+    Parse:
+       variants _name_ [meta1] [meta2=val2]:
+    */
+    #[pyo3(signature = (lexer))]
+    pub fn apply_variants(
+        &self,
+        lexer: &Bound<'_, PyAny>,
+    ) -> PyResult<(String, HashMap<String, Vec<String>>)> {
+        let py = lexer.py();
+
+        let exceptions = py.import("cartconf.exceptions")?;
+        let err = exceptions.getattr("ParserError")?;
+
+        // Check if node has conditions
+        if self.condition.is_some() {
+            return Err(PyErr::from_value(err.call1((
+                "'variants' is not allowed inside a conditional block",
+                lexer.getattr("line")?.extract::<String>()?,
+                lexer.getattr("filename")?.extract::<String>()?,
+                lexer.getattr("linenum")?.extract::<i32>()?,
+            ))?));
+        }
+
+        // Get tokens until bracket, colon, identifier or end
+        let allowed = [
+            Tokens::LLBracket().into_bound_py_any(py)?.get_type(),
+            Tokens::LColon().into_bound_py_any(py)?.get_type(),
+            Tokens::LIdentifier(String::new()).into_bound_py_any(py)?.get_type(),
+            Tokens::LEndL().into_bound_py_any(py)?.get_type(),
+        ];
+        let kwargs = {
+            let d = PyDict::new(py);
+            d.set_item("no_white", true)?;
+            d
+        };
+        let tokens_pylist = lexer.call_method("get_until", (allowed.to_vec(),), Some(&kwargs))?;
+        let tokens: Vec<Tokens> = tokens_pylist.extract()?;
+        let mut vtoken: Tokens = match tokens.last() {
+            Some(last_token) => last_token.clone(),
+            None => {
+                return Err(pyo3::exceptions::PyValueError::new_err("Empty token list"));
+            }
+        };
+
+        let mut variant_name = String::new();
+        let mut meta = HashMap::new();
+
+        // Parse tokens until colon or end
+        while !matches!(vtoken, Tokens::LColon()) && !matches!(vtoken, Tokens::LEndL()) {
+            if matches!(vtoken, Tokens::LIdentifier(_)) {
+                if !variant_name.is_empty() {
+                    return Err(PyErr::from_value(err.call1((
+                        "Syntax ERROR expected '[' or ':'",
+                        lexer.getattr("line")?.extract::<String>()?,
+                        lexer.getattr("filename")?.extract::<String>()?,
+                        lexer.getattr("linenum")?.extract::<i32>()?,
+                    ))?));
+                }
+                variant_name = tokens_pylist.get_item(0)?.getattr("string")?.extract()?;
+            } else if matches!(vtoken, Tokens::LLBracket()) {
+                // Parse metadata in brackets
+                let ident = lexer.call_method(
+                    "get_next_token",
+                    ([Tokens::LIdentifier(String::new()).into_bound_py_any(py)?.get_type()],),
+                    Some(&kwargs),
+                )?;
+                let ident_str: String = ident.getattr("string")?.extract()?;
+
+                let next = lexer.call_method(
+                    "get_next_token",
+                    ([Tokens::LSet(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
+                      Tokens::LRBracket().into_bound_py_any(py)?.get_type()],),
+                    Some(&kwargs),
+                )?;
+                let next_token: Tokens = next.extract()?;
+
+                if matches!(next_token, Tokens::LRBracket()) {
+                    // Handle [xxx]
+                    meta.entry(ident_str)
+                        .or_insert_with(Vec::new)
+                        .push(true.to_string());
+                } else if matches!(next_token, Tokens::LSet(_, _)) {
+                    // Handle [xxx = yyy]
+                    let tokens = lexer.call_method(
+                        "get_until",
+                        ([Tokens::LRBracket().into_bound_py_any(py)?.get_type(),
+                          Tokens::LEndL().into_bound_py_any(py)?.get_type()],),
+                        Some(&kwargs),
+                    )?;
+                    let last = tokens.get_item(tokens.len()? - 1)?;
+                    let last_token: Tokens = last.extract()?;
+
+                    if matches!(last_token, Tokens::LRBracket()) {
+                        let mut values = Vec::new();
+                        for i in 0..tokens.len()? - 1 {
+                            let token = tokens.get_item(i)?;
+                            values.push(token.getattr("string")?.extract::<String>()?);
+                        }
+                        // The python side has an inner list that we stringify here (just like the bool above)
+                        meta.entry(ident_str)
+                            .or_insert_with(Vec::new)
+                            .push(values.join(" ").to_string());
+                    } else {
+                        return Err(PyErr::from_value(err.call1((
+                            "Syntax ERROR expected ']'",
+                            lexer.getattr("line")?.extract::<String>()?,
+                            lexer.getattr("filename")?.extract::<String>()?,
+                            lexer.getattr("linenum")?.extract::<i32>()?,
+                        ))?));
+                    }
+                }
+            }
+
+            // Get next token
+            let next = lexer.call_method(
+                "get_next_token",
+                (allowed.to_vec(),),
+                Some(&kwargs),
+            )?;
+            let next_token = next.extract::<Tokens>()?;
+            vtoken = next_token;
+        }
+
+        // Verify default values if present
+        if meta.contains_key("default") {
+            for val in meta.get("default").unwrap_or(&Vec::new()) {
+                if val == "true" {
+                    return Err(PyErr::from_value(err.call1((
+                        "Syntax ERROR expected [default=xxx]",
+                        lexer.getattr("line")?.extract::<String>()?,
+                        lexer.getattr("filename")?.extract::<String>()?,
+                        lexer.getattr("linenum")?.extract::<i32>()?,
+                    ))?));
+                }
+            }
+        }
+
+        // Check for required colon
+        if matches!(vtoken, Tokens::LEndL()) {
+            return Err(PyErr::from_value(err.call1((
+                "Syntax ERROR expected ':'",
+                lexer.getattr("line")?.extract::<String>()?,
+                lexer.getattr("filename")?.extract::<String>()?,
+                lexer.getattr("linenum")?.extract::<i32>()?,
+            ))?));
+        }
+
+        // Consume end of line
+        lexer.call_method(
+            "get_next_token",
+            ([Tokens::LEndL().into_bound_py_any(py)?.get_type()],),
+            Some(&kwargs),
+        )?;
+
+        Ok((variant_name, meta))
+    }
+
 }

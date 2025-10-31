@@ -259,83 +259,6 @@ class Parser(object):
             con_filter = []
         return or_filters
 
-    @staticmethod
-    def _apply_variants(
-        lexer: Lexer,
-        node: Node,
-    ) -> tuple[str, dict[str, list[str]]]:
-        """
-        Parse:
-           variants _name_ [meta1] [meta2=val2]:
-        """
-        if node.condition is not None:
-            raise ParserError(
-                "'variants' is not allowed inside a " "conditional block",
-                lexer.line,
-                lexer.filename,
-                lexer.linenum,
-            )
-
-        tokens = lexer.get_until([LLBracket, LColon, LIdentifier, LEndL], no_white=True)
-        vtypet = type(tokens[-1])
-        variant_name = ""
-        meta = {}
-        # [meta1=xxx] [yyy] [xxx]
-        while vtypet not in [LColon, LEndL]:
-            if vtypet is LIdentifier:
-                if variant_name != "":
-                    raise ParserError(
-                        "Syntax ERROR expected" ' "[" or ":"',
-                        lexer.line,
-                        lexer.filename,
-                        lexer.linenum,
-                    )
-                variant_name = tokens[0].string
-            elif vtypet is LLBracket:  # [
-                ident = lexer.get_next_token([LIdentifier], no_white=True)
-                typet = type(lexer.get_next_token([LSet, LRBracket], no_white=True))
-                if typet is LRBracket:  # [xxx]
-                    if ident.string not in meta:
-                        meta[ident.string] = []
-                    meta[ident.string] += ["true"]
-                elif typet is LSet:  # [xxx = yyyy]
-                    tokens = lexer.get_until([LRBracket, LEndL], no_white=True)
-                    if isinstance(tokens[-1], LRBracket):
-                        if ident.string not in meta:
-                            meta[ident.string] = []
-                        meta[ident.string] += [" ".join(map(lambda x : x.string, tokens[:-1]))]
-                    else:
-                        raise ParserError(
-                            "Syntax ERROR" ' expected "]"',
-                            lexer.line,
-                            lexer.filename,
-                            lexer.linenum,
-                        )
-
-            varianst_allowed_in = [LLBracket, LColon, LIdentifier, LEndL]
-            vtypet = type(lexer.get_next_token(varianst_allowed_in, no_white=True))
-
-        if "default" in meta:
-            for wd in meta["default"]:
-                if wd == "true":
-                    raise ParserError(
-                        "Syntax ERROR expected " "[default=xxx]",
-                        lexer.line,
-                        lexer.filename,
-                        lexer.linenum,
-                    )
-
-        if vtypet == LEndL:
-            raise ParserError(
-                'Syntax ERROR expected ":"',
-                lexer.line,
-                lexer.filename,
-                lexer.linenum,
-            )
-        lexer.get_next_token([LEndL], no_white=True)
-
-        return variant_name, meta
-
     def _apply_variant(
         self,
         lexer: Lexer,
@@ -562,7 +485,7 @@ class Parser(object):
                     lexer.set_prev_indent(prev_indent)
 
                 elif typet == LVariants:  # _name_ [meta1=xxx] [yyy] [xxx]
-                    variant_name, meta = Parser._apply_variants(lexer, node)
+                    variant_name, meta = node.apply_variants(lexer)
                     variant_indent = indent
                     allowed = variants_allowed
                 elif typet == LVariant:
