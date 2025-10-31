@@ -481,20 +481,30 @@ class ParserApplyMethodsTest(unittest.TestCase):
         self.assertEqual(len(self.node.get_content()), 0)
 
     def test_apply_variants_meta(self):
-        self.lexer = parser.Lexer(content="variants test [meta1] [meta2]:")
+        self.lexer = parser.Lexer(
+            content="variants test [meta1] [meta2=val2] [ meta3 ] [ meta4 = val4 val5 ]:"
+        )
         self.lexer.get_next_token([parser.LIndent])  # indent allowed
         self.lexer.get_next_token([parser.LVariants])  # block allowed
         variant_name, meta = parser.Parser._apply_variants(self.lexer, self.node)
         self.assertEqual(variant_name, "test")
-        self.assertEqual(meta, {"meta1": [True], "meta2": [True]})
+        self.assertEqual(
+            meta,
+            {
+                "meta1": [True],
+                "meta2": [[parser.LIdentifier("val2")]],
+                "meta3": [True],
+                "meta4": [[parser.LIdentifier("val4"), parser.LIdentifier("val5")]],
+            }
+        )
         self.assertEqual(len(self.node.get_content()), 0)
 
     def test_apply_variant(self):
         self.lexer = parser.Lexer(content="- test:")
         self.lexer.get_next_token([parser.LIndent])  # indent allowed
-        token = self.lexer.get_next_token([parser.LVariant])  # variants allowed
+        self.lexer.get_next_token([parser.LVariant])  # variants allowed
         pre_dict = {"key1": "value1"}
-        node = self.parser._apply_variant(token, self.lexer, self.node, pre_dict, 0, "test", 0, {})
+        node = self.parser._apply_variant(self.lexer, self.node, pre_dict, 0, "test", 0, {})
         self.assertEqual(pre_dict, {})
         self.assertEqual(len(self.node.get_content()), 1)
         self.assertIsInstance(self.node.get_content()[0][2], parser.LApplyPreDict)

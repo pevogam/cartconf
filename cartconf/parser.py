@@ -264,10 +264,10 @@ class Parser(object):
     def _apply_variants(
         lexer: Lexer,
         node: Node,
-    ) -> tuple[str, dict[str, str]]:
+    ) -> tuple[str, dict[str, list[bool | list["Token"]]]]:
         """
         Parse:
-           variants _name_ [meta1] [meta2]:
+           variants _name_ [meta1] [meta2=val2]:
         """
         if node.condition is not None:
             raise ParserError(
@@ -339,14 +339,13 @@ class Parser(object):
 
     def _apply_variant(
         self,
-        token: "Token",
         lexer: Lexer,
         node: Node,
         pre_dict: dict[str, str],
         indent: int,
         variant_name: str,
         variant_indent: int,
-        meta: dict[str, str],
+        meta: dict[str, list[bool | list["Token"]]],
     ) -> Node:
         """
         Parse:
@@ -396,9 +395,7 @@ class Parser(object):
                 raw_name = [x for x in name[:-1]]
                 name = [x.string for x in name[:-1] if isinstance(x, LIdentifier)]
 
-            token = lexer.get_next_token()
-            while isinstance(token, LWhite):
-                token = lexer.get_next_token()
+            token = lexer.get_next_token(no_white=True)
             tokens = None
             if not isinstance(token, LEndL):
                 tokens = [token] + lexer.get_until([LEndL])
@@ -570,7 +567,6 @@ class Parser(object):
                     allowed = variants_allowed
                 elif typet == LVariant:
                     node = self._apply_variant(
-                        token,
                         lexer,
                         node,
                         pre_dict,
