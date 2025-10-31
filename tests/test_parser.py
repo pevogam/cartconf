@@ -452,7 +452,7 @@ class ParserApplyMethodsTest(unittest.TestCase):
         token = self.lexer.get_next_token([parser.LIdentifier])  # block allowed
         identifier = self.lexer.get_until([parser.LColon], no_white=True)  # identifier allowed
         pre_dict = {"key1": "value1"}
-        self.parser._apply_condition(identifier, token, self.lexer, self.node, pre_dict, 0)
+        self.node.apply_condition(identifier, token, self.lexer, pre_dict, 0)
         self.assertEqual(pre_dict, {})
         self.assertEqual(len(self.node.get_content()), 2)
         self.assertIsInstance(self.node.get_content()[0][2], parser.LApplyPreDict)
@@ -464,7 +464,7 @@ class ParserApplyMethodsTest(unittest.TestCase):
         self.lexer.get_next_token([parser.LIndent])  # indent allowed
         self.lexer.get_next_token([parser.LNotCond])  # block allowed
         pre_dict = {"key1": "value1"}
-        self.parser._apply_notcondition(self.lexer, self.node, pre_dict, 0)
+        self.node.apply_notcondition(self.lexer, pre_dict, 0)
         self.assertEqual(pre_dict, {})
         self.assertEqual(len(self.node.get_content()), 2)
         self.assertIsInstance(self.node.get_content()[0][2], parser.LApplyPreDict)

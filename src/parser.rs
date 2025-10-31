@@ -432,10 +432,11 @@ impl Node {
             }
 
             // Add operator token as content
-            let content_type: ContentType = op_obj.extract()?;
-            let filename: String = lexer.getattr("filename")?.extract()?;
-            let linenum: i32 = lexer.getattr("linenum")?.extract()?;
-            self.add_content(filename, linenum, content_type)?;
+            self.add_content(
+                lexer.getattr("filename")?.extract()?,
+                lexer.getattr("linenum")?.extract()?,
+                op_obj.extract()?,
+            )?;
         }
 
         // consume end-of-line
@@ -477,10 +478,12 @@ impl Node {
 
         // flush pre_dict and add token as content
         self.apply_predict(lexer, pre_dict)?;
-        let content_type = ContentType::Tokens(Tokens::LDel(to_del_str, "".to_string()));
-        let filename: String = lexer.getattr("filename")?.extract()?;
-        let linenum: i32 = lexer.getattr("linenum")?.extract()?;
-        self.add_content(filename, linenum, content_type)?;
+        self.add_content(
+            lexer.getattr("filename")?.extract()?,
+            lexer.getattr("linenum")?.extract()?,
+            ContentType::Tokens(Tokens::LDel(to_del_str, "".to_string())),
+        )?;
+
         Ok(())
     }
 
@@ -539,5 +542,130 @@ impl Node {
         let parser = parser_type.call0()?;
         let new_node = parser.call_method("_parse", (new_lexer, self.clone(), -1), None)?;
         Ok(new_node.extract::<Node>()?)
+    }
+
+    /*
+    Parse:
+        xxx.yyy.(aaa=bbb):
+    */
+    #[pyo3(signature = (identifier, token, lexer, pre_dict, indent))]
+    pub fn apply_condition(
+        &mut self,
+        identifier: Vec<Tokens>,
+        token: Tokens,
+        lexer: &Bound<'_, PyAny>,
+        pre_dict: &Bound<'_, PyDict>,
+        indent: i32,
+    ) -> PyResult<()> {
+        let py = lexer.py();
+
+        // Build the full identifier list: [token] + identifier[:-1] + [LEndl]
+        let mut tokens = vec![token];
+        let identifier_len = identifier.len();
+        tokens.extend(identifier.into_iter().take(identifier_len.saturating_sub(1)));
+        tokens.push(Tokens::LEndL());
+        let tokens_py: Vec<_> = tokens
+            .into_iter()
+            .filter_map(|t| t.into_bound_py_any(py).ok())
+            .collect();
+
+        // Parse the condition filter
+        let parser_type = py.import("cartconf.parser")?.getattr("Parser")?;
+        let py_list = PyList::new(py, &tokens_py)?;
+        let filter = parser_type.call_method1("parse_filter", (lexer, py_list))?;
+        let cfilter: Vec<Vec<Vec<Label>>> = filter.extract()?;
+
+        // Get the next line and set it in the lexer
+        let next_line = lexer.call_method0("get_rest_line_as_string_token")?;
+        let next_line_str: String = next_line.getattr("string")?.extract()?;
+        if !next_line_str.is_empty() {
+            lexer.call_method1("set_next_line", (next_line_str, indent + 1, lexer.getattr("linenum")?))?;
+        }
+
+        // Create a new Node for the condition
+        let mut cond = Node::new();
+        cond.condition = Some(Filters::Condition { filter : cfilter, line : lexer.getattr("line")?.extract()? });
+
+        // Parse the condition block
+        let parser = parser_type.call0()?;
+        let new_node = parser.call_method("_parse", (lexer, Some(cond), Some(indent)), None)?;
+        cond = new_node.extract::<Node>()?;
+
+        // Apply the current pre_dict and add the condition node as content
+        self.apply_predict(lexer, pre_dict)?;
+        self.add_content(
+            lexer.getattr("filename")?.extract()?,
+            lexer.getattr("linenum")?.extract()?,
+            ContentType::Node(cond),
+        )?;
+
+        Ok(())
+    }
+
+    /*
+    Parse:
+        !xxx.yyy.(aaa=bbb): vvv
+    */
+    #[pyo3(signature = (lexer, pre_dict, indent))]
+    pub fn apply_notcondition(
+        &mut self,
+        lexer: &Bound<'_, PyAny>,
+        pre_dict: &Bound<'_, PyDict>,
+        indent: i32,
+    ) -> PyResult<()> {
+        let py = lexer.py();
+
+        // Build the full token list
+        let lcolon = Tokens::LColon().into_bound_py_any(py)?.get_type();
+        let lendl = Tokens::LEndL().into_bound_py_any(py)?.get_type();
+        let kwargs = {
+            let d = PyDict::new(py);
+            d.set_item("no_white", true)?;
+            d
+        };
+        let tokens_pylist = lexer.call_method(
+            "get_until",
+            (PyList::new(py, &[lcolon, lendl])?,),
+            Some(&kwargs),
+        )?;
+        let tokens: Vec<Tokens> = tokens_pylist.extract()?;
+        let tokens_len = tokens.len();
+        let tokens_py: Vec<_> = tokens
+            .into_iter()
+            .take(tokens_len.saturating_sub(1))
+            .filter_map(|t| t.into_bound_py_any(py).ok())
+            .collect();
+
+        // Parse the condition filter
+        let parser_type = py.import("cartconf.parser")?.getattr("Parser")?;
+        let py_list = PyList::new(py, &tokens_py)?;
+        let filter = parser_type.call_method1("parse_filter", (lexer, py_list))?;
+        let lfilter: Vec<Vec<Vec<Label>>> = filter.extract()?;
+
+        // Get the next line and set it in the lexer
+        let next_line = lexer.call_method0("get_rest_line_as_string_token")?;
+        let next_line_str: String = next_line.getattr("string")?.extract()?;
+        if !next_line_str.is_empty() {
+            lexer.call_method1("set_next_line", (next_line_str, indent + 1, lexer.getattr("linenum")?))?;
+        }
+
+        // Create a new Node for the negative condition
+        let mut cond = Node::new();
+        cond.condition = Some(Filters::NegativeCondition { filter : lfilter, line : lexer.getattr("line")?.extract()? });
+
+        // Parse the condition block
+        let parser = parser_type.call0()?;
+        let new_node = parser.call_method("_parse", (lexer, Some(cond), Some(indent)), None)?;
+        cond = new_node.extract::<Node>()?;
+
+        // Apply the current pre_dict and add the condition node as content
+        self.apply_predict(lexer, pre_dict)?;
+        self.add_content(
+            lexer.getattr("filename")?.extract()?,
+            lexer.getattr("linenum")?.extract()?,
+            ContentType::Node(cond),
+        )?;
+
+        Ok(())
     }
 }

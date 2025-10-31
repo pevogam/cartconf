@@ -260,55 +260,6 @@ class Parser(object):
             con_filter = []
         return or_filters
 
-    def _apply_condition(
-        self,
-        identifier: list["Token"],
-        token: "Token",
-        lexer: Lexer,
-        node: Node,
-        pre_dict: dict[str, str],
-        indent: int,
-    ) -> None:
-        """
-        Parse:
-           xxx.yyy.(aaa=bbb):
-        """
-        identifier = [token] + identifier[:-1]
-        cfilter = Parser.parse_filter(lexer, identifier + [LEndL()])
-        next_line = lexer.get_rest_line_as_string_token()
-        if next_line.string != "":
-            lexer.set_next_line(next_line.string, indent + 1, lexer.linenum)
-        cond = Node()
-        cond.condition = Condition(cfilter, lexer.line)
-        self._parse(lexer, cond, prev_indent=indent)
-
-        node.apply_predict(lexer, pre_dict)
-        node.add_content(lexer.filename, lexer.linenum, cond)
-
-    def _apply_notcondition(
-        self,
-        lexer: Lexer,
-        node: Node,
-        pre_dict: dict[str, str],
-        indent: int,
-    ) -> None:
-        """
-        Parse:
-           !xxx.yyy.(aaa=bbb): vvv
-        """
-        lfilter = Parser.parse_filter(
-            lexer, lexer.get_until([LColon, LEndL], no_white=True)[:-1]
-        )
-        next_line = lexer.get_rest_line_as_string_token()
-        if next_line.string != "":
-            lexer.set_next_line(next_line.string, indent + 1, lexer.linenum)
-        cond = Node()
-        cond.condition = NegativeCondition(lfilter, lexer.line)
-        self._parse(lexer, cond, prev_indent=indent)
-
-        node.apply_predict(lexer, pre_dict)
-        node.add_content(lexer.filename, lexer.linenum, cond)
-
     @staticmethod
     def _apply_variants(
         lexer: Lexer,
@@ -599,9 +550,7 @@ class Parser(object):
                     ):  # operand = <=
                         node.apply_operator(identifier, token, lexer, pre_dict)
                     elif isinstance(identifier[-1], LColon):  # condition:
-                        self._apply_condition(
-                            identifier, token, lexer, node, pre_dict, indent
-                        )
+                        node.apply_condition(identifier, token, lexer, pre_dict, indent)
                     else:
                         raise ParserError(
                             'Syntax ERROR expected ":" or' " operand",
@@ -612,7 +561,7 @@ class Parser(object):
                 elif typet == LDel:
                     node.apply_deletion(lexer, pre_dict)
                 elif typet == LNotCond:
-                    self._apply_notcondition(lexer, node, pre_dict, indent)
+                    node.apply_notcondition(lexer, pre_dict, indent)
                     lexer.set_prev_indent(prev_indent)
 
                 elif typet == LVariants:  # _name_ [meta1=xxx] [yyy] [xxx]
