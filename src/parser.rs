@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use std::collections::VecDeque;
-use std::fmt::Debug;
+use std::collections::{HashMap, VecDeque};
+use std::hash::Hash;
+use std::fmt::{Debug, Display};
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -12,7 +12,7 @@ use crate::filters::Filters;
 use crate::lexer::Lexer;
 
 #[pyclass]
-#[derive(Clone)]
+#[derive(Clone, Eq)]
 pub struct Label {
     #[pyo3(get, set)]
     pub name: String,
@@ -32,12 +32,27 @@ impl Debug for Label {
     }
 }
 
+impl Display for Label {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.long_name)
+    }
+}
+
 impl PartialEq for Label {
     fn eq(&self, other: &Self) -> bool {
         if other.var_name.is_some() {
             self.long_name == other.long_name
         } else {
             self.name == other.name
+        }
+    }
+}
+impl Hash for Label {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if let Some(hash_var) = self.hash_var {
+            hash_var.hash(state);
+        } else {
+            self.hash_val.hash(state);
         }
     }
 }
