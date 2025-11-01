@@ -17,12 +17,14 @@ from .cartconf import parser
 
 LOG = logging.getLogger("avocado." + __name__)
 
+LexerError = lexer.LexerError
 Reader = lexer.Reader
 Lexer = lexer.Lexer
-LexerError = lexer.LexerError
 
+ParserError = parser.ParserError
 Label = parser.Label
 Node = parser.Node
+parse = parser.parse
 
 
 class Parser(object):
@@ -76,7 +78,12 @@ class Parser(object):
         :param cfgfile: configuration file path to parse
         """
         self.node.filename = cfgfile
-        self.node = self._parse(Lexer(filename=cfgfile), self.node)
+        self.node = parse(
+            Lexer(filename=cfgfile),
+            self.node,
+            defaults=self.defaults,
+            expand_defaults=self.expand_defaults,
+        )
         self.filename = cfgfile
 
     def parse_string(self, cfgstr: str) -> None:
@@ -86,7 +93,12 @@ class Parser(object):
         :param cfgstr: configuration string to parse
         """
         self.node.filename = Reader(content="").filename
-        self.node = self._parse(Lexer(content=cfgstr), self.node)
+        self.node = parse(
+            Lexer(content=cfgstr),
+            self.node,
+            defaults=self.defaults,
+            expand_defaults=self.expand_defaults,
+        )
 
     def only_filter(self, variant: str) -> None:
         """

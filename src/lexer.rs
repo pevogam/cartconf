@@ -95,11 +95,11 @@ pub struct LexerError {
 impl LexerError {
     #[new]
     #[pyo3(signature = (msg, line=None, filename=None, linenum=None))]
-    fn new(msg: String, line: Option<String>, filename: Option<String>, linenum: Option<isize>) -> Self {
+    pub fn new(msg: String, line: Option<String>, filename: Option<String>, linenum: Option<isize>) -> Self {
         Self { msg, line, filename, linenum }
     }
 
-    fn __str__(&self) -> String {
+    pub fn __str__(&self) -> String {
         let mut full_msg = self.msg.clone();
         if let Some(line) = &self.line {
             full_msg.push_str(&format!(": '{}'", line));

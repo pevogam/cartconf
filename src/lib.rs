@@ -45,6 +45,8 @@ fn cartconf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let parser_module = PyModule::new(m.py(), "parser")?;
     parser_module.add_class::<parser::Label>()?;
     parser_module.add_class::<parser::Node>()?;
+    parser_module.add_function(wrap_pyfunction!(parser::parse, m)?)?;
+    parser_module.add("ParserError", m.py().get_type::<parser::ParserError>())?;
 
     m.add_submodule(&tokens_module)?;
     m.add_submodule(&lexer_module)?;

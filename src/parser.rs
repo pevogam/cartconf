@@ -5,11 +5,31 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use pyo3::{prelude::*, IntoPyObjectExt};
+use pyo3::exceptions::PyException;
 use pyo3::types::{PyAny, PyList, PyDict};
 
 use crate::tokens::Tokens;
 use crate::filters::Filters;
 use crate::lexer::Lexer;
+use crate::lexer::LexerError;
+
+#[pyclass(extends=PyException)]
+#[derive(Debug)]
+pub struct ParserError {
+    lexer_error: LexerError,
+}
+#[pymethods]
+impl ParserError {
+    #[new]
+    #[pyo3(signature = (msg, line=None, filename=None, linenum=None))]
+    fn new(msg: String, line: Option<String>, filename: Option<String>, linenum: Option<isize>) -> Self {
+        Self { lexer_error: LexerError::new(msg, line, filename, linenum) }
+    }
+
+    fn __str__(&self) -> String {
+        self.lexer_error.__str__()
+    }
+}
 
 #[pyclass]
 #[derive(Clone, Eq)]
@@ -553,10 +573,7 @@ impl Node {
         let new_lexer = Lexer::new(None, Some(filepath_str))?;
 
         // Parse with new lexer
-        let parser_type = py.import("cartconf.parser")?.getattr("Parser")?;
-        let parser = parser_type.call0()?;
-        let new_node = parser.call_method("_parse", (new_lexer, self.clone(), -1), None)?;
-        Ok(new_node.extract::<Node>()?)
+        parse(&new_lexer.into_bound_py_any(py)?, self.clone(), -1, false, None)
     }
 
     /*
@@ -602,9 +619,7 @@ impl Node {
         cond.condition = Some(Filters::Condition { filter : cfilter, line : lexer.getattr("line")?.extract()? });
 
         // Parse the condition block
-        let parser = parser_type.call0()?;
-        let new_node = parser.call_method("_parse", (lexer, Some(cond), Some(indent)), None)?;
-        cond = new_node.extract::<Node>()?;
+        cond = parse(lexer, cond, indent, false, None)?;
 
         // Apply the current pre_dict and add the condition node as content
         self.apply_predict(lexer, pre_dict)?;
@@ -669,9 +684,7 @@ impl Node {
         cond.condition = Some(Filters::NegativeCondition { filter : lfilter, line : lexer.getattr("line")?.extract()? });
 
         // Parse the condition block
-        let parser = parser_type.call0()?;
-        let new_node = parser.call_method("_parse", (lexer, Some(cond), Some(indent)), None)?;
-        cond = new_node.extract::<Node>()?;
+        cond = parse(lexer, cond, indent, false, None)?;
 
         // Apply the current pre_dict and add the condition node as content
         self.apply_predict(lexer, pre_dict)?;
@@ -695,17 +708,14 @@ impl Node {
     ) -> PyResult<(String, HashMap<String, Vec<String>>)> {
         let py = lexer.py();
 
-        let exceptions = py.import("cartconf.exceptions")?;
-        let err = exceptions.getattr("ParserError")?;
-
         // Check if node has conditions
         if self.condition.is_some() {
-            return Err(PyErr::from_value(err.call1((
-                "'variants' is not allowed inside a conditional block",
-                lexer.getattr("line")?.extract::<String>()?,
-                lexer.getattr("filename")?.extract::<String>()?,
-                lexer.getattr("linenum")?.extract::<i32>()?,
-            ))?));
+            return Err(PyErr::new::<ParserError, _>((
+                "'variants' is not allowed inside a conditional block".to_string(),
+                Some(lexer.getattr("line")?.extract::<String>()?),
+                Some(lexer.getattr("filename")?.extract::<String>()?),
+                Some(lexer.getattr("linenum")?.extract::<i32>()?),
+            )));
         }
 
         // Get tokens until bracket, colon, identifier or end
@@ -736,12 +746,12 @@ impl Node {
         while !matches!(vtoken, Tokens::LColon()) && !matches!(vtoken, Tokens::LEndL()) {
             if matches!(vtoken, Tokens::LIdentifier(_)) {
                 if !variant_name.is_empty() {
-                    return Err(PyErr::from_value(err.call1((
-                        "Syntax ERROR expected '[' or ':'",
-                        lexer.getattr("line")?.extract::<String>()?,
-                        lexer.getattr("filename")?.extract::<String>()?,
-                        lexer.getattr("linenum")?.extract::<i32>()?,
-                    ))?));
+                    return Err(PyErr::new::<ParserError, _>((
+                        "Syntax ERROR expected '[' or ':'".to_string(),
+                        Some(lexer.getattr("line")?.extract::<String>()?),
+                        Some(lexer.getattr("filename")?.extract::<String>()?),
+                        Some(lexer.getattr("linenum")?.extract::<i32>()?),
+                    )));
                 }
                 variant_name = tokens_pylist.get_item(0)?.getattr("string")?.extract()?;
             } else if matches!(vtoken, Tokens::LLBracket()) {
@@ -788,12 +798,12 @@ impl Node {
                             .or_insert_with(Vec::new)
                             .push(values.join(" ").to_string());
                     } else {
-                        return Err(PyErr::from_value(err.call1((
-                            "Syntax ERROR expected ']'",
-                            lexer.getattr("line")?.extract::<String>()?,
-                            lexer.getattr("filename")?.extract::<String>()?,
-                            lexer.getattr("linenum")?.extract::<i32>()?,
-                        ))?));
+                        return Err(PyErr::new::<ParserError, _>((
+                            "Syntax ERROR expected ']'".to_string(),
+                            Some(lexer.getattr("line")?.extract::<String>()?),
+                            Some(lexer.getattr("filename")?.extract::<String>()?),
+                            Some(lexer.getattr("linenum")?.extract::<i32>()?),
+                        )));
                     }
                 }
             }
@@ -812,24 +822,24 @@ impl Node {
         if meta.contains_key("default") {
             for val in meta.get("default").unwrap_or(&Vec::new()) {
                 if val == "true" {
-                    return Err(PyErr::from_value(err.call1((
-                        "Syntax ERROR expected [default=xxx]",
-                        lexer.getattr("line")?.extract::<String>()?,
-                        lexer.getattr("filename")?.extract::<String>()?,
-                        lexer.getattr("linenum")?.extract::<i32>()?,
-                    ))?));
+                    return Err(PyErr::new::<ParserError, _>((
+                        "Syntax ERROR expected [default=xxx]".to_string(),
+                        Some(lexer.getattr("line")?.extract::<String>()?),
+                        Some(lexer.getattr("filename")?.extract::<String>()?),
+                        Some(lexer.getattr("linenum")?.extract::<i32>()?),
+                    )));
                 }
             }
         }
 
         // Check for required colon
         if matches!(vtoken, Tokens::LEndL()) {
-            return Err(PyErr::from_value(err.call1((
-                "Syntax ERROR expected ':'",
-                lexer.getattr("line")?.extract::<String>()?,
-                lexer.getattr("filename")?.extract::<String>()?,
-                lexer.getattr("linenum")?.extract::<i32>()?,
-            ))?));
+            return Err(PyErr::new::<ParserError, _>((
+                "Syntax ERROR expected ':'".to_string(),
+                Some(lexer.getattr("line")?.extract::<String>()?),
+                Some(lexer.getattr("filename")?.extract::<String>()?),
+                Some(lexer.getattr("linenum")?.extract::<i32>()?),
+            )));
         }
 
         // Consume end of line
@@ -994,11 +1004,7 @@ impl Node {
                 )?;
             }
 
-            let mut node3 = parser.call_method(
-                "_parse",
-                (lexer, node2, indent),
-                None,
-            )?.extract::<Node>()?;
+            let mut node3 = parse(lexer, node2, indent, defaults, Some(expand_defaults.clone()))?;
 
             // Set variant name and dependencies
             if !variant_name.is_empty() {
@@ -1080,17 +1086,34 @@ impl Node {
         if let Some(ref s) = meta_default {
             let default_values = s.extract::<Vec<String>>()?;
             if !default_values.is_empty() {
-                let exceptions = py.import("cartconf.exceptions")?;
-                let err = exceptions.getattr("ParserError")?;
-                return Err(PyErr::from_value(err.call1((
+                return Err(PyErr::new::<ParserError, _>((
                     format!("Missing default variant {:?}", default_values),
-                    lexer.getattr("line")?.extract::<String>().unwrap_or("<none>".to_string()),
-                    lexer.getattr("filename")?.extract::<String>()?,
-                    lexer.getattr("linenum")?.extract::<i32>()?,
-                ))?));
+                    Some(lexer.getattr("line")?.extract::<String>().unwrap_or("<none>".to_string())),
+                    Some(lexer.getattr("filename")?.extract::<String>()?),
+                    Some(lexer.getattr("linenum")?.extract::<i32>()?),
+                )));
             }
         }
 
         Ok(node4)
     }
+}
+
+#[pyfunction]
+#[pyo3(signature = (lexer, node, prev_indent=-1, defaults=true, expand_defaults=None))]
+pub fn parse(
+    lexer: &Bound<'_, PyAny>,
+    node: Node,
+    prev_indent: i32,
+    defaults: bool,
+    expand_defaults: Option<Vec<String>>,
+) -> PyResult<Node> {
+    let py: Python<'_> = lexer.py();
+    let parser_type = py.import("cartconf.parser")?.getattr("Parser")?;
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("defaults", defaults)?;
+    kwargs.set_item("expand_defaults", expand_defaults)?;
+    let parser = parser_type.call((), Some(&kwargs))?;
+    let new_node = parser.call_method("_parse", (lexer, node, prev_indent), None)?;
+    Ok(new_node.extract::<Node>()?)
 }
