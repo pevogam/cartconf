@@ -504,7 +504,10 @@ class ParserApplyMethodsTest(unittest.TestCase):
         self.lexer.get_next_token([parser.LIndent])  # indent allowed
         self.lexer.get_next_token([parser.LVariant])  # variants allowed
         pre_dict = {"key1": "value1"}
-        node = self.parser._apply_variant(self.lexer, self.node, pre_dict, 0, "test", 0, {})
+        node = self.node.apply_variant(
+            self.lexer, pre_dict, 0, "test", 0, {},
+            self.parser.defaults, self.parser.expand_defaults,
+        )
         self.assertEqual(pre_dict, {})
         self.assertEqual(len(self.node.get_content()), 1)
         self.assertIsInstance(self.node.get_content()[0][2], parser.LApplyPreDict)

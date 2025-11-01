@@ -259,141 +259,6 @@ class Parser(object):
             con_filter = []
         return or_filters
 
-    def _apply_variant(
-        self,
-        lexer: Lexer,
-        node: Node,
-        pre_dict: dict[str, str],
-        indent: int,
-        variant_name: str,
-        variant_indent: int,
-        meta: dict[str, list[str]],
-    ) -> Node:
-        """
-        Parse:
-         - var1: depend1, depend2
-             block1
-         - var2:
-             block2
-        """
-        if pre_dict:
-            node.apply_predict(lexer, pre_dict)
-        already_default = False
-        is_default = False
-        meta_with_default = False
-        if "default" in meta:
-            meta_with_default = True
-        meta_in_expand_defautls = False
-        if variant_name not in self.expand_defaults:
-            meta_in_expand_defautls = True
-        node4 = Node()
-        while True:
-            lexer.set_prev_indent(variant_indent)
-            # Get token from lexer and check syntax.
-            token = lexer.get_next_token(
-                [LIdentifier, LDefault, LIndent, LEndBlock],
-                no_white=True,
-            )
-            typet = type(token)
-            if typet == LEndBlock:
-                break
-
-            if typet == LIndent:
-                lexer.get_next_token([LVariant], no_white=True)
-                token = lexer.get_next_token([LIdentifier, LDefault], no_white=True)
-                typet = type(token)
-
-            if typet == LDefault:  # @
-                is_default = True
-                name = lexer.get_until([LColon], [LIdentifier, LDot])
-            else:  # identificator
-                is_default = False
-                name = [token] + lexer.get_until([LColon], [LIdentifier, LDot])
-
-            if len(name) == 2:
-                raw_name = name
-                name = [name[0].string]
-            else:
-                raw_name = [x for x in name[:-1]]
-                name = [x.string for x in name[:-1] if isinstance(x, LIdentifier)]
-
-            token = lexer.get_next_token(no_white=True)
-            tokens = None
-            if not isinstance(token, LEndL):
-                tokens = [token] + lexer.get_until([LEndL])
-                deps = Parser.parse_filter(lexer, tokens)
-            else:
-                deps = []
-
-            # Prepare data for dict generator.
-            node2 = Node()
-            node2.append_child(node)
-            node2.update_labels(node.labels)
-
-            if variant_name:
-                op = LSet(variant_name, ".".join([n for n in name]))
-                node2.add_content(lexer.filename, lexer.linenum, op)
-
-            node3 = self._parse(lexer, node2, prev_indent=indent)
-
-            if variant_name:
-                node3.var_name = [Label(variant_name)]
-                node3.name = [Label(variant_name, n) for n in name]
-            else:
-                node3.name = [Label(n) for n in name]
-
-            # Update mapping name to file
-            node3.dep = deps
-
-            if meta_with_default:
-                for wd in meta["default"]:
-                    wds = [LIdentifier(x) for x in wd.split(" ")]
-                    for x, y in list(zip(wds, raw_name)):
-                        if x != y:
-                            break
-                    else:
-                        is_default = True
-                        meta["default"].remove(wd)
-
-            if is_default and not already_default and meta_in_expand_defautls:
-                node3.default = True
-                already_default = True
-
-            node3.append_to_shortname = not is_default
-
-            op = LUpdateFileMap(
-                lexer.filename,
-                ".".join(str(x) for x in node3.name),
-                "_name_map_file",
-            )
-            node3.add_content(lexer.filename, lexer.linenum, op)
-
-            op = LUpdateFileMap(
-                lexer.filename,
-                ".".join(str(x.name) for x in node3.name),
-                "_short_name_map_file",
-            )
-            node3.add_content(lexer.filename, lexer.linenum, op)
-
-            if node3.default and self.defaults:
-                # Move default variant in front of rest
-                # of all variants.
-                # Speed optimization.
-                node4.prepend_child(node3)
-            else:
-                node4.append_child(node3)
-            node4.update_labels(node3.labels)
-            node4.update_labels(node3.name)
-
-        if "default" in meta and meta["default"]:
-            raise ParserError(
-                "Missing default variant %s" % (meta["default"]),
-                lexer.line,
-                lexer.filename,
-                lexer.linenum,
-            )
-        return node4
-
     def _parse(self, lexer: Lexer, node: Node = None, prev_indent: int = -1) -> Node:
         if not node:
             node = self.node
@@ -489,14 +354,15 @@ class Parser(object):
                     variant_indent = indent
                     allowed = variants_allowed
                 elif typet == LVariant:
-                    node = self._apply_variant(
+                    node = node.apply_variant(
                         lexer,
-                        node,
                         pre_dict,
                         indent,
                         variant_name,
                         variant_indent,
                         meta,
+                        self.defaults,
+                        self.expand_defaults,
                     )
                     allowed = block_allowed
 

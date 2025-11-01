@@ -842,4 +842,255 @@ impl Node {
         Ok((variant_name, meta))
     }
 
+    /*
+    Parse:
+     - var1: depend1, depend2
+         block1
+     - var2:
+         block2
+    */
+    #[pyo3(signature = (lexer, pre_dict, indent,
+        variant_name, variant_indent, meta,
+        defaults, expand_defaults
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_variant(
+        &mut self,
+        lexer: &Bound<'_, PyAny>,
+        pre_dict: &Bound<'_, PyDict>,
+        indent: i32,
+        variant_name: String,
+        variant_indent: i32,
+        meta: &Bound<'_, PyDict>,
+        defaults : bool,
+        expand_defaults : Vec<String>,
+    ) -> PyResult<Node> {
+        let py = lexer.py();
+        let mut already_default = false;
+        let mut node4 = Node::new();
+
+        if !pre_dict.is_empty() {
+            self.apply_predict(lexer, pre_dict)?;
+        }
+
+        // Handle default variants
+        let meta_default = meta.get_item("default")?;
+        let meta_in_expand_defaults = !expand_defaults.contains(&variant_name);
+
+        // Data used for the entire loop
+        let tokens = PyList::new(
+            py,
+            &[
+                Tokens::LIdentifier(String::new()).into_bound_py_any(py)?.get_type(),
+                Tokens::LDefault().into_bound_py_any(py)?.get_type(),
+                Tokens::LIndent(-1).into_bound_py_any(py)?.get_type(),
+                Tokens::LEndBlock(-1).into_bound_py_any(py)?.get_type(),
+            ],
+        )?;
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("no_white", true)?;
+        let parser_type = py.import("cartconf.parser")?.getattr("Parser")?;
+        let parser = parser_type.call0()?;
+
+        loop {
+            lexer.call_method1("set_prev_indent", (variant_indent,))?;
+
+            // Get token from lexer and check for end of block
+            let token_py = lexer.call_method("get_next_token", (tokens.clone(),), Some(&kwargs))?;
+            let token: Tokens = token_py.extract()?;
+            if matches!(token, Tokens::LEndBlock(_)) {
+                break;
+            }
+
+            let mut is_default = false;
+            let mut name;
+
+            if matches!(token, Tokens::LIndent(_)) {
+                // Handle indented variant
+                lexer.call_method(
+                    "get_next_token",
+                    (PyList::new(py, &[Tokens::LVariant().into_bound_py_any(py)?.get_type()])?,),
+                    Some(&kwargs),
+                )?;
+                let token_py = lexer.call_method(
+                    "get_next_token",
+                    (PyList::new(py, &[
+                        Tokens::LIdentifier(String::new()).into_bound_py_any(py)?.get_type(),
+                        Tokens::LDefault().into_bound_py_any(py)?.get_type(),
+                    ])?,),
+                    Some(&kwargs),
+                )?;
+                let token: Tokens = token_py.extract()?;
+
+                if matches!(token, Tokens::LDefault()) {
+                    is_default = true;
+                    name = lexer.call_method(
+                        "get_until",
+                        (PyList::new(py, &[Tokens::LColon().into_bound_py_any(py)?.get_type()])?,),
+                        None,
+                    )?.extract()?;
+                } else {
+                    name = vec![token];
+                    name.extend(lexer.call_method(
+                        "get_until",
+                        (PyList::new(py, &[Tokens::LColon().into_bound_py_any(py)?.get_type()])?,),
+                        None,
+                    )?.extract::<Vec<Tokens>>()?);
+                }
+            } else if matches!(token, Tokens::LDefault()) {
+                is_default = true;
+                name = lexer.call_method(
+                    "get_until",
+                    (PyList::new(py, &[Tokens::LColon().into_bound_py_any(py)?.get_type()])?,),
+                    None,
+                )?.extract()?;
+            } else {
+                name = vec![token];
+                name.extend(lexer.call_method(
+                    "get_until",
+                    (PyList::new(py, &[Tokens::LColon().into_bound_py_any(py)?.get_type()])?,),
+                    None,
+                )?.extract::<Vec<Tokens>>()?);
+            }
+            let name_len = name.len();
+            // Drop the colon at the end of the parsed name
+            name = name.into_iter().take(name_len.saturating_sub(1)).collect();
+
+            // Get dependencies after colon
+            let token_py = lexer.call_method("get_next_token", (), Some(&kwargs))?;
+            let token: Tokens = token_py.extract()?;
+            let mut deps = Vec::new();
+            if !matches!(token, Tokens::LEndL()) {
+                let mut filter_tokens = vec![token];
+                filter_tokens.extend(lexer.call_method(
+                    "get_until",
+                    (PyList::new(py, &[Tokens::LEndL().into_bound_py_any(py)?.get_type()])?,),
+                    None,
+                )?.extract::<Vec<Tokens>>()?);
+                deps = parser.call_method1("parse_filter", (lexer, filter_tokens))?.extract()?;
+            }
+
+            // Create and parse the variant node
+            let mut node2 = Node::new();
+            node2.append_child(self.clone())?;
+            node2.update_labels(self.labels.clone())?;
+
+            if !variant_name.is_empty() {
+                node2.add_content(
+                    lexer.getattr("filename")?.extract()?,
+                    lexer.getattr("linenum")?.extract()?,
+                    ContentType::Tokens(
+                        Tokens::LSet(
+                            variant_name.clone(),
+                            name.iter()
+                                .filter_map(|t| match t {
+                                    Tokens::LIdentifier(s) => Some(s.clone()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("."),
+                        )
+                    ),
+                )?;
+            }
+
+            let mut node3 = parser.call_method(
+                "_parse",
+                (lexer, node2, indent),
+                None,
+            )?.extract::<Node>()?;
+
+            // Set variant name and dependencies
+            if !variant_name.is_empty() {
+                node3.var_name = vec![Label::new(variant_name.clone(), None)];
+                node3.name = name.iter()
+                    .filter_map(|t| match t {
+                        Tokens::LIdentifier(s) => Some(Label::new(variant_name.clone(), Some(s.clone()))),
+                        _ => None,
+                    })
+                    .collect();
+            } else {
+                node3.name = name.iter()
+                    .filter_map(|t| match t {
+                        Tokens::LIdentifier(s) => Some(Label::new(s.clone(), None)),
+                        _ => None,
+                    })
+                    .collect();
+            }
+            node3.dep = deps;
+
+            // Determine if current variant is default from the meta variant information
+            if let Some(ref s) = meta_default {
+                let default_values = s.extract::<Vec<String>>()?;
+                for default_str in default_values.iter() {
+                    let default_seq = default_str.split(' ')
+                        .map(|x| Tokens::LIdentifier(x.to_string()))
+                        .collect::<Vec<_>>();
+                    if default_seq.len() == name.len() && default_seq.iter().zip(name.iter()).all(|(x, y)| x == y) {
+                        is_default = true;
+                        // Remove the matched default name values sequence
+                        s.call_method1("remove", (default_str.clone(),))?;
+                        break;
+                    }
+                }
+            }
+            if is_default && !already_default && meta_in_expand_defaults {
+                node3.default = true;
+                already_default = true;
+            }
+            node3.append_to_shortname = !is_default;
+
+            // Update file mappings
+            node3.add_content(
+                lexer.getattr("filename")?.extract()?,
+                lexer.getattr("linenum")?.extract()?,
+                ContentType::Tokens(
+                    Tokens::LUpdateFileMap(
+                        lexer.getattr("filename")?.extract()?,
+                        node3.name.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("."),
+                        "_name_map_file".to_string(),
+                    ),
+                ),
+            )?;
+            node3.add_content(
+                lexer.getattr("filename")?.extract()?,
+                lexer.getattr("linenum")?.extract()?,
+                ContentType::Tokens(
+                    Tokens::LUpdateFileMap(
+                        lexer.getattr("filename")?.extract()?,
+                        node3.name.iter().map(|x| x.name.clone()).collect::<Vec<_>>().join("."),
+                        "_short_name_map_file".to_string(),
+                    ),
+                ),
+            )?;
+
+            // Add node to children
+            if node3.default && defaults {
+                node4.prepend_child(node3.clone())?;
+            } else {
+                node4.append_child(node3.clone())?;
+            }
+
+            // Update labels (move out fields since we appended clones)
+            node4.update_labels(node3.labels)?;
+            node4.update_labels(node3.name)?;
+        }
+
+        // Check if all default variants were used
+        if let Some(ref s) = meta_default {
+            let default_values = s.extract::<Vec<String>>()?;
+            if !default_values.is_empty() {
+                let exceptions = py.import("cartconf.exceptions")?;
+                let err = exceptions.getattr("ParserError")?;
+                return Err(PyErr::from_value(err.call1((
+                    format!("Missing default variant {:?}", default_values),
+                    lexer.getattr("line")?.extract::<String>().unwrap_or("<none>".to_string()),
+                    lexer.getattr("filename")?.extract::<String>()?,
+                    lexer.getattr("linenum")?.extract::<i32>()?,
+                ))?));
+            }
+        }
+
+        Ok(node4)
+    }
 }
