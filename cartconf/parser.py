@@ -48,8 +48,7 @@ class Parser(object):
         self.node = Node()
         self.debug = debug
         self.defaults = defaults
-        expand_defaults = expand_defaults or []
-        self.expand_defaults = [LIdentifier(x) for x in expand_defaults]
+        self.expand_defaults = expand_defaults or []
 
         self.filename = filename
         if self.filename:
@@ -264,10 +263,10 @@ class Parser(object):
     def _apply_variants(
         lexer: Lexer,
         node: Node,
-    ) -> tuple[str, dict[str, str]]:
+    ) -> tuple[str, dict[str, list[str]]]:
         """
         Parse:
-           variants _name_ [meta1] [meta2]:
+           variants _name_ [meta1] [meta2=val2]:
         """
         if node.condition is not None:
             raise ParserError(
@@ -298,13 +297,13 @@ class Parser(object):
                 if typet is LRBracket:  # [xxx]
                     if ident.string not in meta:
                         meta[ident.string] = []
-                    meta[ident.string] += [True]
+                    meta[ident.string] += ["true"]
                 elif typet is LSet:  # [xxx = yyyy]
                     tokens = lexer.get_until([LRBracket, LEndL], no_white=True)
                     if isinstance(tokens[-1], LRBracket):
                         if ident.string not in meta:
                             meta[ident.string] = []
-                        meta[ident.string] += [tokens[:-1]]
+                        meta[ident.string] += [" ".join(map(lambda x : x.string, tokens[:-1]))]
                     else:
                         raise ParserError(
                             "Syntax ERROR" ' expected "]"',
@@ -318,7 +317,7 @@ class Parser(object):
 
         if "default" in meta:
             for wd in meta["default"]:
-                if not isinstance(wd, list):
+                if wd == "true":
                     raise ParserError(
                         "Syntax ERROR expected " "[default=xxx]",
                         lexer.line,
@@ -339,14 +338,13 @@ class Parser(object):
 
     def _apply_variant(
         self,
-        token: "Token",
         lexer: Lexer,
         node: Node,
         pre_dict: dict[str, str],
         indent: int,
         variant_name: str,
         variant_indent: int,
-        meta: dict[str, str],
+        meta: dict[str, list[str]],
     ) -> Node:
         """
         Parse:
@@ -396,9 +394,7 @@ class Parser(object):
                 raw_name = [x for x in name[:-1]]
                 name = [x.string for x in name[:-1] if isinstance(x, LIdentifier)]
 
-            token = lexer.get_next_token()
-            while isinstance(token, LWhite):
-                token = lexer.get_next_token()
+            token = lexer.get_next_token(no_white=True)
             tokens = None
             if not isinstance(token, LEndL):
                 tokens = [token] + lexer.get_until([LEndL])
@@ -428,7 +424,8 @@ class Parser(object):
 
             if meta_with_default:
                 for wd in meta["default"]:
-                    for x, y in list(zip(wd, raw_name)):
+                    wds = [LIdentifier(x) for x in wd.split(" ")]
+                    for x, y in list(zip(wds, raw_name)):
                         if x != y:
                             break
                     else:
@@ -570,7 +567,6 @@ class Parser(object):
                     allowed = variants_allowed
                 elif typet == LVariant:
                     node = self._apply_variant(
-                        token,
                         lexer,
                         node,
                         pre_dict,
@@ -815,7 +811,7 @@ class Parser(object):
 
         # Recurse into children
         count = 0
-        if self.defaults and node.var_name not in self.expand_defaults:
+        if self.defaults and ".".join(str(node.var_name)) not in self.expand_defaults:
             for n in node.get_children():
                 for d in self.get_dicts_joined(n, ctx, new_content, shortname, dep):
                     count += 1

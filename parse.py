@@ -56,6 +56,7 @@ if __name__ == "__main__":
         "--verbose",
         dest="debug",
         action="store_true",
+        default=False,
         help="include debug messages in console output",
     )
     parser.add_option(
@@ -63,6 +64,7 @@ if __name__ == "__main__":
         "--fullname",
         dest="fullname",
         action="store_true",
+        default=False,
         help="show full dict names instead of short names",
     )
     parser.add_option(
@@ -70,6 +72,7 @@ if __name__ == "__main__":
         "--contents",
         dest="contents",
         action="store_true",
+        default=False,
         help="show dict contents",
     )
     parser.add_option(
@@ -77,6 +80,7 @@ if __name__ == "__main__":
         "--repr",
         dest="repr_mode",
         action="store_true",
+        default=False,
         help="output parsing results Python format",
     )
     parser.add_option(
@@ -84,6 +88,7 @@ if __name__ == "__main__":
         "--defaults",
         dest="defaults",
         action="store_true",
+        default=False,
         help="use only default variant of variants if there" " is some",
     )
     parser.add_option(
@@ -98,8 +103,8 @@ if __name__ == "__main__":
         "-s",
         "--skip-dups",
         dest="skipdups",
-        default=True,
         action="store_false",
+        default=True,
         help="Don't drop variables with different suffixes and same val",
     )
 
