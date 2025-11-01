@@ -1103,17 +1103,224 @@ impl Node {
 #[pyo3(signature = (lexer, node, prev_indent=-1, defaults=true, expand_defaults=None))]
 pub fn parse(
     lexer: &Bound<'_, PyAny>,
-    node: Node,
+    mut node: Node,
     prev_indent: i32,
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
 ) -> PyResult<Node> {
-    let py: Python<'_> = lexer.py();
-    let parser_type = py.import("cartconf.parser")?.getattr("Parser")?;
-    let kwargs = PyDict::new(py);
-    kwargs.set_item("defaults", defaults)?;
-    kwargs.set_item("expand_defaults", expand_defaults)?;
-    let parser = parser_type.call((), Some(&kwargs))?;
-    let new_node = parser.call_method("_parse", (lexer, node, prev_indent), None)?;
-    Ok(new_node.extract::<Node>()?)
+    let py = lexer.py();
+
+    // Allowed token types for different contexts
+    let block_allowed = [
+        Tokens::LVariants().into_bound_py_any(py)?.get_type(),
+        Tokens::LIdentifier(String::new()).into_bound_py_any(py)?.get_type(),
+        Tokens::LOnly().into_bound_py_any(py)?.get_type(),
+        Tokens::LNo().into_bound_py_any(py)?.get_type(),
+        Tokens::LInclude().into_bound_py_any(py)?.get_type(),
+        Tokens::LDel(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
+        Tokens::LNotCond().into_bound_py_any(py)?.get_type(),
+        Tokens::LSuffix().into_bound_py_any(py)?.get_type(),
+        Tokens::LJoin().into_bound_py_any(py)?.get_type(),
+    ];
+    let variants_allowed = [Tokens::LVariant().into_bound_py_any(py)?.get_type()];
+    let identifier_allowed = [
+        Tokens::LSet(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
+        Tokens::LAppend(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
+        Tokens::LPrepend(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
+        Tokens::LLazySet(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
+        Tokens::LRegExpSet(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
+        Tokens::LRegExpAppend(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
+        Tokens::LRegExpPrepend(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
+        Tokens::LColon().into_bound_py_any(py)?.get_type(),
+        Tokens::LEndL().into_bound_py_any(py)?.get_type(),
+    ];
+    let indent_allowed = [
+        Tokens::LIndent(0).into_bound_py_any(py)?.get_type(),
+        Tokens::LEndBlock(0).into_bound_py_any(py)?.get_type(),
+    ];
+    let mut allowed = block_allowed.to_vec();
+
+    // Variant tracking state
+    let mut variant_name = String::new();
+    let mut variant_indent = 0;
+    let meta = PyDict::new(py);
+
+    // Pre-dictionary contains block of operation without collision with
+    // other blocks or operations which increases speed almost twice.
+    let pre_dict = PyDict::new(py);
+
+    // Suffix operator state
+    // NOTE: Suffix should be applied as the last operator in the dictionary
+    // Reasons:
+    // 1. Escapes multiplying suffix operators
+    // 2. Affects all elements in current block
+    let mut suffix = None;
+
+    loop {
+        lexer.call_method1("set_prev_indent", (prev_indent,))?;
+
+        // Handle indentation
+        let token_py = lexer.call_method1("get_next_token", (indent_allowed.to_vec(),))?;
+        let token: Tokens = token_py.extract()?;
+
+        if matches!(token, Tokens::LEndBlock(_)) {
+            if !pre_dict.is_empty() {
+                // Flush pre_dict to node content
+                node.apply_predict(lexer, &pre_dict)?;
+            }
+            if let Some((filename, linenum, op)) = suffix {
+                // Node has suffix, apply it to all elements
+                node.add_content(filename, linenum, ContentType::Tokens(op))?;
+            }
+            return Ok(node);
+        }
+
+        let indent: i32 = token_py.getattr("length")?.extract()?;
+        let token_py = lexer.call_method1("get_next_token", (allowed.to_vec(),))?;
+        let token: Tokens = token_py.extract()?;
+
+        match token {
+            Tokens::LInclude() => {
+                node = node.apply_include(lexer, &pre_dict)?;
+                lexer.call_method1("set_prev_indent", (prev_indent,))?;
+            }
+
+            Tokens::LIdentifier(_) => {
+                // Parse:
+                //    identifier .....
+                // Get tokens until an operator or colon
+                let kwargs = PyDict::new(py);
+                kwargs.set_item("no_white", true)?;
+                let identifier = lexer.call_method(
+                    "get_until",
+                    (identifier_allowed.to_vec(),),
+                    Some(&kwargs),
+                )?;
+                let last_token_py = identifier.get_item(identifier.len()? - 1)?;
+                let last_token: Tokens = last_token_py.extract()?;
+
+                if matches!(last_token, Tokens::LColon()) {
+                    // Handle condition block
+                    node.apply_condition(
+                        identifier.extract()?,
+                        token,
+                        lexer,
+                        &pre_dict,
+                        indent,
+                    )?;
+                } else if matches!(&last_token,
+                    Tokens::LSet(_, _) | Tokens::LLazySet(_, _) | Tokens::LAppend(_, _) | Tokens::LPrepend(_, _) |
+                    Tokens::LRegExpSet(_, _) | Tokens::LRegExpAppend(_, _) | Tokens::LRegExpPrepend(_, _)
+                ) {
+                    // Handle operator
+                    node.apply_operator(
+                        identifier.extract()?,
+                        token,
+                        lexer,
+                        &pre_dict,
+                    )?;
+                } else {
+                    return Err(PyErr::new::<ParserError, _>((
+                        "Syntax ERROR expected ':' or operand".to_string(),
+                        Some(lexer.getattr("line")?.extract::<String>()?),
+                        Some(lexer.getattr("filename")?.extract::<String>()?),
+                        Some(lexer.getattr("linenum")?.extract::<i32>()?),
+                    )));
+                }
+            }
+
+            Tokens::LDel(_, _) => {
+                node.apply_deletion(lexer, &pre_dict)?;
+            }
+
+            Tokens::LNotCond() => {
+                node.apply_notcondition(lexer, &pre_dict, indent)?;
+                lexer.call_method1("set_prev_indent", (prev_indent,))?;
+            }
+
+            Tokens::LVariants() => {
+                let (name, meta_dict) = node.apply_variants(lexer)?;
+                variant_name = name;
+                variant_indent = indent;
+                for (key, values) in meta_dict {
+                    meta.set_item(key, values)?;
+                }
+                allowed = variants_allowed.to_vec();
+            }
+
+            Tokens::LVariant() => {
+                node = node.apply_variant(
+                    lexer,
+                    &pre_dict,
+                    indent,
+                    variant_name.clone(),
+                    variant_indent,
+                    &meta,
+                    defaults,
+                    expand_defaults.clone().unwrap_or_default(),
+                )?;
+                allowed = block_allowed.to_vec();
+            }
+
+            Tokens::LNo() | Tokens::LOnly() | Tokens::LJoin() => {
+                // Parse:
+                //    only/no/join (filter=text)..aaa.bbb, xxxx
+                let rest_line = lexer.call_method0("get_rest_line")?;
+                let parser_type = py.import("cartconf.parser")?.getattr("Parser")?;
+                let filters = parser_type.call_method1("parse_filter", (lexer, rest_line))?;
+                node.apply_predict(lexer, &pre_dict)?;
+
+                let content_type = match token {
+                    Tokens::LOnly() => ContentType::Filters(Filters::OnlyFilter {
+                        filter: filters.extract()?,
+                        line: lexer.getattr("line")?.extract()?,
+                    }),
+                    Tokens::LNo() => ContentType::Filters(Filters::NoFilter {
+                        filter: filters.extract()?,
+                        line: lexer.getattr("line")?.extract()?,
+                    }),
+                    _ => ContentType::Filters(Filters::JoinFilter {
+                        filter: filters.extract()?,
+                        line: lexer.getattr("line")?.extract()?,
+                    }),
+                };
+                node.add_content(
+                    lexer.getattr("filename")?.extract()?,
+                    lexer.getattr("linenum")?.extract()?,
+                    content_type,
+                )?;
+            }
+
+            Tokens::LSuffix() => {
+                // Parse:
+                //    suffix SUFFIX
+                if !pre_dict.is_empty() {
+                    node.apply_predict(lexer, &pre_dict)?;
+                }
+                let token_val = lexer.call_method1(
+                    "get_next_token",
+                    ([Tokens::LIdentifier(String::new()).into_bound_py_any(py)?.get_type()],),
+                )?;
+                lexer.call_method1(
+                    "get_next_token",
+                    ([Tokens::LEndL().into_bound_py_any(py)?.get_type()],),
+                )?;
+
+                suffix = Some((
+                    lexer.getattr("filename")?.extract()?,
+                    lexer.getattr("linenum")?.extract()?,
+                    Tokens::Suffix(String::new(), token_val.getattr("string")?.extract()?),
+                ));
+            }
+
+            _ => {
+                return Err(PyErr::new::<ParserError, _>((
+                    "Syntax ERROR expected".to_string(),
+                    Some(lexer.getattr("line")?.extract::<String>()?),
+                    Some(lexer.getattr("filename")?.extract::<String>()?),
+                    Some(lexer.getattr("linenum")?.extract::<i32>()?),
+                )));
+            }
+        }
+    }
 }
