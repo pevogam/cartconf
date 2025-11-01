@@ -491,10 +491,10 @@ class ParserApplyMethodsTest(unittest.TestCase):
         self.assertEqual(
             meta,
             {
-                "meta1": [True],
-                "meta2": [[parser.LIdentifier("val2")]],
-                "meta3": [True],
-                "meta4": [[parser.LIdentifier("val4"), parser.LIdentifier("val5")]],
+                "meta1": ["true"],
+                "meta2": ["val2"],
+                "meta3": ["true"],
+                "meta4": ["val4 val5"],
             }
         )
         self.assertEqual(len(self.node.get_content()), 0)
