@@ -6,7 +6,7 @@ use std::cell::RefCell;
 
 use pyo3::{prelude::*, IntoPyObjectExt};
 use pyo3::exceptions::PyException;
-use pyo3::types::{PyAny, PyDict, PyList};
+use pyo3::types::{PyAny, PyDict};
 
 use crate::tokens::Tokens;
 use crate::filters::Filters;
@@ -353,21 +353,20 @@ impl Node {
         }
         Ok(dump_lines.join("\n"))
     }
+}
 
-    #[pyo3(signature = (lexer, pre_dict))]
-    pub fn apply_predict(&mut self, lexer: &Bound<'_, PyAny>, pre_dict: &Bound<'_, PyDict>) -> PyResult<()> {
-        // TODO: we do not provide lexer auto-conversion and instead treat it within python
-        // since we would need cloning trait not just for it but also for the reader enum
-        // Extract filename and linenum from the lexer object
-        let filename: String = lexer.getattr("filename")?.extract()?;
-        let linenum: isize = lexer.getattr("linenum")?.extract()?;
-
+impl Node {
+    pub fn apply_predict(&mut self, lexer: &Lexer, pre_dict: &Bound<'_, PyDict>) -> PyResult<()> {
         // Build a LApplyPreDict from the original Python dict
         let map: HashMap<String, String> = pre_dict.extract()?;
         let content_type = ContentType::Tokens(Tokens::LApplyPreDict(String::new(), map));
 
         // Add pre-dictionary content to this node
-        self.add_content(filename, linenum, content_type)?;
+        self.add_content(
+            lexer.filename.clone(),
+            lexer.linenum,
+            content_type,
+        )?;
 
         // Clear the original pre_dict in-place
         pre_dict.call_method0("clear")?;
@@ -382,15 +381,14 @@ impl Node {
         identifier ?= xxx
         etc..
     */
-    #[pyo3(signature = (identifier, token, lexer, pre_dict))]
     pub fn apply_operator(
         &mut self,
         identifier: Vec<Tokens>,
         token: Tokens,
-        lexer: &Bound<'_, PyAny>,
+        lexer: &mut Lexer,
         pre_dict: &Bound<'_, PyDict>,
     ) -> PyResult<()> {
-        let py = lexer.py();
+        let py = pre_dict.py();
 
         // Build identifier_str
         let token_str = match token {
@@ -419,11 +417,10 @@ impl Node {
         };
 
         // Get the next token for the value (LString)
-        let lstring = Tokens::default("String").into_bound_py_any(py)?;
-        let lendl = Tokens::default("endl").into_bound_py_any(py)?;
-        let req_list = PyList::new(py, &[lstring])?;
-        let value = lexer.call_method1("get_next_token", (req_list,))?;
-        let mut value_str: String = value.getattr("string")?.extract()?;
+        let lstring = Tokens::default("String");
+        let lendl = Tokens::default("endl");
+        let value = lexer.get_next_token(Some(vec![lstring]), None)?;
+        let mut value_str: String = value.string()?;
         // strip surrounding quotes if present
         let first = value_str.chars().next().unwrap_or(' ');
         let last = value_str.chars().last().unwrap_or(' ');
@@ -457,8 +454,7 @@ impl Node {
                 if !op_name.is_empty() && d_nin_val && pre_dict.contains(op_name.as_str())? {
                     // apply and consume EOL
                     op_obj.call_method1("apply_to_dict", (pre_dict,))?;
-                    let req_end = PyList::new(py, &[lendl])?;
-                    lexer.call_method1("get_next_token", (req_end,))?;
+                    lexer.get_next_token(Some(vec![lendl]), None)?;
                     return Ok(());
                 } else {
                     // flush pre_dict into node
@@ -468,15 +464,14 @@ impl Node {
 
             // Add operator token as content
             self.add_content(
-                lexer.getattr("filename")?.extract()?,
-                lexer.getattr("linenum")?.extract()?,
+                lexer.filename.clone(),
+                lexer.linenum,
                 op_obj.extract()?,
             )?;
         }
 
         // consume end-of-line
-        let req_end = PyList::new(py, &[lendl])?;
-        lexer.call_method1("get_next_token", (req_end,))?;
+        lexer.get_next_token(Some(vec![lendl]), None)?;
         Ok(())
     }
 
@@ -484,38 +479,23 @@ impl Node {
     Parse:
         del operand
     */
-    #[pyo3(signature = (lexer, pre_dict))]
     pub fn apply_deletion(
         &mut self,
-        lexer: &Bound<'_, PyAny>,
+        lexer: &mut Lexer,
         pre_dict: &Bound<'_, PyDict>,
     ) -> PyResult<()> {
-        let py = lexer.py();
-
-        let lidentifier = Tokens::default("Identifier").into_bound_py_any(py)?;
-        let lendl = Tokens::default("endl").into_bound_py_any(py)?;
-        let args = PyList::new(py, &[lidentifier])?;
-        let kwargs = {
-            let d = PyDict::new(py);
-            d.set_item("no_white", true)?;
-            d
-        };
-        let to_del = lexer.call_method("get_next_token", (args,), Some(&kwargs))?;
+        let lidentifier = Tokens::default("Identifier");
+        let lendl = Tokens::default("endl");
+        let to_del = lexer.get_next_token(Some(vec![lidentifier]), Some(true))?;
         // consume EOL
-        let args_end = PyList::new(py, &[lendl])?;
-        let kwargs_end = {
-            let d = PyDict::new(py);
-            d.set_item("no_white", true)?;
-            d
-        };
-        lexer.call_method("get_next_token", (args_end,), Some(&kwargs_end))?;
-        let to_del_str: String = to_del.getattr("string")?.extract()?;
+        lexer.get_next_token(Some(vec![lendl]), Some(true))?;
+        let to_del_str: String = to_del.string()?;
 
         // flush pre_dict and add token as content
         self.apply_predict(lexer, pre_dict)?;
         self.add_content(
-            lexer.getattr("filename")?.extract()?,
-            lexer.getattr("linenum")?.extract()?,
+            lexer.filename.clone(),
+            lexer.linenum,
             ContentType::Tokens(Tokens::LDel(to_del_str, "".to_string())),
         )?;
 
@@ -526,17 +506,16 @@ impl Node {
     Parse:
         include relative file path to working directory.
     */
-    #[pyo3(signature = (lexer, pre_dict))]
     pub fn apply_include(
         &mut self,
-        lexer: &Bound<'_, PyAny>,
+        lexer: &mut Lexer,
         pre_dict: &Bound<'_, PyDict>,
     ) -> PyResult<Node> {
-        let py = lexer.py();
+        let py = pre_dict.py();
 
         // Get path from rest of line
-        let path = lexer.call_method0("get_rest_line_as_string_token")?;
-        let path_str: String = path.getattr("string")?.extract()?;
+        let path = lexer.get_rest_line_as_string_token()?;
+        let path_str: String = path.string()?;
 
         // Expand user path (~ -> $HOME)
         let expanded_path = if path_str.starts_with('~') {
@@ -548,17 +527,17 @@ impl Node {
 
         // Make path absolute if needed
         let mut filepath = std::path::PathBuf::from(&expanded_path);
-        let current_file: String = lexer.getattr("filename")?.extract()?;
+        let current_file: String = lexer.filename.clone();
         if current_file != "<string>" && !filepath.is_absolute()
-            && let Some(parent) = std::path::Path::new(&current_file).parent() {
-                filepath = parent.join(filepath);
+                && let Some(parent) = std::path::Path::new(&current_file).parent() {
+            filepath = parent.join(filepath);
         }
 
         // Check file exists
         if !filepath.is_file() {
-            let line: String = lexer.getattr("line")?.extract()?;
-            let filename: String = lexer.getattr("filename")?.extract()?;
-            let linenum: isize = lexer.getattr("linenum")?.extract()?;
+            let line: String = lexer.line.clone().unwrap_or_default();
+            let filename: String = lexer.filename.clone();
+            let linenum: isize = lexer.linenum;
 
             let exceptions = py.import("cartconf.exceptions")?;
             let err = exceptions.getattr("MissingIncludeError")?;
@@ -570,25 +549,26 @@ impl Node {
 
         let filepath_str = filepath.to_str()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid filepath"))?;
-        let new_lexer = Lexer::new(None, Some(filepath_str))?;
+        let mut new_lexer = Lexer::new(None, Some(filepath_str))?;
 
         // Parse with new lexer
-        parse(&new_lexer.into_bound_py_any(py)?, self.clone(), -1, false, None)
+        parse(py, &mut new_lexer, self.clone(), -1, false, None)
     }
 
     /*
     Parse:
         xxx.yyy.(aaa=bbb):
     */
-    #[pyo3(signature = (identifier, token, lexer, pre_dict, indent))]
     pub fn apply_condition(
         &mut self,
         identifier: Vec<Tokens>,
         token: Tokens,
-        lexer: &Bound<'_, PyAny>,
+        lexer: &mut Lexer,
         pre_dict: &Bound<'_, PyDict>,
         indent: isize,
     ) -> PyResult<()> {
+        let py = pre_dict.py();
+
         // Build the full identifier list: [token] + identifier[:-1] + [LEndl]
         let mut tokens = vec![token];
         let identifier_len = identifier.len();
@@ -598,30 +578,30 @@ impl Node {
         // Parse the condition filter
         let cfilter: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
             tokens,
-            lexer.getattr("line")?.extract()?,
-            lexer.getattr("filename")?.extract()?,
-            lexer.getattr("linenum")?.extract()?,
+            lexer.line.clone().unwrap_or("<none>".to_string()),
+            lexer.filename.clone(),
+            lexer.linenum,
         )?;
 
         // Get the next line and set it in the lexer
-        let next_line = lexer.call_method0("get_rest_line_as_string_token")?;
-        let next_line_str: String = next_line.getattr("string")?.extract()?;
+        let next_line = lexer.get_rest_line_as_string_token()?;
+        let next_line_str: String = next_line.string()?;
         if !next_line_str.is_empty() {
-            lexer.call_method1("set_next_line", (next_line_str, indent + 1, lexer.getattr("linenum")?))?;
+            lexer.set_next_line(&next_line_str, (indent + 1) as usize, lexer.linenum as usize);
         }
 
         // Create a new Node for the condition
         let mut cond = Node::new();
-        cond.condition = Some(Filters::Condition { filter : cfilter, line : lexer.getattr("line")?.extract()? });
+        cond.condition = Some(Filters::Condition { filter : cfilter, line : lexer.line.clone().unwrap_or_default() });
 
         // Parse the condition block
-        cond = parse(lexer, cond, indent, false, None)?;
+        cond = parse(py, lexer, cond, indent, false, None)?;
 
         // Apply the current pre_dict and add the condition node as content
         self.apply_predict(lexer, pre_dict)?;
         self.add_content(
-            lexer.getattr("filename")?.extract()?,
-            lexer.getattr("linenum")?.extract()?,
+            lexer.filename.clone(),
+            lexer.linenum,
             ContentType::Node(cond),
         )?;
 
@@ -632,29 +612,22 @@ impl Node {
     Parse:
         !xxx.yyy.(aaa=bbb): vvv
     */
-    #[pyo3(signature = (lexer, pre_dict, indent))]
     pub fn apply_notcondition(
         &mut self,
-        lexer: &Bound<'_, PyAny>,
+        lexer: &mut Lexer,
         pre_dict: &Bound<'_, PyDict>,
         indent: isize,
     ) -> PyResult<()> {
-        let py = lexer.py();
+        let py = pre_dict.py();
 
         // Build the full token list
-        let lcolon = Tokens::default(":").into_bound_py_any(py)?;
-        let lendl = Tokens::default("endl").into_bound_py_any(py)?;
-        let kwargs = {
-            let d = PyDict::new(py);
-            d.set_item("no_white", true)?;
-            d
-        };
-        let tokens_pylist = lexer.call_method(
-            "get_until",
-            (PyList::new(py, &[lcolon, lendl])?,),
-            Some(&kwargs),
+        let lcolon = Tokens::default(":");
+        let lendl = Tokens::default("endl");
+        let tokens = lexer.get_until(
+            vec![lcolon, lendl],
+            None,
+            Some(true),
         )?;
-        let tokens: Vec<Tokens> = tokens_pylist.extract()?;
         let tokens_len = tokens.len();
         let tokens: Vec<_> = tokens
             .into_iter()
@@ -664,30 +637,33 @@ impl Node {
         // Parse the condition filter
         let lfilter: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
             tokens,
-            lexer.getattr("line")?.extract()?,
-            lexer.getattr("filename")?.extract()?,
-            lexer.getattr("linenum")?.extract()?,
+            lexer.line.clone().unwrap_or("<none>".to_string()),
+            lexer.filename.clone(),
+            lexer.linenum,
         )?;
 
         // Get the next line and set it in the lexer
-        let next_line = lexer.call_method0("get_rest_line_as_string_token")?;
-        let next_line_str: String = next_line.getattr("string")?.extract()?;
+        let next_line = lexer.get_rest_line_as_string_token()?;
+        let next_line_str: String = next_line.string()?;
         if !next_line_str.is_empty() {
-            lexer.call_method1("set_next_line", (next_line_str, indent + 1, lexer.getattr("linenum")?))?;
+            lexer.set_next_line(&next_line_str, (indent + 1)  as usize, lexer.linenum as usize);
         }
 
         // Create a new Node for the negative condition
         let mut cond = Node::new();
-        cond.condition = Some(Filters::NegativeCondition { filter : lfilter, line : lexer.getattr("line")?.extract()? });
+        cond.condition = Some(Filters::NegativeCondition {
+            filter : lfilter,
+            line : lexer.line.clone().unwrap_or_default()
+        });
 
         // Parse the condition block
-        cond = parse(lexer, cond, indent, false, None)?;
+        cond = parse(py, lexer, cond, indent, false, None)?;
 
         // Apply the current pre_dict and add the condition node as content
         self.apply_predict(lexer, pre_dict)?;
         self.add_content(
-            lexer.getattr("filename")?.extract()?,
-            lexer.getattr("linenum")?.extract()?,
+            lexer.filename.clone(),
+            lexer.linenum,
             ContentType::Node(cond),
         )?;
 
@@ -698,37 +674,28 @@ impl Node {
     Parse:
        variants _name_ [meta1] [meta2=val2]:
     */
-    #[pyo3(signature = (lexer))]
     pub fn apply_variants(
         &self,
-        lexer: &Bound<'_, PyAny>,
+        lexer: &mut Lexer,
     ) -> PyResult<(String, HashMap<String, Vec<String>>)> {
-        let py = lexer.py();
-
         // Check if node has conditions
         if self.condition.is_some() {
             return Err(PyErr::new::<ParserError, _>((
                 "'variants' is not allowed inside a conditional block".to_string(),
-                Some(lexer.getattr("line")?.extract::<String>()?),
-                Some(lexer.getattr("filename")?.extract::<String>()?),
-                Some(lexer.getattr("linenum")?.extract::<isize>()?),
+                Some(lexer.line.clone()),
+                Some(lexer.filename.clone()),
+                Some(lexer.linenum),
             )));
         }
 
         // Get tokens until bracket, colon, identifier or end
         let allowed = [
-            Tokens::default("[").into_bound_py_any(py)?,
-            Tokens::default(":").into_bound_py_any(py)?,
-            Tokens::default("Identifier").into_bound_py_any(py)?,
-            Tokens::default("endl").into_bound_py_any(py)?,
+            Tokens::default("["),
+            Tokens::default(":"),
+            Tokens::default("Identifier"),
+            Tokens::default("endl"),
         ];
-        let kwargs = {
-            let d = PyDict::new(py);
-            d.set_item("no_white", true)?;
-            d
-        };
-        let tokens_pylist = lexer.call_method("get_until", (allowed.to_vec(),), Some(&kwargs))?;
-        let tokens: Vec<Tokens> = tokens_pylist.extract()?;
+        let tokens = lexer.get_until(allowed.to_vec(), None, Some(true))?;
         let mut vtoken: Tokens = match tokens.last() {
             Some(last_token) => last_token.clone(),
             None => {
@@ -745,28 +712,27 @@ impl Node {
                 if !variant_name.is_empty() {
                     return Err(PyErr::new::<ParserError, _>((
                         "Syntax ERROR expected '[' or ':'".to_string(),
-                        Some(lexer.getattr("line")?.extract::<String>()?),
-                        Some(lexer.getattr("filename")?.extract::<String>()?),
-                        Some(lexer.getattr("linenum")?.extract::<isize>()?),
+                        Some(lexer.line.clone()),
+                        Some(lexer.filename.clone()),
+                        Some(lexer.linenum),
                     )));
                 }
-                variant_name = tokens_pylist.get_item(0)?.getattr("string")?.extract()?;
+                variant_name = tokens[0].string()?;
             } else if matches!(vtoken, Tokens::LLBracket()) {
                 // Parse metadata in brackets
-                let ident = lexer.call_method(
-                    "get_next_token",
-                    ([Tokens::default("Identifier").into_bound_py_any(py)?],),
-                    Some(&kwargs),
+                let ident = lexer.get_next_token(
+                    Some(vec![Tokens::default("Identifier")]),
+                    Some(true),
                 )?;
-                let ident_str: String = ident.getattr("string")?.extract()?;
+                let ident_str: String = ident.string()?;
 
-                let next = lexer.call_method(
-                    "get_next_token",
-                    ([Tokens::default("=").into_bound_py_any(py)?,
-                      Tokens::default("]").into_bound_py_any(py)?],),
-                    Some(&kwargs),
+                let next_token = lexer.get_next_token(
+                    Some(vec![
+                        Tokens::default("="),
+                        Tokens::default("]"),
+                    ]),
+                    Some(true),
                 )?;
-                let next_token: Tokens = next.extract()?;
 
                 if matches!(next_token, Tokens::LRBracket()) {
                     // Handle [xxx]
@@ -775,20 +741,25 @@ impl Node {
                         .push(true.to_string());
                 } else if matches!(next_token, Tokens::LSet(_, _)) {
                     // Handle [xxx = yyy]
-                    let tokens = lexer.call_method(
-                        "get_until",
-                        ([Tokens::default("]").into_bound_py_any(py)?,
-                          Tokens::default("endl").into_bound_py_any(py)?],),
-                        Some(&kwargs),
+                    let tokens = lexer.get_until(
+                        vec![
+                            Tokens::default("]"),
+                            Tokens::default("endl")
+                        ],
+                        None,
+                        Some(true),
                     )?;
-                    let last = tokens.get_item(tokens.len()? - 1)?;
-                    let last_token: Tokens = last.extract()?;
+                    let last_token: &Tokens = match tokens.last() {
+                        Some(last_token) => last_token,
+                        None => {
+                            return Err(pyo3::exceptions::PyValueError::new_err("Empty variants"));
+                        }
+                    };
 
                     if matches!(last_token, Tokens::LRBracket()) {
                         let mut values = Vec::new();
-                        for i in 0..tokens.len()? - 1 {
-                            let token = tokens.get_item(i)?;
-                            values.push(token.getattr("string")?.extract::<String>()?);
+                        for token in tokens.iter().take(tokens.len() - 1) {
+                            values.push(token.string()?);
                         }
                         // The python side has an inner list that we stringify here (just like the bool above)
                         meta.entry(ident_str)
@@ -797,21 +768,19 @@ impl Node {
                     } else {
                         return Err(PyErr::new::<ParserError, _>((
                             "Syntax ERROR expected ']'".to_string(),
-                            Some(lexer.getattr("line")?.extract::<String>()?),
-                            Some(lexer.getattr("filename")?.extract::<String>()?),
-                            Some(lexer.getattr("linenum")?.extract::<isize>()?),
+                            Some(lexer.line.clone()),
+                            Some(lexer.filename.clone()),
+                            Some(lexer.linenum),
                         )));
                     }
                 }
             }
 
             // Get next token
-            let next = lexer.call_method(
-                "get_next_token",
-                (allowed.to_vec(),),
-                Some(&kwargs),
+            let next_token = lexer.get_next_token(
+                Some(allowed.to_vec()),
+                Some(true),
             )?;
-            let next_token = next.extract::<Tokens>()?;
             vtoken = next_token;
         }
 
@@ -821,9 +790,9 @@ impl Node {
                 if val == "true" {
                     return Err(PyErr::new::<ParserError, _>((
                         "Syntax ERROR expected [default=xxx]".to_string(),
-                        Some(lexer.getattr("line")?.extract::<String>()?),
-                        Some(lexer.getattr("filename")?.extract::<String>()?),
-                        Some(lexer.getattr("linenum")?.extract::<isize>()?),
+                        Some(lexer.line.clone()),
+                        Some(lexer.filename.clone()),
+                        Some(lexer.linenum),
                     )));
                 }
             }
@@ -833,17 +802,16 @@ impl Node {
         if matches!(vtoken, Tokens::LEndL()) {
             return Err(PyErr::new::<ParserError, _>((
                 "Syntax ERROR expected ':'".to_string(),
-                Some(lexer.getattr("line")?.extract::<String>()?),
-                Some(lexer.getattr("filename")?.extract::<String>()?),
-                Some(lexer.getattr("linenum")?.extract::<isize>()?),
+                Some(lexer.line.clone()),
+                Some(lexer.filename.clone()),
+                Some(lexer.linenum),
             )));
         }
 
         // Consume end of line
-        lexer.call_method(
-            "get_next_token",
-            ([Tokens::default("endl").into_bound_py_any(py)?],),
-            Some(&kwargs),
+        lexer.get_next_token(
+            Some(vec![Tokens::default("endl")]),
+            Some(true),
         )?;
 
         Ok((variant_name, meta))
@@ -856,14 +824,10 @@ impl Node {
      - var2:
          block2
     */
-    #[pyo3(signature = (lexer, pre_dict, indent,
-        variant_name, variant_indent, meta,
-        defaults, expand_defaults
-    ))]
     #[allow(clippy::too_many_arguments)]
     pub fn apply_variant(
         &mut self,
-        lexer: &Bound<'_, PyAny>,
+        lexer: &mut Lexer,
         pre_dict: &Bound<'_, PyDict>,
         indent: isize,
         variant_name: String,
@@ -872,7 +836,7 @@ impl Node {
         defaults : bool,
         expand_defaults : Vec<String>,
     ) -> PyResult<Node> {
-        let py = lexer.py();
+        let py = pre_dict.py();
         let mut already_default = false;
         let mut node4 = Node::new();
 
@@ -885,25 +849,19 @@ impl Node {
         let meta_in_expand_defaults = !expand_defaults.contains(&variant_name);
 
         // Data used for the entire loop
-        let tokens = PyList::new(
-            py,
-            &[
-                Tokens::default("Identifier").into_bound_py_any(py)?,
-                Tokens::default("@").into_bound_py_any(py)?,
-                Tokens::default("indent").into_bound_py_any(py)?,
+        let tokens = [
+                Tokens::default("Identifier"),
+                Tokens::default("@"),
+                Tokens::default("indent"),
                 // TODO: there is no default for LEndBLock
-                Tokens::LEndBlock(-1).into_bound_py_any(py)?,
-            ],
-        )?;
-        let kwargs = PyDict::new(py);
-        kwargs.set_item("no_white", true)?;
+                Tokens::LEndBlock(-1),
+        ];
 
         loop {
-            lexer.call_method1("set_prev_indent", (variant_indent,))?;
+            lexer.set_prev_indent(variant_indent);
 
             // Get token from lexer and check for end of block
-            let token_py = lexer.call_method("get_next_token", (tokens.clone(),), Some(&kwargs))?;
-            let token: Tokens = token_py.extract()?;
+            let token = lexer.get_next_token(Some(tokens.to_vec()), Some(true))?;
             if matches!(token, Tokens::LEndBlock(_)) {
                 break;
             }
@@ -913,71 +871,67 @@ impl Node {
 
             if matches!(token, Tokens::LIndent(_)) {
                 // Handle indented variant
-                lexer.call_method(
-                    "get_next_token",
-                    (PyList::new(py, &[Tokens::default("-").into_bound_py_any(py)?])?,),
-                    Some(&kwargs),
+                lexer.get_next_token(
+                    Some(vec![Tokens::default("-")]),
+                    Some(true),
                 )?;
-                let token_py = lexer.call_method(
-                    "get_next_token",
-                    (PyList::new(py, &[
-                        Tokens::default("Identifier").into_bound_py_any(py)?,
-                        Tokens::default("@").into_bound_py_any(py)?,
-                    ])?,),
-                    Some(&kwargs),
+                let token = lexer.get_next_token(
+                    Some(vec![
+                        Tokens::default("Identifier"),
+                        Tokens::default("@"),
+                    ]),
+                    Some(true),
                 )?;
-                let token: Tokens = token_py.extract()?;
 
                 if matches!(token, Tokens::LDefault()) {
                     is_default = true;
-                    name = lexer.call_method(
-                        "get_until",
-                        (PyList::new(py, &[Tokens::default(":").into_bound_py_any(py)?])?,),
+                    name = lexer.get_until(
+                        vec![Tokens::default(":")],
                         None,
-                    )?.extract()?;
+                        None,
+                    )?;
                 } else {
                     name = vec![token];
-                    name.extend(lexer.call_method(
-                        "get_until",
-                        (PyList::new(py, &[Tokens::default(":").into_bound_py_any(py)?])?,),
+                    name.extend(lexer.get_until(
+                        vec![Tokens::default(":")],
                         None,
-                    )?.extract::<Vec<Tokens>>()?);
+                        None,
+                    )?);
                 }
             } else if matches!(token, Tokens::LDefault()) {
                 is_default = true;
-                name = lexer.call_method(
-                    "get_until",
-                    (PyList::new(py, &[Tokens::default(":").into_bound_py_any(py)?])?,),
+                name = lexer.get_until(
+                    vec![Tokens::default(":")],
                     None,
-                )?.extract()?;
+                    None,
+                )?;
             } else {
                 name = vec![token];
-                name.extend(lexer.call_method(
-                    "get_until",
-                    (PyList::new(py, &[Tokens::default(":").into_bound_py_any(py)?])?,),
+                name.extend(lexer.get_until(
+                    vec![Tokens::default(":")],
                     None,
-                )?.extract::<Vec<Tokens>>()?);
+                    None,
+                )?);
             }
             let name_len = name.len();
             // Drop the colon at the end of the parsed name
             name = name.into_iter().take(name_len.saturating_sub(1)).collect();
 
             // Get dependencies after colon
-            let token_py = lexer.call_method("get_next_token", (), Some(&kwargs))?;
-            let token: Tokens = token_py.extract()?;
+            let token = lexer.get_next_token(None, Some(true))?;
             let mut deps = Vec::new();
             if !matches!(token, Tokens::LEndL()) {
                 let mut filter_tokens = vec![token];
-                filter_tokens.extend(lexer.call_method(
-                    "get_until",
-                    (PyList::new(py, &[Tokens::default("endl").into_bound_py_any(py)?])?,),
+                filter_tokens.extend(lexer.get_until(
+                    vec![Tokens::default("endl")],
                     None,
-                )?.extract::<Vec<Tokens>>()?);
+                    None,
+                )?);
                 deps = Filters::parse_filter(
                     filter_tokens,
-                    lexer.getattr("line")?.extract()?,
-                    lexer.getattr("filename")?.extract()?,
-                    lexer.getattr("linenum")?.extract()?,
+                    lexer.line.clone().unwrap_or("<none>".to_string()),
+                    lexer.filename.clone(),
+                    lexer.linenum,
                 )?;
             }
 
@@ -988,8 +942,8 @@ impl Node {
 
             if !variant_name.is_empty() {
                 node2.add_content(
-                    lexer.getattr("filename")?.extract()?,
-                    lexer.getattr("linenum")?.extract()?,
+                    lexer.filename.clone(),
+                    lexer.linenum,
                     ContentType::Tokens(
                         Tokens::LSet(
                             variant_name.clone(),
@@ -1005,7 +959,7 @@ impl Node {
                 )?;
             }
 
-            let mut node3 = parse(lexer, node2, indent, defaults, Some(expand_defaults.clone()))?;
+            let mut node3 = parse(py, lexer, node2, indent, defaults, Some(expand_defaults.clone()))?;
 
             // Set variant name and dependencies
             if !variant_name.is_empty() {
@@ -1049,22 +1003,22 @@ impl Node {
 
             // Update file mappings
             node3.add_content(
-                lexer.getattr("filename")?.extract()?,
-                lexer.getattr("linenum")?.extract()?,
+                lexer.filename.clone(),
+                lexer.linenum,
                 ContentType::Tokens(
                     Tokens::LUpdateFileMap(
-                        lexer.getattr("filename")?.extract()?,
+                        lexer.filename.clone(),
                         node3.name.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("."),
                         "_name_map_file".to_string(),
                     ),
                 ),
             )?;
             node3.add_content(
-                lexer.getattr("filename")?.extract()?,
-                lexer.getattr("linenum")?.extract()?,
+                lexer.filename.clone(),
+                lexer.linenum,
                 ContentType::Tokens(
                     Tokens::LUpdateFileMap(
-                        lexer.getattr("filename")?.extract()?,
+                        lexer.filename.clone(),
                         node3.name.iter().map(|x| x.name.clone()).collect::<Vec<_>>().join("."),
                         "_short_name_map_file".to_string(),
                     ),
@@ -1089,9 +1043,9 @@ impl Node {
             if !default_values.is_empty() {
                 return Err(PyErr::new::<ParserError, _>((
                     format!("Missing default variant {:?}", default_values),
-                    Some(lexer.getattr("line")?.extract::<String>().unwrap_or("<none>".to_string())),
-                    Some(lexer.getattr("filename")?.extract::<String>()?),
-                    Some(lexer.getattr("linenum")?.extract::<isize>()?),
+                    Some(lexer.line.clone().unwrap_or("<none>".to_string())),
+                    Some(lexer.filename.clone()),
+                    Some(lexer.linenum),
                 )));
             }
         }
@@ -1100,45 +1054,42 @@ impl Node {
     }
 }
 
-#[pyfunction]
-#[pyo3(signature = (lexer, node, prev_indent=-1, defaults=true, expand_defaults=None))]
 pub fn parse(
-    lexer: &Bound<'_, PyAny>,
+    py: Python<'_>,
+    lexer: &mut Lexer,
     mut node: Node,
     prev_indent: isize,
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
 ) -> PyResult<Node> {
-    let py = lexer.py();
-
     // Allowed token types for different contexts
     // TODO: reuse default tokens as much as possible using their identifiers
     let block_allowed = [
-        Tokens::LVariants().into_bound_py_any(py)?,
-        Tokens::LIdentifier(String::new()).into_bound_py_any(py)?,
-        Tokens::LOnly().into_bound_py_any(py)?,
-        Tokens::LNo().into_bound_py_any(py)?,
-        Tokens::LInclude().into_bound_py_any(py)?,
-        Tokens::LDel(String::new(), String::new()).into_bound_py_any(py)?,
-        Tokens::LNotCond().into_bound_py_any(py)?,
-        Tokens::LSuffix().into_bound_py_any(py)?,
-        Tokens::LJoin().into_bound_py_any(py)?,
+        Tokens::LVariants(),
+        Tokens::LIdentifier(String::new()),
+        Tokens::LOnly(),
+        Tokens::LNo(),
+        Tokens::LInclude(),
+        Tokens::LDel(String::new(), String::new()),
+        Tokens::LNotCond(),
+        Tokens::LSuffix(),
+        Tokens::LJoin(),
     ];
-    let variants_allowed = [Tokens::LVariant().into_bound_py_any(py)?];
+    let variants_allowed = [Tokens::LVariant()];
     let identifier_allowed = [
-        Tokens::LSet(String::new(), String::new()).into_bound_py_any(py)?,
-        Tokens::LAppend(String::new(), String::new()).into_bound_py_any(py)?,
-        Tokens::LPrepend(String::new(), String::new()).into_bound_py_any(py)?,
-        Tokens::LLazySet(String::new(), String::new()).into_bound_py_any(py)?,
-        Tokens::LRegExpSet(String::new(), String::new()).into_bound_py_any(py)?,
-        Tokens::LRegExpAppend(String::new(), String::new()).into_bound_py_any(py)?,
-        Tokens::LRegExpPrepend(String::new(), String::new()).into_bound_py_any(py)?,
-        Tokens::LColon().into_bound_py_any(py)?,
-        Tokens::LEndL().into_bound_py_any(py)?,
+        Tokens::LSet(String::new(), String::new()),
+        Tokens::LAppend(String::new(), String::new()),
+        Tokens::LPrepend(String::new(), String::new()),
+        Tokens::LLazySet(String::new(), String::new()),
+        Tokens::LRegExpSet(String::new(), String::new()),
+        Tokens::LRegExpAppend(String::new(), String::new()),
+        Tokens::LRegExpPrepend(String::new(), String::new()),
+        Tokens::LColon(),
+        Tokens::LEndL(),
     ];
     let indent_allowed = [
-        Tokens::LIndent(0).into_bound_py_any(py)?,
-        Tokens::LEndBlock(0).into_bound_py_any(py)?,
+        Tokens::LIndent(0),
+        Tokens::LEndBlock(0),
     ];
     let mut allowed = block_allowed.to_vec();
 
@@ -1156,14 +1107,16 @@ pub fn parse(
     // Reasons:
     // 1. Escapes multiplying suffix operators
     // 2. Affects all elements in current block
-    let mut suffix = None;
+    let mut suffix: Option<(String, isize, Tokens)> = None;
 
     loop {
-        lexer.call_method1("set_prev_indent", (prev_indent,))?;
+        lexer.set_prev_indent(prev_indent);
 
         // Handle indentation
-        let token_py = lexer.call_method1("get_next_token", (indent_allowed.to_vec(),))?;
-        let token: Tokens = token_py.extract()?;
+        let token = lexer.get_next_token(
+            Some(indent_allowed.to_vec()),
+            None
+        )?;
 
         if matches!(token, Tokens::LEndBlock(_)) {
             if !pre_dict.is_empty() {
@@ -1172,39 +1125,40 @@ pub fn parse(
             }
             if let Some((filename, linenum, op)) = suffix {
                 // Node has suffix, apply it to all elements
-                node.add_content(filename, linenum, ContentType::Tokens(op))?;
+                node.add_content(filename.clone(), linenum, ContentType::Tokens(op))?;
             }
             return Ok(node);
         }
 
-        let indent: isize = token_py.getattr("length")?.extract()?;
-        let token_py = lexer.call_method1("get_next_token", (allowed.to_vec(),))?;
-        let token: Tokens = token_py.extract()?;
+        let indent: isize = token.length()?;
+        let token = lexer.get_next_token(Some(allowed.to_vec()), None)?;
 
         match token {
             Tokens::LInclude() => {
                 node = node.apply_include(lexer, &pre_dict)?;
-                lexer.call_method1("set_prev_indent", (prev_indent,))?;
+                lexer.set_prev_indent(prev_indent);
             }
 
             Tokens::LIdentifier(_) => {
                 // Parse:
                 //    identifier .....
                 // Get tokens until an operator or colon
-                let kwargs = PyDict::new(py);
-                kwargs.set_item("no_white", true)?;
-                let identifier = lexer.call_method(
-                    "get_until",
-                    (identifier_allowed.to_vec(),),
-                    Some(&kwargs),
+                let identifier = lexer.get_until(
+                    identifier_allowed.to_vec(),
+                    None,
+                    Some(true),
                 )?;
-                let last_token_py = identifier.get_item(identifier.len()? - 1)?;
-                let last_token: Tokens = last_token_py.extract()?;
+                let last_token: &Tokens = match identifier.last() {
+                    Some(last_token) => last_token,
+                    None => {
+                        return Err(pyo3::exceptions::PyValueError::new_err("Empty identifier"));
+                    }
+                };
 
                 if matches!(last_token, Tokens::LColon()) {
                     // Handle condition block
                     node.apply_condition(
-                        identifier.extract()?,
+                        identifier,
                         token,
                         lexer,
                         &pre_dict,
@@ -1216,7 +1170,7 @@ pub fn parse(
                 ) {
                     // Handle operator
                     node.apply_operator(
-                        identifier.extract()?,
+                        identifier,
                         token,
                         lexer,
                         &pre_dict,
@@ -1224,9 +1178,9 @@ pub fn parse(
                 } else {
                     return Err(PyErr::new::<ParserError, _>((
                         "Syntax ERROR expected ':' or operand".to_string(),
-                        Some(lexer.getattr("line")?.extract::<String>()?),
-                        Some(lexer.getattr("filename")?.extract::<String>()?),
-                        Some(lexer.getattr("linenum")?.extract::<isize>()?),
+                        Some(lexer.line.clone()),
+                        Some(lexer.filename.clone()),
+                        Some(lexer.linenum),
                     )));
                 }
             }
@@ -1237,7 +1191,7 @@ pub fn parse(
 
             Tokens::LNotCond() => {
                 node.apply_notcondition(lexer, &pre_dict, indent)?;
-                lexer.call_method1("set_prev_indent", (prev_indent,))?;
+                lexer.set_prev_indent(prev_indent);
             }
 
             Tokens::LVariants() => {
@@ -1267,33 +1221,32 @@ pub fn parse(
             Tokens::LNo() | Tokens::LOnly() | Tokens::LJoin() => {
                 // Parse:
                 //    only/no/join (filter=text)..aaa.bbb, xxxx
-                let rest_line = lexer.call_method0("get_rest_line")?;
-                let rest_tokens: Vec<Tokens> = rest_line.extract()?;
+                let rest_tokens: Vec<Tokens> = lexer.get_rest_line(None)?;
                 let filters: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
                     rest_tokens,
-                    lexer.getattr("line")?.extract()?,
-                    lexer.getattr("filename")?.extract()?,
-                    lexer.getattr("linenum")?.extract()?,
+                    lexer.line.clone().unwrap_or("<none>".to_string()),
+                    lexer.filename.clone(),
+                    lexer.linenum,
                 )?;
                 node.apply_predict(lexer, &pre_dict)?;
 
                 let content_type = match token {
                     Tokens::LOnly() => ContentType::Filters(Filters::OnlyFilter {
                         filter: filters,
-                        line: lexer.getattr("line")?.extract()?,
+                        line: lexer.line.clone().unwrap_or_default(),
                     }),
                     Tokens::LNo() => ContentType::Filters(Filters::NoFilter {
                         filter: filters,
-                        line: lexer.getattr("line")?.extract()?,
+                        line: lexer.line.clone().unwrap_or_default(),
                     }),
                     _ => ContentType::Filters(Filters::JoinFilter {
                         filter: filters,
-                        line: lexer.getattr("line")?.extract()?,
+                        line: lexer.line.clone().unwrap_or_default(),
                     }),
                 };
                 node.add_content(
-                    lexer.getattr("filename")?.extract()?,
-                    lexer.getattr("linenum")?.extract()?,
+                    lexer.filename.clone(),
+                    lexer.linenum,
                     content_type,
                 )?;
             }
@@ -1304,28 +1257,28 @@ pub fn parse(
                 if !pre_dict.is_empty() {
                     node.apply_predict(lexer, &pre_dict)?;
                 }
-                let token_val = lexer.call_method1(
-                    "get_next_token",
-                    ([Tokens::default("Identifier").into_bound_py_any(py)?],),
+                let token_val = lexer.get_next_token(
+                    Some(vec![Tokens::default("Identifier")]),
+                    None,
                 )?;
-                lexer.call_method1(
-                    "get_next_token",
-                    ([Tokens::default("endl").into_bound_py_any(py)?],),
+                lexer.get_next_token(
+                    Some(vec![Tokens::default("endl")]),
+                    None,
                 )?;
 
                 suffix = Some((
-                    lexer.getattr("filename")?.extract()?,
-                    lexer.getattr("linenum")?.extract()?,
-                    Tokens::Suffix(String::new(), token_val.getattr("string")?.extract()?),
+                    lexer.filename.clone(),
+                    lexer.linenum,
+                    Tokens::Suffix(String::new(), token_val.string()?),
                 ));
             }
 
             _ => {
                 return Err(PyErr::new::<ParserError, _>((
                     "Syntax ERROR expected".to_string(),
-                    Some(lexer.getattr("line")?.extract::<String>()?),
-                    Some(lexer.getattr("filename")?.extract::<String>()?),
-                    Some(lexer.getattr("linenum")?.extract::<isize>()?),
+                    Some(lexer.line.clone()),
+                    Some(lexer.filename.clone()),
+                    Some(lexer.linenum),
                 )));
             }
         }
@@ -1342,8 +1295,8 @@ pub fn parse_string(
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
 ) -> PyResult<Node> {
-    let new_lexer = Lexer::new(Some(&cfgstr), None)?;
-    parse(&new_lexer.into_bound_py_any(py)?, node, prev_indent, defaults, expand_defaults)
+    let mut new_lexer = Lexer::new(Some(&cfgstr), None)?;
+    parse(py, &mut new_lexer, node, prev_indent, defaults, expand_defaults)
 }
 
 #[pyfunction]
@@ -1356,6 +1309,375 @@ pub fn parse_file(
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
 ) -> PyResult<Node> {
-    let new_lexer = Lexer::new(None, Some(&cfgfile))?;
-    parse(&new_lexer.into_bound_py_any(py)?, node, prev_indent, defaults, expand_defaults)
+    let mut new_lexer = Lexer::new(None, Some(&cfgfile))?;
+    parse(py, &mut new_lexer, node, prev_indent, defaults, expand_defaults)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pyo3::types::PyDict;
+    use pyo3::prelude::Python;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_apply_predict() {
+        Python::initialize();
+        Python::attach(|py| {
+            let mut node = Node::new();
+            let lexer = Lexer::new(Some(""), None).expect("Failed to create lexer");
+            let pre_dict = PyDict::new(py);
+            pre_dict.set_item("key", "value").unwrap();
+
+            // apply_predict should add an LApplyPreDict content step and clear pre_dict
+            node.apply_predict(&lexer, &pre_dict).expect("apply_predict failed");
+            assert!(pre_dict.is_empty());
+            let content = node.get_content().expect("get_content failed");
+            assert_eq!(content.len(), 1);
+
+            // content type should be Tokens::LApplyPreDict and contains our key/value
+            match &content[0].content_type {
+                ContentType::Tokens(Tokens::LApplyPreDict(_, map)) => {
+                    assert_eq!(map.get("key").map(|s| s.as_str()), Some("value"));
+                }
+                other => panic!("Unexpected content type: {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn test_apply_include() {
+        Python::initialize();
+        Python::attach(|py| {
+            // create temporary file with a minimal variants block
+            let mut tmp = NamedTempFile::new().expect("unable to create temp file");
+            writeln!(tmp, "variants:").unwrap();
+            writeln!(tmp, "  - test:").unwrap();
+            let tmp_path = tmp.path().to_str().unwrap().to_string();
+
+            // create a lexer with "include <path>"
+            let content = format!("include {}", tmp_path);
+            let mut lexer = Lexer::new(Some(&content), None).expect("Failed to create lexer");
+            // advance lexer to consume indent and include tokens
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("get_next_token indent");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("include")]), None).expect("get_next_token include");
+
+            let mut node = Node::new();
+            let pre_dict = PyDict::new(py);
+            pre_dict.set_item("key", "value").unwrap();
+
+            // apply_include should parse the included file and return a node with a child named "test"
+            let returned = node.apply_include(&mut lexer, &pre_dict).expect("apply_include failed");
+            assert!(pre_dict.is_empty());
+            let children = returned.get_children().unwrap();
+            assert_eq!(children.len(), 1);
+            let child = &children[0];
+            assert_eq!(child.name.len(), 1);
+            assert!(matches!(child.name[0], Label { .. }));
+            assert_eq!(child.name[0].name, "test".to_string());
+        });
+    }
+
+    #[test]
+    fn test_apply_operator_set_optimized() {
+        Python::initialize();
+        Python::attach(|py| {
+            // create lexer for "key2 = value2"
+            let mut lexer = Lexer::new(Some("key2 = value2"), None).expect("Failed to create lexer");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent token");
+            let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier token");
+            // get identifier tokens up to '=' (no_white = true)
+            let identifier = lexer.get_until(vec![Tokens::default("=")], None, Some(true)).expect("get_until identifier");
+
+            let mut node = Node::new();
+            let pre_dict = PyDict::new(py);
+            pre_dict.set_item("key1", "value1").unwrap();
+
+            // apply_operator should add key2 to pre_dict directly (optimized path)
+            node.apply_operator(identifier, token, &mut lexer, &pre_dict).expect("apply_operator failed");
+            // pre_dict now should contain both key1 and key2, and node content should be empty
+            let key1: String = pre_dict.get_item("key1").unwrap().unwrap().extract().unwrap();
+            let key2: String = pre_dict.get_item("key2").unwrap().unwrap().extract().unwrap();
+            assert_eq!(key1, "value1");
+            assert_eq!(key2, "value2");
+            let content = node.get_content().expect("get_content failed");
+            assert_eq!(content.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_apply_operator_append_safe() {
+        Python::initialize();
+        Python::attach(|py| {
+            // content: "key1 += &value2"
+            let mut lexer = Lexer::new(Some("key1 += &value2"), None).expect("Failed to create lexer");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent token");
+            let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier token");
+            let identifier = lexer.get_until(vec![Tokens::default("+=")], None, Some(true)).expect("get_until identifier");
+
+            let mut node = Node::new();
+            let pre_dict = PyDict::new(py);
+            pre_dict.set_item("key1", "value1").unwrap();
+
+            node.apply_operator(identifier, token, &mut lexer, &pre_dict).expect("apply_operator failed");
+
+            // pre_dict should be updated
+            let key1: String = pre_dict.get_item("key1").unwrap().unwrap().extract().unwrap();
+            assert_eq!(key1, "value1&value2");
+            // node content should be empty empty
+            let content = node.get_content().expect("get_content failed");
+            assert_eq!(content.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_apply_operator_append_unsafe() {
+        Python::initialize();
+        Python::attach(|py| {
+            // content: "key2 += &value2" (key2 not present in pre_dict therefore flush)
+            let mut lexer = Lexer::new(Some("key2 += &value2"), None).expect("Failed to create lexer");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent token");
+            let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier token");
+            let identifier = lexer.get_until(vec![Tokens::default("+=")], None, Some(true)).expect("get_until identifier");
+
+            let mut node = Node::new();
+            let pre_dict = PyDict::new(py);
+            pre_dict.set_item("key1", "value1").unwrap();
+
+            node.apply_operator(identifier, token, &mut lexer, &pre_dict).expect("apply_operator failed");
+
+            // pre_dict should be flushed (cleared)
+            assert!(pre_dict.is_empty());
+            // node content should be extended with append operation step
+            let content = node.get_content().expect("get_content failed");
+            assert_eq!(content.len(), 2);
+            // first should be an LApplyPreDict, second an LAppend
+            match &content[0].content_type {
+                ContentType::Tokens(Tokens::LApplyPreDict(_, map)) => {
+                    assert_eq!(map.get("key1").map(|s| s.as_str()), Some("value1"));
+                }
+                other => panic!("Unexpected first content type: {:?}", other),
+            }
+            match &content[1].content_type {
+                ContentType::Tokens(Tokens::LAppend(key, value)) => {
+                    assert_eq!(key, "key2");
+                    assert_eq!(value, "&value2");
+                }
+                other => panic!("Unexpected second content type: {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn test_apply_deletion() {
+        Python::initialize();
+        Python::attach(|py| {
+            // content: "del key"
+            let mut lexer = Lexer::new(Some("del key"), None).expect("Failed to create lexer");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("del")]), None).expect("del");
+
+            let mut node = Node::new();
+            let pre_dict = PyDict::new(py);
+            pre_dict.set_item("key1", "value1").unwrap();
+
+            node.apply_deletion(&mut lexer, &pre_dict).expect("apply_deletion failed");
+
+            // pre_dict should be flushed (cleared)
+            assert!(pre_dict.is_empty());
+            // node content should be extended with delete operation step
+            let content = node.get_content().expect("get_content failed");
+            assert_eq!(content.len(), 2);
+            match &content[0].content_type {
+                ContentType::Tokens(Tokens::LApplyPreDict(_, map)) => {
+                    assert_eq!(map.get("key1").map(|s| s.as_str()), Some("value1"));
+                }
+                other => panic!("Unexpected first content type: {:?}", other),
+            }
+            match &content[1].content_type {
+                ContentType::Tokens(Tokens::LDel(name, _)) => {
+                    assert_eq!(name, "key");
+                }
+                other => panic!("Unexpected second content type: {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn test_apply_condition() {
+        Python::initialize();
+        Python::attach(|py| {
+            // content: "key:\n value"
+            let mut lexer = Lexer::new(Some("key:\nvalue"), None).expect("Failed to create lexer");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
+            let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier");
+            let identifier = lexer.get_until(vec![Tokens::default(":")], None, Some(true)).expect("get_until");
+
+            let mut node = Node::new();
+            let pre_dict = PyDict::new(py);
+            pre_dict.set_item("key1", "value1").unwrap();
+
+            node.apply_condition(identifier, token, &mut lexer, &pre_dict, 0).expect("apply_condition failed");
+
+            // pre_dict should be flushed (cleared)
+            assert!(pre_dict.is_empty());
+            let content = node.get_content().expect("get_content failed");
+            assert_eq!(content.len(), 2);
+            // first should be LApplyPreDict, second a Node with a positive condition
+            match &content[0].content_type {
+                ContentType::Tokens(Tokens::LApplyPreDict(_, _)) => {}
+                other => panic!("Unexpected first content type: {:?}", other),
+            }
+            match &content[1].content_type {
+                ContentType::Node(n) => {
+                    // positive condition expected
+                    if let Some(Filters::Condition { .. }) = n.condition {
+                        // ok
+                    } else {
+                        panic!("Expected Condition, got {:?}", n.condition);
+                    }
+                }
+                other => panic!("Unexpected second content type: {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn test_apply_notcondition() {
+        Python::initialize();
+        Python::attach(|py| {
+            // content: "!key:\n value"
+            let mut lexer = Lexer::new(Some("!key:\nvalue"), None).expect("Failed to create lexer");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("!")]), None).expect("notcond");
+
+            let mut node = Node::new();
+            let pre_dict = PyDict::new(py);
+            pre_dict.set_item("key1", "value1").unwrap();
+
+            node.apply_notcondition(&mut lexer, &pre_dict, 0).expect("apply_notcondition failed");
+
+            // pre_dict should be flushed (cleared)
+            assert!(pre_dict.is_empty());
+            let content = node.get_content().expect("get_content failed");
+            assert_eq!(content.len(), 2);
+            // first should be LApplyPreDict, second a Node with a negative condition
+            match &content[0].content_type {
+                ContentType::Tokens(Tokens::LApplyPreDict(_, _)) => {}
+                other => panic!("Unexpected first content type: {:?}", other),
+            }
+            match &content[1].content_type {
+                ContentType::Node(n) => {
+                    // negative condition expected
+                    if let Some(Filters::NegativeCondition { .. }) = n.condition {
+                        // ok
+                    } else {
+                        panic!("Expected NegativeCondition, got {:?}", n.condition);
+                    }
+                }
+                other => panic!("Unexpected second content type: {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn test_apply_variants() {
+        Python::initialize();
+        Python::attach(|_py| {
+            // content: "variants test:"
+            let mut lexer = Lexer::new(Some("variants test:"), None).expect("Failed to create lexer");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("variants")]), None).expect("variants");
+
+            let node = Node::new();
+            let (variant_name, meta) = node.apply_variants(&mut lexer).expect("apply_variants failed");
+
+            // variant name should be "test" and meta empty
+            assert_eq!(variant_name, "test");
+            assert!(meta.is_empty());
+            // content should be empty
+            let content = node.get_content().expect("get_content failed");
+            assert_eq!(content.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_apply_variants_meta() {
+        Python::initialize();
+        Python::attach(|_py| {
+            // content: "variants test [meta1] [meta2=val2] [ meta3 ] [ meta4 = val4 val5 ]:"
+            let txt = r#"variants test [meta1] [meta2=val2] [ meta3 ] [ meta4 = val4 val5 ]:"#;
+            let mut lexer = Lexer::new(Some(txt), None).expect("Failed to create lexer");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("variants")]), None).expect("variants");
+
+            let node = Node::new();
+            let (variant_name, meta) = node.apply_variants(&mut lexer).expect("apply_variants failed");
+
+            // variant name should be "test"
+            assert_eq!(variant_name, "test");
+            // meta contents should be parsed appropriately
+            assert_eq!(meta.get("meta1").map(|v| v.as_slice()), Some(&["true".to_string()][..]));
+            assert_eq!(meta.get("meta2").map(|v| v.as_slice()), Some(&["val2".to_string()][..]));
+            assert_eq!(meta.get("meta3").map(|v| v.as_slice()), Some(&["true".to_string()][..]));
+            assert_eq!(meta.get("meta4").map(|v| v.as_slice()), Some(&["val4 val5".to_string()][..]));
+            // content should be empty
+            let content = node.get_content().expect("get_content failed");
+            assert_eq!(content.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_apply_variant() {
+        Python::initialize();
+        Python::attach(|py| {
+            // content: "- test:"
+            let mut lexer = Lexer::new(Some("- test:"), None).expect("Failed to create lexer");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
+            let _ = lexer.get_next_token(Some(vec![Tokens::default("-")]), None).expect("dash");
+
+            let mut node = Node::new();
+            let pre_dict = PyDict::new(py);
+            pre_dict.set_item("key1", "value1").unwrap();
+            let meta = PyDict::new(py);
+
+            let grandparent_node = node.apply_variant(
+                &mut lexer,
+                &pre_dict,
+                0,
+                "test".to_string(),
+                0,
+                &meta,
+                false,
+                Vec::new(),
+            ).expect("apply_variant failed");
+
+            // pre_dict should be flushed (cleared)
+            assert!(pre_dict.is_empty());
+
+            // original node should receive the flushed pre_dict content
+            let content = node.get_content().expect("get_content");
+            assert!(!content.is_empty());
+            match &content[0].content_type {
+                ContentType::Tokens(Tokens::LApplyPreDict(_, map)) => {
+                    assert_eq!(map.get("key1").map(|s| s.as_str()), Some("value1"));
+                }
+                other => panic!("Unexpected parent content: {:?}", other),
+            }
+
+            // grandparent node should have one child (the variant) whose name is "test"
+            let parents = grandparent_node.get_children().unwrap();
+            assert_eq!(parents.len(), 1);
+            let parent_node = &parents[0];
+            assert_eq!(parent_node.name.len(), 1);
+            assert!(matches!(parent_node.name[0], Label { .. }));
+            assert_eq!(parent_node.name[0].name, "test".to_string());
+
+            // child should include the original grand child as its child
+            let children = parent_node.get_children().unwrap();
+            assert_eq!(children.len(), 1);
+            assert_eq!(children[0], node);
+        });
+    }
 }

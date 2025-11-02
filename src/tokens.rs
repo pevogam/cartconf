@@ -177,7 +177,7 @@ impl Tokens {
     }
 
     #[getter]
-    fn length(&self) -> PyResult<isize> {
+    pub fn length(&self) -> PyResult<isize> {
         match self {
             Tokens::LIndent(length) => Ok(*length),
             Tokens::LEndBlock(length) => Ok(*length),
@@ -186,7 +186,7 @@ impl Tokens {
     }
 
     #[getter]
-    fn string(&self) -> PyResult<String> {
+    pub fn string(&self) -> PyResult<String> {
         match self {
             Tokens::LIdentifier(string) => Ok(string.to_string()),
             Tokens::LWhite(string) => Ok(string.to_string()),
