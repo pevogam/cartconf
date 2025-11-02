@@ -1324,3 +1324,31 @@ pub fn parse(
         }
     }
 }
+
+#[pyfunction]
+#[pyo3(signature = (cfgstr, node, prev_indent=-1, defaults=true, expand_defaults=None))]
+pub fn parse_string(
+    py: Python<'_>,
+    cfgstr: String,
+    node: Node,
+    prev_indent: i32,
+    defaults: bool,
+    expand_defaults: Option<Vec<String>>,
+) -> PyResult<Node> {
+    let new_lexer = Lexer::new(Some(&cfgstr), None)?;
+    parse(&new_lexer.into_bound_py_any(py)?, node, prev_indent, defaults, expand_defaults)
+}
+
+#[pyfunction]
+#[pyo3(signature = (cfgfile, node, prev_indent=-1, defaults=true, expand_defaults=None))]
+pub fn parse_file(
+    py: Python<'_>,
+    cfgfile: String,
+    node: Node,
+    prev_indent: i32,
+    defaults: bool,
+    expand_defaults: Option<Vec<String>>,
+) -> PyResult<Node> {
+    let new_lexer = Lexer::new(None, Some(&cfgfile))?;
+    parse(&new_lexer.into_bound_py_any(py)?, node, prev_indent, defaults, expand_defaults)
+}

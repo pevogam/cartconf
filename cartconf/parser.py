@@ -25,6 +25,8 @@ ParserError = parser.ParserError
 Label = parser.Label
 Node = parser.Node
 parse = parser.parse
+parse_string = parser.parse_string
+parse_file = parser.parse_file
 
 
 class Parser(object):
@@ -78,8 +80,8 @@ class Parser(object):
         :param cfgfile: configuration file path to parse
         """
         self.node.filename = cfgfile
-        self.node = parse(
-            Lexer(filename=cfgfile),
+        self.node = parse_file(
+            cfgfile,
             self.node,
             defaults=self.defaults,
             expand_defaults=self.expand_defaults,
@@ -93,8 +95,8 @@ class Parser(object):
         :param cfgstr: configuration string to parse
         """
         self.node.filename = Reader(content="").filename
-        self.node = parse(
-            Lexer(content=cfgstr),
+        self.node = parse_string(
+            cfgstr,
             self.node,
             defaults=self.defaults,
             expand_defaults=self.expand_defaults,
