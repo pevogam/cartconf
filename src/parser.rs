@@ -419,8 +419,8 @@ impl Node {
         };
 
         // Get the next token for the value (LString)
-        let lstring = Tokens::LString(String::new()).into_bound_py_any(py)?.get_type();
-        let lendl = Tokens::LEndL().into_bound_py_any(py)?.get_type();
+        let lstring = Tokens::default("String").into_bound_py_any(py)?;
+        let lendl = Tokens::default("endl").into_bound_py_any(py)?;
         let req_list = PyList::new(py, &[lstring])?;
         let value = lexer.call_method1("get_next_token", (req_list,))?;
         let mut value_str: String = value.getattr("string")?.extract()?;
@@ -492,8 +492,8 @@ impl Node {
     ) -> PyResult<()> {
         let py = lexer.py();
 
-        let lidentifier = Tokens::LIdentifier(String::new()).into_bound_py_any(py)?.get_type();
-        let lendl = Tokens::LEndL().into_bound_py_any(py)?.get_type();
+        let lidentifier = Tokens::default("Identifier").into_bound_py_any(py)?;
+        let lendl = Tokens::default("endl").into_bound_py_any(py)?;
         let args = PyList::new(py, &[lidentifier])?;
         let kwargs = {
             let d = PyDict::new(py);
@@ -593,7 +593,7 @@ impl Node {
         let mut tokens = vec![token];
         let identifier_len = identifier.len();
         tokens.extend(identifier.into_iter().take(identifier_len.saturating_sub(1)));
-        tokens.push(Tokens::LEndL());
+        tokens.push(Tokens::default("endl"));
 
         // Parse the condition filter
         let cfilter: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
@@ -642,8 +642,8 @@ impl Node {
         let py = lexer.py();
 
         // Build the full token list
-        let lcolon = Tokens::LColon().into_bound_py_any(py)?.get_type();
-        let lendl = Tokens::LEndL().into_bound_py_any(py)?.get_type();
+        let lcolon = Tokens::default(":").into_bound_py_any(py)?;
+        let lendl = Tokens::default("endl").into_bound_py_any(py)?;
         let kwargs = {
             let d = PyDict::new(py);
             d.set_item("no_white", true)?;
@@ -717,10 +717,10 @@ impl Node {
 
         // Get tokens until bracket, colon, identifier or end
         let allowed = [
-            Tokens::LLBracket().into_bound_py_any(py)?.get_type(),
-            Tokens::LColon().into_bound_py_any(py)?.get_type(),
-            Tokens::LIdentifier(String::new()).into_bound_py_any(py)?.get_type(),
-            Tokens::LEndL().into_bound_py_any(py)?.get_type(),
+            Tokens::default("[").into_bound_py_any(py)?,
+            Tokens::default(":").into_bound_py_any(py)?,
+            Tokens::default("Identifier").into_bound_py_any(py)?,
+            Tokens::default("endl").into_bound_py_any(py)?,
         ];
         let kwargs = {
             let d = PyDict::new(py);
@@ -755,15 +755,15 @@ impl Node {
                 // Parse metadata in brackets
                 let ident = lexer.call_method(
                     "get_next_token",
-                    ([Tokens::LIdentifier(String::new()).into_bound_py_any(py)?.get_type()],),
+                    ([Tokens::default("Identifier").into_bound_py_any(py)?],),
                     Some(&kwargs),
                 )?;
                 let ident_str: String = ident.getattr("string")?.extract()?;
 
                 let next = lexer.call_method(
                     "get_next_token",
-                    ([Tokens::LSet(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
-                      Tokens::LRBracket().into_bound_py_any(py)?.get_type()],),
+                    ([Tokens::default("=").into_bound_py_any(py)?,
+                      Tokens::default("]").into_bound_py_any(py)?],),
                     Some(&kwargs),
                 )?;
                 let next_token: Tokens = next.extract()?;
@@ -777,8 +777,8 @@ impl Node {
                     // Handle [xxx = yyy]
                     let tokens = lexer.call_method(
                         "get_until",
-                        ([Tokens::LRBracket().into_bound_py_any(py)?.get_type(),
-                          Tokens::LEndL().into_bound_py_any(py)?.get_type()],),
+                        ([Tokens::default("]").into_bound_py_any(py)?,
+                          Tokens::default("endl").into_bound_py_any(py)?],),
                         Some(&kwargs),
                     )?;
                     let last = tokens.get_item(tokens.len()? - 1)?;
@@ -842,7 +842,7 @@ impl Node {
         // Consume end of line
         lexer.call_method(
             "get_next_token",
-            ([Tokens::LEndL().into_bound_py_any(py)?.get_type()],),
+            ([Tokens::default("endl").into_bound_py_any(py)?],),
             Some(&kwargs),
         )?;
 
@@ -888,10 +888,11 @@ impl Node {
         let tokens = PyList::new(
             py,
             &[
-                Tokens::LIdentifier(String::new()).into_bound_py_any(py)?.get_type(),
-                Tokens::LDefault().into_bound_py_any(py)?.get_type(),
-                Tokens::LIndent(-1).into_bound_py_any(py)?.get_type(),
-                Tokens::LEndBlock(-1).into_bound_py_any(py)?.get_type(),
+                Tokens::default("Identifier").into_bound_py_any(py)?,
+                Tokens::default("@").into_bound_py_any(py)?,
+                Tokens::default("indent").into_bound_py_any(py)?,
+                // TODO: there is no default for LEndBLock
+                Tokens::LEndBlock(-1).into_bound_py_any(py)?,
             ],
         )?;
         let kwargs = PyDict::new(py);
@@ -914,14 +915,14 @@ impl Node {
                 // Handle indented variant
                 lexer.call_method(
                     "get_next_token",
-                    (PyList::new(py, &[Tokens::LVariant().into_bound_py_any(py)?.get_type()])?,),
+                    (PyList::new(py, &[Tokens::default("-").into_bound_py_any(py)?])?,),
                     Some(&kwargs),
                 )?;
                 let token_py = lexer.call_method(
                     "get_next_token",
                     (PyList::new(py, &[
-                        Tokens::LIdentifier(String::new()).into_bound_py_any(py)?.get_type(),
-                        Tokens::LDefault().into_bound_py_any(py)?.get_type(),
+                        Tokens::default("Identifier").into_bound_py_any(py)?,
+                        Tokens::default("@").into_bound_py_any(py)?,
                     ])?,),
                     Some(&kwargs),
                 )?;
@@ -931,14 +932,14 @@ impl Node {
                     is_default = true;
                     name = lexer.call_method(
                         "get_until",
-                        (PyList::new(py, &[Tokens::LColon().into_bound_py_any(py)?.get_type()])?,),
+                        (PyList::new(py, &[Tokens::default(":").into_bound_py_any(py)?])?,),
                         None,
                     )?.extract()?;
                 } else {
                     name = vec![token];
                     name.extend(lexer.call_method(
                         "get_until",
-                        (PyList::new(py, &[Tokens::LColon().into_bound_py_any(py)?.get_type()])?,),
+                        (PyList::new(py, &[Tokens::default(":").into_bound_py_any(py)?])?,),
                         None,
                     )?.extract::<Vec<Tokens>>()?);
                 }
@@ -946,14 +947,14 @@ impl Node {
                 is_default = true;
                 name = lexer.call_method(
                     "get_until",
-                    (PyList::new(py, &[Tokens::LColon().into_bound_py_any(py)?.get_type()])?,),
+                    (PyList::new(py, &[Tokens::default(":").into_bound_py_any(py)?])?,),
                     None,
                 )?.extract()?;
             } else {
                 name = vec![token];
                 name.extend(lexer.call_method(
                     "get_until",
-                    (PyList::new(py, &[Tokens::LColon().into_bound_py_any(py)?.get_type()])?,),
+                    (PyList::new(py, &[Tokens::default(":").into_bound_py_any(py)?])?,),
                     None,
                 )?.extract::<Vec<Tokens>>()?);
             }
@@ -969,7 +970,7 @@ impl Node {
                 let mut filter_tokens = vec![token];
                 filter_tokens.extend(lexer.call_method(
                     "get_until",
-                    (PyList::new(py, &[Tokens::LEndL().into_bound_py_any(py)?.get_type()])?,),
+                    (PyList::new(py, &[Tokens::default("endl").into_bound_py_any(py)?])?,),
                     None,
                 )?.extract::<Vec<Tokens>>()?);
                 deps = Filters::parse_filter(
@@ -1111,32 +1112,33 @@ pub fn parse(
     let py = lexer.py();
 
     // Allowed token types for different contexts
+    // TODO: reuse default tokens as much as possible using their identifiers
     let block_allowed = [
-        Tokens::LVariants().into_bound_py_any(py)?.get_type(),
-        Tokens::LIdentifier(String::new()).into_bound_py_any(py)?.get_type(),
-        Tokens::LOnly().into_bound_py_any(py)?.get_type(),
-        Tokens::LNo().into_bound_py_any(py)?.get_type(),
-        Tokens::LInclude().into_bound_py_any(py)?.get_type(),
-        Tokens::LDel(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
-        Tokens::LNotCond().into_bound_py_any(py)?.get_type(),
-        Tokens::LSuffix().into_bound_py_any(py)?.get_type(),
-        Tokens::LJoin().into_bound_py_any(py)?.get_type(),
+        Tokens::LVariants().into_bound_py_any(py)?,
+        Tokens::LIdentifier(String::new()).into_bound_py_any(py)?,
+        Tokens::LOnly().into_bound_py_any(py)?,
+        Tokens::LNo().into_bound_py_any(py)?,
+        Tokens::LInclude().into_bound_py_any(py)?,
+        Tokens::LDel(String::new(), String::new()).into_bound_py_any(py)?,
+        Tokens::LNotCond().into_bound_py_any(py)?,
+        Tokens::LSuffix().into_bound_py_any(py)?,
+        Tokens::LJoin().into_bound_py_any(py)?,
     ];
-    let variants_allowed = [Tokens::LVariant().into_bound_py_any(py)?.get_type()];
+    let variants_allowed = [Tokens::LVariant().into_bound_py_any(py)?];
     let identifier_allowed = [
-        Tokens::LSet(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
-        Tokens::LAppend(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
-        Tokens::LPrepend(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
-        Tokens::LLazySet(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
-        Tokens::LRegExpSet(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
-        Tokens::LRegExpAppend(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
-        Tokens::LRegExpPrepend(String::new(), String::new()).into_bound_py_any(py)?.get_type(),
-        Tokens::LColon().into_bound_py_any(py)?.get_type(),
-        Tokens::LEndL().into_bound_py_any(py)?.get_type(),
+        Tokens::LSet(String::new(), String::new()).into_bound_py_any(py)?,
+        Tokens::LAppend(String::new(), String::new()).into_bound_py_any(py)?,
+        Tokens::LPrepend(String::new(), String::new()).into_bound_py_any(py)?,
+        Tokens::LLazySet(String::new(), String::new()).into_bound_py_any(py)?,
+        Tokens::LRegExpSet(String::new(), String::new()).into_bound_py_any(py)?,
+        Tokens::LRegExpAppend(String::new(), String::new()).into_bound_py_any(py)?,
+        Tokens::LRegExpPrepend(String::new(), String::new()).into_bound_py_any(py)?,
+        Tokens::LColon().into_bound_py_any(py)?,
+        Tokens::LEndL().into_bound_py_any(py)?,
     ];
     let indent_allowed = [
-        Tokens::LIndent(0).into_bound_py_any(py)?.get_type(),
-        Tokens::LEndBlock(0).into_bound_py_any(py)?.get_type(),
+        Tokens::LIndent(0).into_bound_py_any(py)?,
+        Tokens::LEndBlock(0).into_bound_py_any(py)?,
     ];
     let mut allowed = block_allowed.to_vec();
 
@@ -1304,11 +1306,11 @@ pub fn parse(
                 }
                 let token_val = lexer.call_method1(
                     "get_next_token",
-                    ([Tokens::LIdentifier(String::new()).into_bound_py_any(py)?.get_type()],),
+                    ([Tokens::default("Identifier").into_bound_py_any(py)?],),
                 )?;
                 lexer.call_method1(
                     "get_next_token",
-                    ([Tokens::LEndL().into_bound_py_any(py)?.get_type()],),
+                    ([Tokens::default("endl").into_bound_py_any(py)?],),
                 )?;
 
                 suffix = Some((

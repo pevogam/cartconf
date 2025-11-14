@@ -122,6 +122,60 @@ impl Tokens {
         Ok(format!("'{s}'"))
     }
 
+    #[staticmethod]
+    pub fn default(identifier: &str) -> Self {
+        // NOTE: based on identifier string and thus a static method instead
+        // of a simpler class method due to rust introspection limitations,
+        // same reason why we don't pass the types as arguments to the lexer
+        match identifier {
+            // fast exact matches
+            "endl" => Tokens::LEndL(),
+            ":" => Tokens::LColon(),
+            "variants" => Tokens::LVariants(),
+            "." => Tokens::LDot(),
+            "-" => Tokens::LVariant(),
+            "@" => Tokens::LDefault(),
+            "only" => Tokens::LOnly(),
+            "suffix" => Tokens::LSuffix(),
+            "join" => Tokens::LJoin(),
+            "no" => Tokens::LNo(),
+            "" => Tokens::LCond(),
+            "!" => Tokens::LNotCond(),
+            "," => Tokens::LComa(),
+            ".." => Tokens::LAnd(),
+            "[" => Tokens::LLBracket(),
+            "]" => Tokens::LRBracket(),
+            "(" => Tokens::LLRBracket(),
+            ")" => Tokens::LRRBracket(),
+            "${" | "${{" => Tokens::LRegExpStart(),
+            "}}" => Tokens::LRegExpStop(),
+            "include" => Tokens::LInclude(),
+            "=" => Tokens::LSet(String::new(), String::new()),
+            "+=" => Tokens::LAppend(String::new(), String::new()),
+            "<=" => Tokens::LPrepend(String::new(), String::new()),
+            "~=" => Tokens::LLazySet(String::new(), String::new()),
+            "?=" => Tokens::LRegExpSet(String::new(), String::new()),
+            "?+=" => Tokens::LRegExpAppend(String::new(), String::new()),
+            "?<=" => Tokens::LRegExpPrepend(String::new(), String::new()),
+            "del" => Tokens::LDel(String::new(), String::new()),
+            "update_file_map" => Tokens::LUpdateFileMap(String::new(), String::new(), String::new()),
+            other => {
+                // continue to heuristic matches below
+                let id = other.to_string();
+                if id.starts_with("indent") { return Tokens::LIndent(0); }
+                if id.starts_with("Identifier") { return Tokens::LIdentifier(String::new()); }
+                if id.starts_with("WhiteSpace") { return Tokens::LWhite(String::new()); }
+                if id.starts_with("String") { return Tokens::LString(String::new()); }
+                if id.starts_with("apply_pre_dict") {
+                    return Tokens::LApplyPreDict(String::new(), HashMap::new());
+                }
+                if id.starts_with("suffix") { return Tokens::Suffix(String::new(), String::new()); }
+                // fallback: return as identifier token
+                Tokens::LIdentifier(id)
+            }
+        }
+    }
+
     #[getter]
     fn length(&self) -> PyResult<isize> {
         match self {
