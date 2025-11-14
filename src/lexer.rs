@@ -67,6 +67,8 @@ impl Reader {
         if self.line_index >= self.lines.len() {
             return (None, -1, -1);
         }
+        // TODO: converting usize to isize can also overflow, unify all indents and linenums
+        // to usize option to map -1 to None
         let (line, indent, linenum) = &self.lines[self.line_index];
         if *indent as isize <= prev_indent {
             return (None, *indent as isize, *linenum as isize);
@@ -475,7 +477,7 @@ impl Lexer {
         self.linenum = linenum;
         if let Some(line) = line_opt {
             if self.pos == 0 {
-                token_queue.push(Tokens::LIndent(indent as i32));
+                token_queue.push(Tokens::LIndent(indent));
 
             }
             let tokens = self.match_line(&line, 0)?;
@@ -485,7 +487,29 @@ impl Lexer {
                         self.restart();
                     }
                     _ => {
-                        // Keep the current line as the next line to to comply with the line state machine.
+                        if indent < 0 {
+                            return Err(PyErr::new::<LexerError, _>((
+                                format!(
+                                    "Cannot store negative indent '{}' at position {}",
+                                    indent, self.pos,
+                                ),
+                                Some(line.to_string()),
+                                Some(self.filename.clone()),
+                                Some(self.linenum),
+                            )));
+                        }
+                        if linenum < 0 {
+                            return Err(PyErr::new::<LexerError, _>((
+                                format!(
+                                    "Cannot store negative line number '{}' at position {}",
+                                    linenum, self.pos,
+                                ),
+                                Some(line.to_string()),
+                                Some(self.filename.clone()),
+                                Some(self.linenum),
+                            )));
+                        }
+                        // Keep the current line as the next line to comply with the line state machine.
                         self.reader.set_next_line(&line, indent as usize, linenum as usize);
                     }
                 }
@@ -494,7 +518,7 @@ impl Lexer {
                 token_queue.push(t);
             }
         } else {
-            token_queue.push(Tokens::LEndBlock(indent as i32));
+            token_queue.push(Tokens::LEndBlock(indent));
         }
         Ok(token_queue)
     }

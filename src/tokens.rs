@@ -19,9 +19,9 @@ const RESERVED_KEYS: &[&str] = &[
 #[pyclass(eq)]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Tokens {
-    LIndent(i32),
+    LIndent(isize),
     LEndL(),
-    LEndBlock(i32),
+    LEndBlock(isize),
     LIdentifier(String),
     LWhite(String),
     LString(String),
@@ -123,7 +123,7 @@ impl Tokens {
     }
 
     #[getter]
-    fn length(&self) -> PyResult<i32> {
+    fn length(&self) -> PyResult<isize> {
         match self {
             Tokens::LIndent(length) => Ok(*length),
             Tokens::LEndBlock(length) => Ok(*length),

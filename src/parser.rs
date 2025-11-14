@@ -185,7 +185,7 @@ impl<'py> FromPyObject<'_, 'py> for ContentType {
 #[derive(Debug, PartialEq, Clone)]
 pub struct ContentStep {
     filename: String,
-    linenum: i32,
+    linenum: isize,
     content_type: ContentType,
 }
 impl<'py> IntoPyObject<'py> for ContentStep {
@@ -203,7 +203,7 @@ impl<'py> FromPyObject<'_, 'py> for ContentStep {
     type Error = PyErr;
 
     fn extract(object: Borrowed<'_, 'py, PyAny>) -> Result<Self, Self::Error> {
-        if let Ok((filename, linenum, content_type)) = object.extract::<(String, i32, ContentType)>() {
+        if let Ok((filename, linenum, content_type)) = object.extract::<(String, isize, ContentType)>() {
             return Ok(ContentStep { filename, linenum, content_type });
         }
         Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
@@ -297,7 +297,7 @@ impl Node {
         Ok(self.content.clone())
     }
 
-    pub fn add_content(&mut self, filename: String, linenum: i32, content_type: ContentType) -> PyResult<()> {
+    pub fn add_content(&mut self, filename: String, linenum: isize, content_type: ContentType) -> PyResult<()> {
         self.content.push(ContentStep { filename, linenum, content_type });
         Ok(())
     }
@@ -360,7 +360,7 @@ impl Node {
         // since we would need cloning trait not just for it but also for the reader enum
         // Extract filename and linenum from the lexer object
         let filename: String = lexer.getattr("filename")?.extract()?;
-        let linenum: i32 = lexer.getattr("linenum")?.extract()?;
+        let linenum: isize = lexer.getattr("linenum")?.extract()?;
 
         // Build a LApplyPreDict from the original Python dict
         let map: HashMap<String, String> = pre_dict.extract()?;
@@ -558,7 +558,7 @@ impl Node {
         if !filepath.is_file() {
             let line: String = lexer.getattr("line")?.extract()?;
             let filename: String = lexer.getattr("filename")?.extract()?;
-            let linenum: i32 = lexer.getattr("linenum")?.extract()?;
+            let linenum: isize = lexer.getattr("linenum")?.extract()?;
 
             let exceptions = py.import("cartconf.exceptions")?;
             let err = exceptions.getattr("MissingIncludeError")?;
@@ -587,7 +587,7 @@ impl Node {
         token: Tokens,
         lexer: &Bound<'_, PyAny>,
         pre_dict: &Bound<'_, PyDict>,
-        indent: i32,
+        indent: isize,
     ) -> PyResult<()> {
         // Build the full identifier list: [token] + identifier[:-1] + [LEndl]
         let mut tokens = vec![token];
@@ -637,7 +637,7 @@ impl Node {
         &mut self,
         lexer: &Bound<'_, PyAny>,
         pre_dict: &Bound<'_, PyDict>,
-        indent: i32,
+        indent: isize,
     ) -> PyResult<()> {
         let py = lexer.py();
 
@@ -711,7 +711,7 @@ impl Node {
                 "'variants' is not allowed inside a conditional block".to_string(),
                 Some(lexer.getattr("line")?.extract::<String>()?),
                 Some(lexer.getattr("filename")?.extract::<String>()?),
-                Some(lexer.getattr("linenum")?.extract::<i32>()?),
+                Some(lexer.getattr("linenum")?.extract::<isize>()?),
             )));
         }
 
@@ -747,7 +747,7 @@ impl Node {
                         "Syntax ERROR expected '[' or ':'".to_string(),
                         Some(lexer.getattr("line")?.extract::<String>()?),
                         Some(lexer.getattr("filename")?.extract::<String>()?),
-                        Some(lexer.getattr("linenum")?.extract::<i32>()?),
+                        Some(lexer.getattr("linenum")?.extract::<isize>()?),
                     )));
                 }
                 variant_name = tokens_pylist.get_item(0)?.getattr("string")?.extract()?;
@@ -799,7 +799,7 @@ impl Node {
                             "Syntax ERROR expected ']'".to_string(),
                             Some(lexer.getattr("line")?.extract::<String>()?),
                             Some(lexer.getattr("filename")?.extract::<String>()?),
-                            Some(lexer.getattr("linenum")?.extract::<i32>()?),
+                            Some(lexer.getattr("linenum")?.extract::<isize>()?),
                         )));
                     }
                 }
@@ -823,7 +823,7 @@ impl Node {
                         "Syntax ERROR expected [default=xxx]".to_string(),
                         Some(lexer.getattr("line")?.extract::<String>()?),
                         Some(lexer.getattr("filename")?.extract::<String>()?),
-                        Some(lexer.getattr("linenum")?.extract::<i32>()?),
+                        Some(lexer.getattr("linenum")?.extract::<isize>()?),
                     )));
                 }
             }
@@ -835,7 +835,7 @@ impl Node {
                 "Syntax ERROR expected ':'".to_string(),
                 Some(lexer.getattr("line")?.extract::<String>()?),
                 Some(lexer.getattr("filename")?.extract::<String>()?),
-                Some(lexer.getattr("linenum")?.extract::<i32>()?),
+                Some(lexer.getattr("linenum")?.extract::<isize>()?),
             )));
         }
 
@@ -865,9 +865,9 @@ impl Node {
         &mut self,
         lexer: &Bound<'_, PyAny>,
         pre_dict: &Bound<'_, PyDict>,
-        indent: i32,
+        indent: isize,
         variant_name: String,
-        variant_indent: i32,
+        variant_indent: isize,
         meta: &Bound<'_, PyDict>,
         defaults : bool,
         expand_defaults : Vec<String>,
@@ -1090,7 +1090,7 @@ impl Node {
                     format!("Missing default variant {:?}", default_values),
                     Some(lexer.getattr("line")?.extract::<String>().unwrap_or("<none>".to_string())),
                     Some(lexer.getattr("filename")?.extract::<String>()?),
-                    Some(lexer.getattr("linenum")?.extract::<i32>()?),
+                    Some(lexer.getattr("linenum")?.extract::<isize>()?),
                 )));
             }
         }
@@ -1104,7 +1104,7 @@ impl Node {
 pub fn parse(
     lexer: &Bound<'_, PyAny>,
     mut node: Node,
-    prev_indent: i32,
+    prev_indent: isize,
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
 ) -> PyResult<Node> {
@@ -1175,7 +1175,7 @@ pub fn parse(
             return Ok(node);
         }
 
-        let indent: i32 = token_py.getattr("length")?.extract()?;
+        let indent: isize = token_py.getattr("length")?.extract()?;
         let token_py = lexer.call_method1("get_next_token", (allowed.to_vec(),))?;
         let token: Tokens = token_py.extract()?;
 
@@ -1224,7 +1224,7 @@ pub fn parse(
                         "Syntax ERROR expected ':' or operand".to_string(),
                         Some(lexer.getattr("line")?.extract::<String>()?),
                         Some(lexer.getattr("filename")?.extract::<String>()?),
-                        Some(lexer.getattr("linenum")?.extract::<i32>()?),
+                        Some(lexer.getattr("linenum")?.extract::<isize>()?),
                     )));
                 }
             }
@@ -1323,7 +1323,7 @@ pub fn parse(
                     "Syntax ERROR expected".to_string(),
                     Some(lexer.getattr("line")?.extract::<String>()?),
                     Some(lexer.getattr("filename")?.extract::<String>()?),
-                    Some(lexer.getattr("linenum")?.extract::<i32>()?),
+                    Some(lexer.getattr("linenum")?.extract::<isize>()?),
                 )));
             }
         }
@@ -1336,7 +1336,7 @@ pub fn parse_string(
     py: Python<'_>,
     cfgstr: String,
     node: Node,
-    prev_indent: i32,
+    prev_indent: isize,
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
 ) -> PyResult<Node> {
@@ -1350,7 +1350,7 @@ pub fn parse_file(
     py: Python<'_>,
     cfgfile: String,
     node: Node,
-    prev_indent: i32,
+    prev_indent: isize,
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
 ) -> PyResult<Node> {
