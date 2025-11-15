@@ -550,12 +550,13 @@ impl Lexer {
     }
 
     /// Get the next token from one or more tokenized lines.
-    #[pyo3(signature = (check_tokens=None, no_white=false))]
+    #[pyo3(signature = (check_tokens=None, no_white=None))]
     pub fn get_next_token(
         &mut self,
         check_tokens: Option<&Bound<'_, PyList>>,
-        no_white: bool,
+        no_white: Option<bool>,
     ) -> PyResult<Tokens> {
+        let no_white = no_white.unwrap_or(false);
         if self.token_queue.is_empty() {
             let tokens = self.match_multiline()?;
             self.token_queue.extend(tokens);
@@ -563,7 +564,7 @@ impl Lexer {
         match self.token_queue.pop_front() {
             Some(token) => {
                 if no_white && matches!(token, Tokens::LWhite(_)) {
-                    return self.get_next_token(check_tokens, no_white);
+                    return self.get_next_token(check_tokens, Some(no_white));
                 }
                 if let Some(check_tokens_py) = check_tokens {
                     let next_py = token.clone().into_bound_py_any(check_tokens_py.py())?;
@@ -584,13 +585,14 @@ impl Lexer {
     }
 
     /// Get all tokens until not allowed tokens or end tokens are found.
-    #[pyo3(signature = (end_tokens, check_tokens=None, no_white=false))]
+    #[pyo3(signature = (end_tokens, check_tokens=None, no_white=None))]
     pub fn get_until(
         &mut self,
         end_tokens: &Bound<'_, PyList>,
         check_tokens: Option<&Bound<'_, PyList>>,
-        no_white: bool,
+        no_white: Option<bool>,
     ) -> PyResult<Vec<Tokens>> {
+        let no_white = no_white.unwrap_or(false);
         let py = end_tokens.py();
         let mut end_tokens_types = Vec::new();
         for end_py in end_tokens.iter() {
@@ -615,7 +617,7 @@ impl Lexer {
         }
 
         let mut tokens = Vec::new();
-        while let Ok(next_token) = self.get_next_token(None, false) {
+        while let Ok(next_token) = self.get_next_token(None, None) {
             let next_py = next_token.clone().into_bound_py_any(py)?;
             if !check_tokens_types.is_empty() && !check_tokens_types.iter().any(|t| t.eq(next_py.get_type()).unwrap_or(false)) {
                 return Err(PyErr::new::<LexerError, _>((
@@ -641,13 +643,13 @@ impl Lexer {
 
     /// Skip all tokens until end tokens are found.
     pub fn flush_until(&mut self, end_tokens: &Bound<'_, PyList>) -> PyResult<()> {
-        let _ = self.get_until(end_tokens, None, false)?;
+        let _ = self.get_until(end_tokens, None, None)?;
         Ok(())
     }
 
     /// Get all tokens from the rest of the line terminating only at an end-of-line token.
-    #[pyo3(signature = (no_white=false))]
-    pub fn get_rest_line(&mut self, no_white: bool) -> PyResult<Vec<Tokens>> {
+    #[pyo3(signature = (no_white=None))]
+    pub fn get_rest_line(&mut self, no_white: Option<bool>) -> PyResult<Vec<Tokens>> {
         Python::attach(|py| self.get_until(&PyList::empty(py), None, no_white))
     }
 
@@ -662,7 +664,7 @@ impl Lexer {
                 lstring_py.get_type().to_owned()
             };
             lstring_types.push(lstring_type);
-            let remainder_str = self.get_next_token(PyList::new(py, lstring_types).ok().as_ref(), false)?;
+            let remainder_str = self.get_next_token(PyList::new(py, lstring_types).ok().as_ref(), None)?;
 
             let mut lendl_types = Vec::new();
             let lendl_type = {
@@ -671,7 +673,7 @@ impl Lexer {
                 lendl_py.get_type().to_owned()
             };
             lendl_types.push(lendl_type);
-            let _ = self.get_next_token(PyList::new(py, lendl_types).ok().as_ref(), false)?;
+            let _ = self.get_next_token(PyList::new(py, lendl_types).ok().as_ref(), None)?;
             Ok(remainder_str)
         })?;
         Ok(lstring)
