@@ -1,6 +1,11 @@
+use std::iter::{once, Once, Chain};
+use std::vec::IntoIter;
+
 use pyo3::prelude::*;
 
+use crate::tokens::Tokens;
 use crate::parser::Label;
+use crate::parser::ParserError;
 
 // Define an enum for the different types of filters
 #[pyclass]
@@ -200,6 +205,210 @@ impl Filters {
             }
         }
         true
+    }
+
+    /// Parse a filter from a list of tokens.
+    /*
+    More details on the syntax of the connectives for these filters:
+
+    * ``,`` means ``OR``
+    * ``..`` means ``AND``
+    * ``.`` means ``IMMEDIATELY-FOLLOWED-BY``
+    * ``(xx=yy)`` where ``xx=VARIANT_NAME`` and ``yy=VARIANT_VALUE``
+
+    Example:
+
+    ::
+
+        qcow2..(guest_os=Fedora).14, RHEL.6..raw..boot, smp2..qcow2..migrate..ide
+
+    means match all dicts whose names have:
+
+    ::
+
+        (qcow2 AND ((guest_os=Fedora) IMMEDIATELY-FOLLOWED-BY 14)) OR
+        ((RHEL IMMEDIATELY-FOLLOWED-BY 6) AND raw AND boot) OR
+        (smp2 AND qcow2 AND migrate AND ide)
+
+    Note:
+
+    * ``qcow2..Fedora.14`` is equivalent to ``Fedora.14..qcow2``.
+    * ``qcow2..Fedora.14`` is not equivalent to ``qcow2..14.Fedora``.
+    * ``ide, scsi`` is equivalent to ``scsi, ide``.
+    */
+    #[staticmethod]
+    pub fn parse_filter(tokens: Vec<Tokens>, line: String, filename: String, linenum: isize) -> PyResult<Vec<Vec<Vec<Label>>>> {
+        let mut or_filters = Vec::new();
+        let mut and_filter = Vec::new();
+        let mut con_filter = Vec::new();
+        let mut dots = 1;
+
+        let mut tokens_iter = tokens.into_iter().chain(once(Tokens::LEndL()));
+
+        // Helper to get next non-whitespace token (used only when parsing inside parentheses)
+        let next_nw = |iter: &mut Chain<IntoIter<Tokens>, Once<Tokens>>| -> Option<Tokens> {
+            let mut token = iter.next();
+            while matches!(token, Some(Tokens::LWhite(_))) {
+                token = iter.next();
+            }
+            token
+        };
+
+        let mut first_token = true;
+        let mut white_after_comma = false;
+        while let Some(token) = tokens_iter.next() {
+            match token {
+                Tokens::LIdentifier(_) | Tokens::LLRBracket() => {
+                    let label = if let Tokens::LLRBracket() = token {
+                        // Handle (xxx=yyy) -- skip whitespace between internal tokens
+                        let nw_token = next_nw(&mut tokens_iter);
+                        let identifier = if let Some(Tokens::LIdentifier(s)) = nw_token {
+                            s
+                        } else {
+                            return Err(PyErr::new::<ParserError, _>((
+                                "Expected identifier after '('".to_string(),
+                                Some(line),
+                                Some(filename),
+                                Some(linenum),
+                            )));
+                        };
+
+                        match next_nw(&mut tokens_iter) {
+                            Some(Tokens::LSet(_, _)) => {
+                                // Handle (xxx = yyy) skipping whitespace between internal tokens
+                                let nw_token = next_nw(&mut tokens_iter);
+                                let value = match nw_token {
+                                    Some(Tokens::LIdentifier(s)) | Some(Tokens::LString(s)) => s,
+                                    _ => {
+                                        return Err(PyErr::new::<ParserError, _>((
+                                            "Expected value after '='".to_string(),
+                                            Some(line),
+                                            Some(filename),
+                                            Some(linenum),
+                                        )));
+                                    }
+                                };
+                                match next_nw(&mut tokens_iter) {
+                                    Some(Tokens::LRRBracket()) => Label::new(identifier, Some(value)),
+                                    _ => {
+                                        return Err(PyErr::new::<ParserError, _>((
+                                            "Expected ')' after value".to_string(),
+                                            Some(line),
+                                            Some(filename),
+                                            Some(linenum),
+                                        )));
+                                    }
+                                }
+                            }
+                            Some(Tokens::LRRBracket()) => {
+                                // Handle (xxx) skipping whitespace between internal tokens
+                                Label::new(identifier, None)
+                            }
+                            _ => {
+                                return Err(PyErr::new::<ParserError, _>((
+                                    "Expected '=' or ')' after '( with format like (xxx=yyy) or (xxx)'".to_string(),
+                                    Some(line),
+                                    Some(filename),
+                                    Some(linenum),
+                                )));
+                            }
+                        }
+                    } else if let Tokens::LIdentifier(s) = token {
+                        // Handle other cases
+                        Label::new(s, None)
+                    } else {
+                        return Err(PyErr::new::<ParserError, _>((
+                            "Complex filter doesn't have format like (xxx=yyy) or (xxx)'".to_string(),
+                            Some(line),
+                            Some(filename),
+                            Some(linenum),
+                        )));
+                    };
+
+                    if dots == 1 {
+                        con_filter.push(label);
+                    } else if dots == 2 {
+                        and_filter.push(con_filter);
+                        con_filter = vec![label];
+                    } else if dots == 0 || dots > 2{
+                        return Err(PyErr::new::<ParserError, _>((
+                            "Syntax Error: Expected '.' or '..' between identifiers".to_string(),
+                            Some(line),
+                            Some(filename),
+                            Some(linenum),
+                        )));
+                    }
+
+                    dots = 0;
+                    white_after_comma = false;
+                }
+                Tokens::LDot() => {
+                    // Handle xxx.xxxx or xxx..xxxx
+                    if first_token {
+                        return Err(PyErr::new::<ParserError, _>((
+                            "Syntax Error: Filter cannot start with '.'".to_string(),
+                            Some(line),
+                            Some(filename),
+                            Some(linenum),
+                        )));
+                    }
+                    dots += 1;
+                    white_after_comma = false;
+                }
+                Tokens::LWhite(_) if white_after_comma => {
+                    continue;
+                }
+                Tokens::LComa() | Tokens::LWhite(_) => {
+                    if matches!(token, Tokens::LComa()) && first_token {
+                        return Err(PyErr::new::<ParserError, _>((
+                            "Syntax Error: Filter cannot start with ','".to_string(),
+                            Some(line),
+                            Some(filename),
+                            Some(linenum),
+                        )));
+                    }
+                    if !white_after_comma && dots > 0 {
+                        return Err(PyErr::new::<ParserError, _>((
+                            "Syntax Error: Expected identifier between '.' and ','".to_string(),
+                            Some(line),
+                            Some(filename),
+                            Some(linenum),
+                        )));
+                    }
+                    if !con_filter.is_empty() {
+                        and_filter.push(con_filter);
+                        con_filter = Vec::new();
+                    }
+                    if !and_filter.is_empty() {
+                        or_filters.push(and_filter);
+                        and_filter = Vec::new();
+                    }
+                    dots = 1;
+                    white_after_comma = true;
+                }
+                Tokens::LEndL() => {
+                    break;
+                }
+                _ => {
+                    return Err(PyErr::new::<ParserError, _>((
+                        "Unexpected token in filter".to_string(),
+                        Some(line),
+                        Some(filename),
+                        Some(linenum),
+                    )));
+                }
+            }
+            first_token = false;
+        }
+
+        if !con_filter.is_empty() {
+            and_filter.push(con_filter);
+        }
+        if !and_filter.is_empty() {
+            or_filters.push(and_filter);
+        }
+
+        Ok(or_filters)
     }
 }
 

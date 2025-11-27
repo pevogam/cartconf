@@ -6,7 +6,7 @@ use std::cell::RefCell;
 
 use pyo3::{prelude::*, IntoPyObjectExt};
 use pyo3::exceptions::PyException;
-use pyo3::types::{PyAny, PyList, PyDict};
+use pyo3::types::{PyAny, PyDict, PyList};
 
 use crate::tokens::Tokens;
 use crate::filters::Filters;
@@ -589,23 +589,19 @@ impl Node {
         pre_dict: &Bound<'_, PyDict>,
         indent: i32,
     ) -> PyResult<()> {
-        let py = lexer.py();
-
         // Build the full identifier list: [token] + identifier[:-1] + [LEndl]
         let mut tokens = vec![token];
         let identifier_len = identifier.len();
         tokens.extend(identifier.into_iter().take(identifier_len.saturating_sub(1)));
         tokens.push(Tokens::LEndL());
-        let tokens_py: Vec<_> = tokens
-            .into_iter()
-            .filter_map(|t| t.into_bound_py_any(py).ok())
-            .collect();
 
         // Parse the condition filter
-        let parser_type = py.import("cartconf.parser")?.getattr("Parser")?;
-        let py_list = PyList::new(py, &tokens_py)?;
-        let filter = parser_type.call_method1("parse_filter", (lexer, py_list))?;
-        let cfilter: Vec<Vec<Vec<Label>>> = filter.extract()?;
+        let cfilter: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
+            tokens,
+            lexer.getattr("line")?.extract()?,
+            lexer.getattr("filename")?.extract()?,
+            lexer.getattr("linenum")?.extract()?,
+        )?;
 
         // Get the next line and set it in the lexer
         let next_line = lexer.call_method0("get_rest_line_as_string_token")?;
@@ -660,17 +656,18 @@ impl Node {
         )?;
         let tokens: Vec<Tokens> = tokens_pylist.extract()?;
         let tokens_len = tokens.len();
-        let tokens_py: Vec<_> = tokens
+        let tokens: Vec<_> = tokens
             .into_iter()
             .take(tokens_len.saturating_sub(1))
-            .filter_map(|t| t.into_bound_py_any(py).ok())
             .collect();
 
         // Parse the condition filter
-        let parser_type = py.import("cartconf.parser")?.getattr("Parser")?;
-        let py_list = PyList::new(py, &tokens_py)?;
-        let filter = parser_type.call_method1("parse_filter", (lexer, py_list))?;
-        let lfilter: Vec<Vec<Vec<Label>>> = filter.extract()?;
+        let lfilter: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
+            tokens,
+            lexer.getattr("line")?.extract()?,
+            lexer.getattr("filename")?.extract()?,
+            lexer.getattr("linenum")?.extract()?,
+        )?;
 
         // Get the next line and set it in the lexer
         let next_line = lexer.call_method0("get_rest_line_as_string_token")?;
@@ -899,8 +896,6 @@ impl Node {
         )?;
         let kwargs = PyDict::new(py);
         kwargs.set_item("no_white", true)?;
-        let parser_type = py.import("cartconf.parser")?.getattr("Parser")?;
-        let parser = parser_type.call0()?;
 
         loop {
             lexer.call_method1("set_prev_indent", (variant_indent,))?;
@@ -977,7 +972,12 @@ impl Node {
                     (PyList::new(py, &[Tokens::LEndL().into_bound_py_any(py)?.get_type()])?,),
                     None,
                 )?.extract::<Vec<Tokens>>()?);
-                deps = parser.call_method1("parse_filter", (lexer, filter_tokens))?.extract()?;
+                deps = Filters::parse_filter(
+                    filter_tokens,
+                    lexer.getattr("line")?.extract()?,
+                    lexer.getattr("filename")?.extract()?,
+                    lexer.getattr("linenum")?.extract()?,
+                )?;
             }
 
             // Create and parse the variant node
@@ -1266,21 +1266,26 @@ pub fn parse(
                 // Parse:
                 //    only/no/join (filter=text)..aaa.bbb, xxxx
                 let rest_line = lexer.call_method0("get_rest_line")?;
-                let parser_type = py.import("cartconf.parser")?.getattr("Parser")?;
-                let filters = parser_type.call_method1("parse_filter", (lexer, rest_line))?;
+                let rest_tokens: Vec<Tokens> = rest_line.extract()?;
+                let filters: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
+                    rest_tokens,
+                    lexer.getattr("line")?.extract()?,
+                    lexer.getattr("filename")?.extract()?,
+                    lexer.getattr("linenum")?.extract()?,
+                )?;
                 node.apply_predict(lexer, &pre_dict)?;
 
                 let content_type = match token {
                     Tokens::LOnly() => ContentType::Filters(Filters::OnlyFilter {
-                        filter: filters.extract()?,
+                        filter: filters,
                         line: lexer.getattr("line")?.extract()?,
                     }),
                     Tokens::LNo() => ContentType::Filters(Filters::NoFilter {
-                        filter: filters.extract()?,
+                        filter: filters,
                         line: lexer.getattr("line")?.extract()?,
                     }),
                     _ => ContentType::Filters(Filters::JoinFilter {
-                        filter: filters.extract()?,
+                        filter: filters,
                         line: lexer.getattr("line")?.extract()?,
                     }),
                 };

@@ -8,7 +8,7 @@ if os.path.isdir(os.path.join(basedir, 'cartconf')):
     sys.path.append(basedir)
 
 from cartconf.filters import Filters, Filter, NoOnlyFilter, OnlyFilter, NoFilter, JoinFilter, BlockFilter, Condition, NegativeCondition
-from cartconf.parser import Label
+from cartconf.parser import Label, Lexer, Tokens
 
 
 class TestFilters(unittest.TestCase):
@@ -105,6 +105,36 @@ class TestFilters(unittest.TestCase):
         ctx = []
         descendant_labels = [Label('d'), Label('e')]
         self.assertEqual(Filters.Filter.might_match_adjacent(block, ctx, descendant_labels), False)
+
+    def test_parse_filter(self):
+        lexer = Lexer(content="test.value")
+        lexer.set_prev_indent(-1)
+        tokens = lexer.get_until([Tokens.LEndL])
+        filters = Filters.parse_filter(tokens[1:], lexer.line, lexer.filename, lexer.linenum)
+        self.assertEqual(len(filters), 1)
+        self.assertEqual(len(filters[0]), 1)
+        self.assertEqual(len(filters[0][0]), 2)
+        self.assertEqual(filters[0][0][0].name, "test")
+        self.assertEqual(filters[0][0][1].name, "value")
+
+    def test_parse_filter_complicated(self):
+        f = "only xxx.yyy..(xxx=333).aaa, ddd (eeee) rrr.aaa"
+        lexer = Lexer(content=f)
+        lexer.set_prev_indent(-1)
+        lexer.get_next_token([Tokens.LIndent])
+        lexer.get_next_token([Tokens.LOnly])
+        rest_tokens = lexer.get_rest_line()
+        p_filter = Filters.parse_filter(rest_tokens, lexer.line, lexer.filename, lexer.linenum)
+        self.assertEqual(p_filter,
+                         [[[Label("xxx"),
+                            Label("yyy")],
+                           [Label("xxx", "333"),
+                            Label("aaa")]],
+                          [[Label("ddd")]],
+                          [[Label("eeee")]],
+                          [[Label("rrr"),
+                            Label("aaa")]]],
+                         "Failed to parse filter.")
 
 
 if __name__ == '__main__':

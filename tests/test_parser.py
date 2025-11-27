@@ -559,36 +559,6 @@ class ParserTest(unittest.TestCase):
             self.assertEqual(content_stage[0], "<string>")
         self.assertIsNone(self.parser.filename)
 
-    def test_parse_filter(self):
-        lexer = parser.Lexer(content="test.value")
-        lexer.set_prev_indent(-1)
-        tokens = lexer.get_until([parser.LEndL])
-        filters = parser.Parser.parse_filter(lexer, tokens[1:])
-        self.assertEqual(len(filters), 1)
-        self.assertEqual(len(filters[0]), 1)
-        self.assertEqual(len(filters[0][0]), 2)
-        self.assertEqual(filters[0][0][0].name, "test")
-        self.assertEqual(filters[0][0][1].name, "value")
-
-    def test_parse_filter_complicated(self):
-        f = "only xxx.yyy..(xxx=333).aaa, ddd (eeee) rrr.aaa"
-        self._compare_string_config(f, [], True)
-        lexer = parser.Lexer(content=f)
-        lexer.set_prev_indent(-1)
-        lexer.get_next_token([parser.LIndent])
-        lexer.get_next_token([parser.LOnly])
-        p_filter = parser.Parser.parse_filter(lexer, lexer.get_rest_line())
-        self.assertEqual(p_filter,
-                         [[[parser.Label("xxx"),
-                            parser.Label("yyy")],
-                           [parser.Label("xxx", "333"),
-                            parser.Label("aaa")]],
-                          [[parser.Label("ddd")]],
-                          [[parser.Label("eeee")]],
-                          [[parser.Label("rrr"),
-                            parser.Label("aaa")]]],
-                         "Failed to parse filter.")
-
     def test_get_dicts(self):
         self.parser.parse_string("variants:\n  - test:\n    key = value\n")
         dicts = list(self.parser.get_dicts())
