@@ -65,7 +65,7 @@ impl fmt::Display for Tokens {
         match self {
             Tokens::LIndent(length) => write!(f, "indent {length}"),
             Tokens::LEndL() => write!(f, "endl"),
-            Tokens::LEndBlock(length) => write!(f, "indent {length}"),
+            Tokens::LEndBlock(length) => write!(f, "endb {length}"),
             Tokens::LIdentifier(string) => write!(f, "Identifier re([A-Za-z0-9][A-Za-z0-9_-]*) \"{string}\""),
             Tokens::LWhite(string) => write!(f, "WhiteSpace re(\\s) \"{string}\""),
             Tokens::LString(string) => write!(f, "String re(.+) \"{string}\""),
@@ -78,7 +78,7 @@ impl fmt::Display for Tokens {
             Tokens::LSuffix() => write!(f, "suffix"),
             Tokens::LJoin() => write!(f, "join"),
             Tokens::LNo() => write!(f, "no"),
-            Tokens::LCond() => write!(f, ""),
+            Tokens::LCond() => write!(f, "?"),
             Tokens::LNotCond() => write!(f, "!"),
             Tokens::LOr() => write!(f, ","),
             Tokens::LAnd() => write!(f, ".."),
@@ -139,7 +139,7 @@ impl Tokens {
             "suffix" => Tokens::LSuffix(),
             "join" => Tokens::LJoin(),
             "no" => Tokens::LNo(),
-            "" => Tokens::LCond(),
+            "?" => Tokens::LCond(),
             "!" => Tokens::LNotCond(),
             "," => Tokens::LComa(),
             ".." => Tokens::LAnd(),
@@ -163,6 +163,7 @@ impl Tokens {
                 // continue to heuristic matches below
                 let id = other.to_string();
                 if id.starts_with("indent") { return Tokens::LIndent(0); }
+                if id.starts_with("endb") { return Tokens::LEndBlock(0); }
                 if id.starts_with("Identifier") { return Tokens::LIdentifier(String::new()); }
                 if id.starts_with("WhiteSpace") { return Tokens::LWhite(String::new()); }
                 if id.starts_with("String") { return Tokens::LString(String::new()); }

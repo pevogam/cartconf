@@ -638,8 +638,8 @@ impl Lexer {
     pub fn get_rest_line_as_string_token(&mut self) -> PyResult<Tokens> {
         self.rest_as_string = true;
         let lstring: Tokens = {
-            let remainder_str = self.get_next_token(Some(vec![Tokens::LString("".to_string())]), None)?;
-            let _ = self.get_next_token(Some(vec![Tokens::LEndL()]), None)?;
+            let remainder_str = self.get_next_token(Some(vec![Tokens::default("String")]), None)?;
+            let _ = self.get_next_token(Some(vec![Tokens::default("lendl")]), None)?;
             remainder_str
         };
         Ok(lstring)

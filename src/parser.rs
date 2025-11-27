@@ -853,8 +853,7 @@ impl Node {
                 Tokens::default("Identifier"),
                 Tokens::default("@"),
                 Tokens::default("indent"),
-                // TODO: there is no default for LEndBLock
-                Tokens::LEndBlock(-1),
+                Tokens::default("endb"),
         ];
 
         loop {
@@ -1063,33 +1062,33 @@ pub fn parse(
     expand_defaults: Option<Vec<String>>,
 ) -> PyResult<Node> {
     // Allowed token types for different contexts
-    // TODO: reuse default tokens as much as possible using their identifiers
+    // reuse default tokens as much as possible using their identifiers
     let block_allowed = [
-        Tokens::LVariants(),
-        Tokens::LIdentifier(String::new()),
-        Tokens::LOnly(),
-        Tokens::LNo(),
-        Tokens::LInclude(),
-        Tokens::LDel(String::new(), String::new()),
-        Tokens::LNotCond(),
-        Tokens::LSuffix(),
-        Tokens::LJoin(),
+        Tokens::default("variants"),
+        Tokens::default("Identifier"),
+        Tokens::default("only"),
+        Tokens::default("no"),
+        Tokens::default("include"),
+        Tokens::default("del"),
+        Tokens::default("!"),
+        Tokens::default("suffix"),
+        Tokens::default("join"),
     ];
-    let variants_allowed = [Tokens::LVariant()];
+    let variants_allowed = [Tokens::default("-")];
     let identifier_allowed = [
-        Tokens::LSet(String::new(), String::new()),
-        Tokens::LAppend(String::new(), String::new()),
-        Tokens::LPrepend(String::new(), String::new()),
-        Tokens::LLazySet(String::new(), String::new()),
-        Tokens::LRegExpSet(String::new(), String::new()),
-        Tokens::LRegExpAppend(String::new(), String::new()),
-        Tokens::LRegExpPrepend(String::new(), String::new()),
-        Tokens::LColon(),
-        Tokens::LEndL(),
+        Tokens::default("="),
+        Tokens::default("+="),
+        Tokens::default("<="),
+        Tokens::default("~="),
+        Tokens::default("?="),
+        Tokens::default("?+="),
+        Tokens::default("?<="),
+        Tokens::default(":"),
+        Tokens::default("endl"),
     ];
     let indent_allowed = [
-        Tokens::LIndent(0),
-        Tokens::LEndBlock(0),
+        Tokens::default("indent"),
+        Tokens::default("endb")
     ];
     let mut allowed = block_allowed.to_vec();
 
