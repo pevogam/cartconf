@@ -32,7 +32,6 @@ fn cartconf(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     let tokens_module = PyModule::new(m.py(), "tokens")?;
     tokens_module.add_class::<tokens::Tokens>()?;
-    tokens_module.add_function(wrap_pyfunction!(tokens::substitution, m)?)?;
 
     let lexer_module = PyModule::new(m.py(), "lexer")?;
     lexer_module.add_class::<lexer::Reader>()?;

@@ -1,10 +1,12 @@
 use std::fmt;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::sync::LazyLock;
+use std::mem;
 use regex::Regex;
 
-use pyo3::{prelude::*, IntoPyObjectExt};
-use pyo3::types::{PyDict, PyTuple, PyString, IntoPyDict};
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple};
 use pyo3::exceptions::{PyAttributeError, PyValueError};
 
 const RESERVED_KEYS: &[&str] = &[
@@ -14,6 +16,150 @@ const RESERVED_KEYS: &[&str] = &[
     "_short_name_map_file",
     "_name_map_file",
 ];
+
+#[derive(Eq, PartialEq, Clone, Hash)]
+pub enum ParamKey {
+    String(String),
+    Tuple(Vec<String>),
+}
+impl From<String> for ParamKey {
+    fn from(s: String) -> Self {
+        ParamKey::String(s)
+    }
+}
+impl From<ParamKey> for String {
+    fn from(p: ParamKey) -> Self {
+        match p {
+            ParamKey::String(s) => s,
+            ParamKey::Tuple(v) => {
+                v.iter().fold(String::new(), |mut acc, item| {
+                    acc.push_str(item);
+                    acc
+                })
+            }
+        }
+    }
+}
+impl fmt::Display for ParamKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", String::from(self.clone()))
+    }
+}
+impl fmt::Debug for ParamKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", String::from(self.clone()))
+    }
+}
+impl<'py> IntoPyObject<'py> for ParamKey {
+    type Target = PyAny;
+    type Output = Bound<'py, Self::Target>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        use pyo3::IntoPyObjectExt;
+
+        match self {
+            ParamKey::String(s) => s.into_bound_py_any(py),
+            ParamKey::Tuple(v) => {
+                let py_tuple = PyTuple::new(py, v)?;
+                py_tuple.into_bound_py_any(py)
+            }
+        }
+    }
+}
+impl<'py> FromPyObject<'_, 'py> for ParamKey {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'_, 'py, PyAny>) -> Result<Self, Self::Error> {
+        if let Ok(s) = object.extract::<String>() {
+            Ok(ParamKey::String(s))
+        }
+        else {
+            let py_tuple = object.cast::<PyTuple>()?;
+            let tuple = py_tuple.as_slice();
+            let vector = tuple.iter().filter_map(|item| {
+                item.extract::<String>().ok()
+            }).collect();
+            Ok(ParamKey::Tuple(vector))
+        }
+    }
+}
+#[derive(PartialEq, Clone)]
+pub enum ParamVal {
+    String(String),
+    List(Vec<String>),
+    Dict(HashMap<String, String>),
+}
+impl From<String> for ParamVal {
+    fn from(s: String) -> Self {
+        ParamVal::String(s)
+    }
+}
+impl From<ParamVal> for String {
+    fn from(p: ParamVal) -> Self {
+        match p {
+            ParamVal::String(s) => s,
+            ParamVal::List(v) => {
+                v.iter().fold(String::new(), |mut acc, item| {
+                    acc.push_str(item);
+                    acc
+                })
+            }
+            ParamVal::Dict(h) => {
+                h.iter().fold(String::new(), |mut acc, item| {
+                    acc.push_str(item.0);
+                    acc.push('=');
+                    acc.push_str(item.1);
+                    acc.push(';');
+                    acc
+                })
+            }
+        }
+    }
+}
+impl fmt::Display for ParamVal {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", String::from(self.clone()))
+    }
+}
+impl fmt::Debug for ParamVal {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", String::from(self.clone()))
+    }
+}
+impl<'py> IntoPyObject<'py> for ParamVal {
+    type Target = PyAny;
+    type Output = Bound<'py, Self::Target>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        use pyo3::IntoPyObjectExt;
+
+        match self {
+            ParamVal::String(s) => s.into_bound_py_any(py),
+            ParamVal::List(v) => v.into_bound_py_any(py),
+            ParamVal::Dict(h) => h.into_bound_py_any(py),
+        }
+    }
+}
+impl<'py> FromPyObject<'_, 'py> for ParamVal {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'_, 'py, PyAny>) -> Result<Self, Self::Error> {
+        if let Ok(s) = object.extract::<String>() {
+            Ok(ParamVal::String(s))
+        }
+        else if let Ok(v) = object.extract::<Vec<String>>() {
+            Ok(ParamVal::List(v))
+        }
+        else if let Ok(h) = object.extract::<HashMap<String, String>>() {
+            Ok(ParamVal::Dict(h))
+        } else {
+            let s: String = object.extract()?;
+            Ok(ParamVal::String(s))
+        }
+    }
+}
 
 // Define an enum for the different types of tokens
 #[pyclass(eq)]
@@ -55,13 +201,13 @@ pub enum Tokens {
     LRegExpAppend(String, String),
     LRegExpPrepend(String, String),
     LDel(String, String),
-    LApplyPreDict(String, HashMap<String, String>),
+    LApplyPreDict(String, HashMap<ParamKey, ParamVal>),
     LUpdateFileMap(String, String, String),
     Suffix(String, String),
 }
 // Implement the Display trait for Tokens
 impl fmt::Display for Tokens {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Tokens::LIndent(length) => write!(f, "indent {length}"),
             Tokens::LEndL() => write!(f, "endl"),
@@ -253,163 +399,150 @@ impl Tokens {
         }
     }
 
-    pub fn apply_to_dict(&self, py_dict: &Bound<'_, PyDict>) -> PyResult<()> {
+    fn apply_to_dict(&self, py_dict: &Bound<'_, PyDict>) -> PyResult<()> {
+        let mut pre_dict = py_dict.extract::<HashMap<ParamKey, ParamVal>>()?;
+        self.apply_to_predict(&mut pre_dict)?;
+
+        py_dict.clear();
+        for (key, value) in pre_dict.iter() {
+            py_dict.set_item(key.clone(), value.clone())?;
+        }
+
+        Ok(())
+    }
+}
+impl Tokens {
+    pub fn apply_to_predict(&self, pre_dict: &mut HashMap<ParamKey, ParamVal>) -> PyResult<()> {
         match self {
             Tokens::LSet(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) {
-                    let substituted_value = substitution(value, py_dict)?;
-                    py_dict.set_item(name, substituted_value)?;
+                    let current_key = ParamKey::from(name.clone());
+                    let substituted = substitution(value, pre_dict)?;
+                    let substituted_val = ParamVal::from(substituted);
+                    pre_dict.insert(current_key, substituted_val);
                 }
                 Ok(())
             }
             Tokens::LAppend(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) {
-                    let empty_value = PyString::new(py_dict.py(), "");
-                    if let Ok(current_value) = py_dict.get_item(name) {
-                        let current_value = current_value.unwrap_or(
-                            empty_value.into_bound_py_any(py_dict.py())?
-                        );
-                        let substituted_value = substitution(value, py_dict)?;
-                        let new_value = format!("{}{}", current_value.extract::<String>()?, substituted_value);
-                        py_dict.set_item(name, new_value)?;
+                    let current_key = ParamKey::from(name.clone());
+                    let substituted = substitution(value, pre_dict)?;
+                    if let Entry::Occupied(mut e) = pre_dict.entry(current_key.clone()) {
+                        let previous = String::from(e.get().clone());
+                        e.insert(format!("{}{}", previous, substituted).into());
+                    } else {
+                        let substituted_val = ParamVal::from(substituted);
+                        pre_dict.insert(current_key, substituted_val);
                     }
                 }
                 Ok(())
             }
             Tokens::LPrepend(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) {
-                    let empty_value = PyString::new(py_dict.py(), "");
-                    if let Ok(current_value) = py_dict.get_item(name) {
-                        let current_value = current_value.unwrap_or(
-                            empty_value.into_bound_py_any(py_dict.py())?
-                        );
-                        let substituted_value = substitution(value, py_dict)?;
-                        let new_value = format!("{}{}", substituted_value, current_value.extract::<String>()?);
-                        py_dict.set_item(name, new_value)?;
+                    let current_key = ParamKey::from(name.clone());
+                    let substituted = substitution(value, pre_dict)?;
+                    if let Entry::Occupied(mut e) = pre_dict.entry(current_key.clone()) {
+                        let previous = String::from(e.get().clone());
+                        e.insert(format!("{}{}", substituted, previous).into());
+                    } else {
+                        let substituted_val = ParamVal::from(substituted);
+                        pre_dict.insert(current_key, substituted_val);
                     }
                 }
                 Ok(())
             }
             Tokens::LLazySet(name, value) => {
-                if !RESERVED_KEYS.contains(&name.as_str()) && !py_dict.contains(name)? {
-                    let substituted_value = substitution(value, py_dict)?;
-                    py_dict.set_item(name, substituted_value)?;
+                if !RESERVED_KEYS.contains(&name.as_str()) {
+                    let current_key = ParamKey::from(name.clone());
+                    if !pre_dict.contains_key(&current_key) {
+                        let substituted = substitution(value, pre_dict)?;
+                        let substituted_val = ParamVal::from(substituted);
+                        pre_dict.insert(current_key, substituted_val);
+                    }
                 }
                 Ok(())
             }
             Tokens::LRegExpSet(name, value) => {
                 let exp = Regex::new(&format!(r"^{name}$"))
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-                let substituted_value = substitution(value, py_dict)?;
-                for (key, _) in py_dict.iter() {
-                    if let Ok(key_str) = key.extract::<String>() {
+                let substituted = substitution(value, pre_dict)?;
+                let substituted_val = ParamVal::from(substituted);
+                let keys_to_update: Vec<ParamKey> = pre_dict.iter()
+                    .filter_map(|(k, _v)| {
+                        let key_str = String::from(k.clone());
                         if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
-                            py_dict.set_item(key, &substituted_value)?;
+                            Some(k.clone())
+                        } else {
+                            None
                         }
-                    } else {
-                        let key_tuple = key.cast::<PyTuple>()?.as_slice();
-                        let key_str = key_tuple.iter().fold(String::new(), |mut acc, item| {
-                            if let Ok(item_str) = item.extract::<String>() {
-                                acc.push_str(&item_str);
-                            }
-                            acc
-                        });
-                        if exp.is_match(&key_str) {
-                            py_dict.set_item(key, &substituted_value)?;
-                        }
-                    }
+                    })
+                    .collect();
+                for k in keys_to_update {
+                    pre_dict.insert(k, substituted_val.clone());
                 }
                 Ok(())
             }
             Tokens::LRegExpAppend(name, value) => {
                 let exp = Regex::new(&format!(r"^{name}$"))
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-                let substituted_value = substitution(value, py_dict)?;
-                for (key, val) in py_dict.iter() {
-                    if let Ok(key_str) = key.extract::<String>() {
+                let substituted = substitution(value, pre_dict)?;
+                let keys_to_update: Vec<ParamKey> = pre_dict.iter()
+                    .filter_map(|(k, v)| {
+                        let key_str = String::from(k.clone());
                         if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
-                            let current_value = val.extract::<String>().unwrap_or_default();
-                            let new_value = format!("{current_value}{substituted_value}");
-                            py_dict.set_item(key, new_value)?;
+                            Some((k.clone(), v.clone()))
+                        } else {
+                            None
                         }
-                    } else {
-                        let key_tuple = key.cast::<PyTuple>()?.as_slice();
-                        let key_str = key_tuple.iter().fold(String::new(), |mut acc, item| {
-                            if let Ok(item_str) = item.extract::<String>() {
-                                acc.push_str(&item_str);
-                            }
-                            acc
-                        });
-                        if exp.is_match(&key_str) {
-                            let current_value = val.extract::<String>().unwrap_or_default();
-                            let new_value = format!("{current_value}{substituted_value}");
-                            py_dict.set_item(key, new_value)?;
-                        }
-                    }
+                    })
+                    .map(|(k, _)| k)
+                    .collect();
+                for k in keys_to_update {
+                    let current: String = pre_dict.get(&k).map(|v| v.clone().into()).unwrap_or_default();
+                    pre_dict.insert(k, format!("{current}{substituted}").into());
                 }
                 Ok(())
             }
             Tokens::LRegExpPrepend(name, value) => {
                 let exp = Regex::new(&format!(r"^{name}$"))
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-                let substituted_value = substitution(value, py_dict)?;
-                for (key, val) in py_dict.iter() {
-                    if let Ok(key_str) = key.extract::<String>() {
+                let substituted = substitution(value, pre_dict)?;
+                let keys_to_update: Vec<ParamKey> = pre_dict.iter()
+                    .filter_map(|(k, _)| {
+                        let key_str = String::from(k.clone());
                         if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
-                            let current_value = val.extract::<String>().unwrap_or_default();
-                            let new_value = format!("{substituted_value}{current_value}");
-                            py_dict.set_item(key, new_value)?;
-                        }
-                    } else {
-                        let key_tuple = key.cast::<PyTuple>()?.as_slice();
-                        let key_str = key_tuple.iter().fold(String::new(), |mut acc, item| {
-                            if let Ok(item_str) = item.extract::<String>() {
-                                acc.push_str(&item_str);
-                            }
-                            acc
-                        });
-                        if exp.is_match(&key_str) {
-                            let current_value = val.extract::<String>().unwrap_or_default();
-                            let new_value = format!("{substituted_value}{current_value}");
-                            py_dict.set_item(key, new_value)?;
-                        }
-                    }
-                }
-                Ok(())
-            }
-            Tokens::LDel(name, _) => {
-                let exp = Regex::new(&format!(r"^{name}$"))
-                   .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-                let keys_to_delete: Vec<_> = py_dict
-                    .iter()
-                    // TODO: using "?" doesn't propagate so now we just ignore errors using "ok()?" - try try_filter_map?
-                    .filter_map(|(key, _)| {
-                        if let Ok(key_str) = key.extract::<String>() {
-                            if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
-                                return Some(key);
-                            }
+                            Some(k.clone())
                         } else {
-                            let key_tuple = key.cast::<PyTuple>().ok()?.as_slice();
-                            let key_str = key_tuple.iter().fold(String::new(), |mut acc, item| {
-                                if let Ok(item_str) = item.extract::<String>() {
-                                    acc.push_str(&item_str);
-                                }
-                                acc
-                            });
-                            if exp.is_match(&key_str) {
-                                return Some(key);
-                            }
+                            None
                         }
-                        None
                     })
                     .collect();
-                for key in keys_to_delete {
-                    py_dict.del_item(key)?;
+                for k in keys_to_update {
+                    let current: String = pre_dict.get(&k).map(|v| v.clone().into()).unwrap_or_default();
+                    pre_dict.insert(k, format!("{substituted}{current}").into());
                 }
                 Ok(())
             }
-            Tokens::LApplyPreDict(_, value) => {
-                py_dict.update(value.into_py_dict(py_dict.py())?.as_mapping())?;
+            Tokens::LDel(name, _val) => {
+                let exp = Regex::new(&format!(r"^{name}$"))
+                   .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
+                let keys_to_delete: Vec<ParamKey> = pre_dict.iter()
+                    .filter_map(|(k, _v)| {
+                        let key_str = String::from(k.clone());
+                        if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
+                            Some(k.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                for k in keys_to_delete {
+                    pre_dict.remove(&k);
+                }
+                Ok(())
+            }
+            Tokens::LApplyPreDict(_, value_map) => {
+                pre_dict.extend(value_map.clone());
                 Ok(())
             }
             Tokens::LUpdateFileMap(filename, name, value) => {
@@ -424,55 +557,50 @@ impl Tokens {
                         .to_string()
                 };
 
-                if !py_dict.contains(dest)? {
-                    py_dict.set_item(dest, PyDict::new(py_dict.py()))?;
+                let dest_key = ParamKey::from(dest.clone());
+
+                // Ensure destination key exists as a dict
+                if !pre_dict.contains_key(&dest_key) {
+                    pre_dict.insert(dest_key.clone(), ParamVal::Dict(HashMap::new()));
                 }
 
-
-                let dest_dict = if let Ok(Some(dest_any)) = py_dict.get_item(dest) {
-                    dest_any
-                    .cast::<PyDict>()
-                    .map_err(|_| PyAttributeError::new_err(format!("{dest} is not a dict")))?
-                    .clone()
+                // Get or create the inner dict
+                if let Some(ParamVal::Dict(mut inner_dict)) = pre_dict.remove(&dest_key) {
+                    if let Some(old_name) = inner_dict.get(&shortname) {
+                        let new_name = format!("{name}.{old_name}");
+                        inner_dict.insert(shortname, new_name);
+                    } else {
+                        inner_dict.insert(shortname, name.clone());
+                    }
+                    pre_dict.insert(dest_key, ParamVal::Dict(inner_dict));
                 } else {
-                    PyDict::new(py_dict.py())
-                };
-                if let Some(old_name) = dest_dict.get_item(&shortname)? {
-                    let old_name_str = old_name.extract::<String>()?;
-                    let new_name = format!("{name}.{old_name_str}");
-                    dest_dict.set_item(&shortname, new_name)?;
-                } else {
-                    dest_dict.set_item(&shortname, name)?;
+                    // Create new dict if key exists but is not a dict
+                    let mut new_dict = HashMap::new();
+                    new_dict.insert(shortname, name.clone());
+                    pre_dict.insert(dest_key, ParamVal::Dict(new_dict));
                 }
                 Ok(())
             }
             Tokens::Suffix(_, value) => {
-                let py_value = value.into_bound_py_any(py_dict.py())?;
-                let keyvals = py_dict.iter().filter_map(|(key, val)| {
-                    let py_value_clone = py_value.clone();
-                    let mut items = Vec::new();
-                    if let Ok(key_str) = key.extract::<String>() {
-                        if RESERVED_KEYS.contains(&key_str.as_str()) {
-                            return Some((key, val));
-                        } else {
-                            items.push(&key);
+                // Create suffixed mapping: turn string keys into tuple keys where possible
+                let mut new_map: HashMap<ParamKey, ParamVal> = HashMap::new();
+                for (k, v) in pre_dict.iter() {
+                    match k {
+                        ParamKey::String(s) => {
+                            if RESERVED_KEYS.contains(&s.as_str()) {
+                                new_map.insert(ParamKey::String(s.clone()), v.clone());
+                            } else {
+                                new_map.insert(ParamKey::Tuple(vec![s.clone(), value.clone()]), v.clone());
+                            }
                         }
-                    } else {
-                        let key_tuple = key.cast::<PyTuple>().ok()?.as_slice();
-                        for item in key_tuple.iter() {
-                            items.push(item);
+                        ParamKey::Tuple(vec) => {
+                            let mut new_vec = vec.clone();
+                            new_vec.push(value.clone());
+                            new_map.insert(ParamKey::Tuple(new_vec), v.clone());
                         }
                     }
-                    items.push(&py_value_clone);
-                    let new_key = PyTuple::new(py_dict.py(), items).ok()?;
-                    Some((new_key.into_bound_py_any(py_dict.py()).ok()?, val))
-                }).collect::<Vec<_>>();
-                let suffixed_py_dict = PyDict::new(py_dict.py());
-                for (k, v) in keyvals {
-                    suffixed_py_dict.set_item(k, v)?;
                 }
-                py_dict.clear();
-                py_dict.update(suffixed_py_dict.as_mapping())?;
+                let _ = mem::replace(pre_dict, new_map);
                 Ok(())
             }
             _ => Err(PyAttributeError::new_err("apply_to_dict is not a valid attribute for this token")),
@@ -480,55 +608,57 @@ impl Tokens {
     }
 }
 
-fn drop_suffixes(py_dict: &Bound<'_, PyDict>, skipdups: bool) -> PyResult<HashMap<String, String>> {
-    let d_flat: HashMap<String, String> = py_dict
+pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyResult<HashMap<ParamKey, ParamVal>> {
+    let d_flat: HashMap<ParamKey, ParamVal> = dict
         .iter()
         .filter_map(|(key, value)| {
-            let value_str = value.extract::<String>().ok()?;
-            if let Ok(key_str) = key.extract::<String>() {
-                Some((key_str, value_str))
-            } else if let Ok(key_tuple) = key.cast::<PyTuple>() {
-                let gen_key = key_tuple.get_item(0).ok()?.extract::<String>().ok()?;
-                let mut can_drop_all_suffixes = true;
+            match key {
+                ParamKey::String(key_str) => {
+                    Some((key_str.clone().into(), value.clone()))
+                }
+                ParamKey::Tuple(key_vec) => {
+                    let gen_key_str = key_vec.first()?.clone();
+                    let gen_key = ParamKey::String(gen_key_str.clone());
+                    let mut can_drop_all_suffixes = true;
 
-                if skipdups {
-                    if let Ok(Some(gen_value)) = py_dict.get_item(&gen_key) &&
-                            let Ok(gen_value_str) = gen_value.extract::<String>() {
-                        if gen_value_str == value_str {
-                            return None; // Skip duplicate suffixes
-                        } else {
-                            can_drop_all_suffixes = false;
+                    if skipdups {
+                        let value_str = String::from(value.clone());
+                        if let Some(gen_value) = dict.get(&gen_key) {
+                            let gen_value_str = String::from(gen_value.clone());
+                            if gen_value_str == value_str {
+                                return None; // Skip duplicate suffixes
+                            } else {
+                                can_drop_all_suffixes = false;
+                            }
+                        }
+
+                        if can_drop_all_suffixes {
+                            can_drop_all_suffixes = dict
+                                .iter()
+                                .filter_map(|(other_key, other_value)| {
+                                    match other_key {
+                                        ParamKey::Tuple(other_vec) => {
+                                            other_vec.first()
+                                                .filter(|k| *k == &gen_key_str)
+                                                .map(|_| String::from(other_value.clone()))
+                                        }
+                                        _ => None,
+                                    }
+                                })
+                                .all(|other_value_str| other_value_str == value_str);
                         }
                     }
 
-                    if can_drop_all_suffixes {
-                        can_drop_all_suffixes = py_dict.iter()
-                            .filter_map(|(other_key, other_value)| {
-                                other_key.cast::<PyTuple>().ok()?
-                                    .get_item(0).ok()?
-                                    .extract::<String>().ok()
-                                    .filter(|k| k == &gen_key)
-                                    .and_then(|_| other_value.extract::<String>().ok())
-                            })
-                            .all(|other_value_str| other_value_str == value_str);
-                    }
-                }
-
-                let new_key = if skipdups && can_drop_all_suffixes {
-                    gen_key
-                } else {
-                    let key_vec = key_tuple.iter()
-                        .map(|item| item.extract::<String>())
-                        .collect::<Result<Vec<_>, _>>()
-                        .ok()?;
+                    let new_key = if skipdups && can_drop_all_suffixes {
+                        gen_key_str
+                    } else {
                         let mut suffix_parts = key_vec[1..].to_vec();
                         suffix_parts.reverse();
                         format!("{}{}", key_vec[0], suffix_parts.join(""))
-                };
+                    };
 
-                Some((new_key, value_str))
-            } else {
-                None
+                    Some((new_key.into(), value.clone()))
+                }
             }
         })
         .collect();
@@ -541,21 +671,19 @@ static MATCH_SUBSTITUTE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("Invalid MATCH_SUBSTITUTE pattern")
 });
 
-#[pyfunction]
-pub fn substitution(value: &str, py_dict: &Bound<'_, PyDict>) -> PyResult<String> {
+pub fn substitution(value: &str, dict: &HashMap<ParamKey, ParamVal>) -> PyResult<String> {
     if value.contains('$') {
         let mut start = 0;
         let mut result = String::new();
 
-        // Use the Rust `drop_suffixes` function
-        let d = drop_suffixes(py_dict, true)?;
+        let d = drop_suffixes(dict, true)?;
 
         while let Some(captures) = MATCH_SUBSTITUTE.captures(&value[start..]) {
             if let Some(matched) = captures.get(0) {
                 let key = captures.get(1).map_or("", |m| m.as_str());
-                if let Some(val) = d.get(key) {
+                if let Some(val) = d.get(&key.to_string().into()) {
                     result.push_str(&value[start..start + matched.start()]);
-                    result.push_str(val);
+                    result.push_str(String::from(val.clone()).as_str());
                     start += matched.end();
                 } else {
                     break;
@@ -572,6 +700,7 @@ pub fn substitution(value: &str, py_dict: &Bound<'_, PyDict>) -> PyResult<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_display() {
@@ -604,173 +733,143 @@ mod tests {
 
     #[test]
     fn test_substitution_with_placeholders() {
-        Python::initialize();
-        Python::attach(|py| {
-            let py_dict = [("key1", "value1"), ("key2", "value2")].into_py_dict(py).unwrap();
-            let result = substitution("This is ${key1} and ${key2}.", &py_dict).unwrap();
-            assert_eq!(result, "This is value1 and value2.");
-        });
+        let dict: HashMap<ParamKey, ParamVal> = [
+            (ParamKey::String("key1".to_string()), ParamVal::String("value1".to_string())),
+            (ParamKey::String("key2".to_string()), ParamVal::String("value2".to_string())),
+        ].iter().cloned().collect();
+        let result = substitution("This is ${key1} and ${key2}.", &dict).unwrap();
+        assert_eq!(result, "This is value1 and value2.");
     }
 
     #[test]
     fn test_substitution_missing_placeholder() {
-        Python::initialize();
-        Python::attach(|py| {
-            let py_dict = [("key1", "value1")].into_py_dict(py).unwrap();
-            let result = substitution("This is ${key1} and ${key2}.", &py_dict).unwrap();
-            assert_eq!(result, "This is value1 and ${key2}.");
-        });
+        let dict: HashMap<ParamKey, ParamVal> = [
+            (ParamKey::String("key1".to_string()), ParamVal::String("value1".to_string())),
+        ].iter().cloned().collect();
+        let result = substitution("This is ${key1} and ${key2}.", &dict).unwrap();
+        assert_eq!(result, "This is value1 and ${key2}.");
     }
 
     #[test]
     fn test_substitution_no_placeholders() {
-        Python::initialize();
-        Python::attach(|py| {
-            let py_dict = [("key1", "value1"), ("key2", "value2")].into_py_dict(py).unwrap();
-            let result = substitution("no placeholders here", &py_dict).unwrap();
-            assert_eq!(result, "no placeholders here");
-        });
+        let dict: HashMap<ParamKey, ParamVal> = [
+            (ParamKey::String("key1".to_string()), ParamVal::String("value1".to_string())),
+            (ParamKey::String("key2".to_string()), ParamVal::String("value2".to_string())),
+        ].iter().cloned().collect();
+        let result = substitution("no placeholders here", &dict).unwrap();
+        assert_eq!(result, "no placeholders here");
     }
 
     #[test]
     fn test_substitution_empty_dict() {
-        Python::initialize();
-        Python::attach(|py| {
-            let py_dict = PyDict::new(py);
-            let result = substitution("This is ${key1}.", &py_dict).unwrap();
-            assert_eq!(result, "This is ${key1}.");
-        });
+        let dict: HashMap<ParamKey, ParamVal> = HashMap::new();
+        let result = substitution("This is ${key1}.", &dict).unwrap();
+        assert_eq!(result, "This is ${key1}.");
     }
 
     #[test]
     fn test_substitution_with_dollar_sign_but_no_placeholders() {
-        Python::initialize();
-        Python::attach(|py| {
-            let py_dict = [("key1", "value1")].into_py_dict(py).unwrap();
-            let result = substitution("This costs $5.", &py_dict).unwrap();
-            assert_eq!(result, "This costs $5.");
-        });
+        let dict: HashMap<ParamKey, ParamVal> = [
+            (ParamKey::String("key1".to_string()), ParamVal::String("value1".to_string())),
+        ].iter().cloned().collect();
+        let result = substitution("This costs $5.", &dict).unwrap();
+        assert_eq!(result, "This costs $5.");
     }
 
     #[test]
     fn test_substitution_with_suffixed_dict() {
-        Python::initialize();
-        Python::attach(|py| {
-            let py_dict = [
-                (("key1", "_s1"), "value1"),
-                (("key2", "_s1"), "value2"),
-                (("key2", "_s2"), "value3"),
-            ].into_py_dict(py).unwrap();
-            let result = substitution("This is ${key1} and ${key2_s1}.", &py_dict).unwrap();
-            assert_eq!(result, "This is value1 and value2.");
-        });
+        let dict: HashMap<ParamKey, ParamVal> = [
+            (ParamKey::Tuple(vec!["key1".to_string(), "_s1".to_string()]), ParamVal::String("value1".to_string())),
+            (ParamKey::Tuple(vec!["key2".to_string(), "_s1".to_string()]), ParamVal::String("value2".to_string())),
+            (ParamKey::Tuple(vec!["key2".to_string(), "_s2".to_string()]), ParamVal::String("value3".to_string())),
+        ].iter().cloned().collect();
+        let result = substitution("This is ${key1} and ${key2_s1}.", &dict).unwrap();
+        assert_eq!(result, "This is value1 and value2.");
     }
 
     #[test]
     fn test_drop_suffixes_with_simple_keys() {
-        Python::initialize();
-        Python::attach(|py| {
-            let py_dict = [
-                ("key1", "value1"),
-                ("key2", "value2")
-            ].into_py_dict(py)
-            .unwrap();
-            let result = drop_suffixes(&py_dict, true).unwrap();
-            assert_eq!(result.get("key1"), Some(&"value1".to_string()), "key1 is preserved");
-            assert_eq!(result.get("key2"), Some(&"value2".to_string()), "key2 is preserved");
-        });
+        let dict: HashMap<ParamKey, ParamVal> = [
+            (ParamKey::String("key1".to_string()), ParamVal::String("value1".to_string())),
+            (ParamKey::String("key2".to_string()), ParamVal::String("value2".to_string())),
+        ].iter().cloned().collect();
+        let result = drop_suffixes(&dict, true).unwrap();
+        assert_eq!(result.get(&"key1".to_string().into()), Some(&"value1".to_string().into()), "key1 is preserved");
+        assert_eq!(result.get(&"key2".to_string().into()), Some(&"value2".to_string().into()), "key2 is preserved");
     }
 
     #[test]
     fn test_drop_suffixes_with_tuple_keys() {
-        Python::initialize();
-        Python::attach(|py| {
-            let py_dict = [
-                (("key1", "_s1"), "value1"),
-                (("key1", "_s2"), "value1"),
-                (("key2", "_s1"), "value2"),
-                (("key2", "_s2"), "value22"),
-                (("key3", "_sX"), "value3"),
-            ]
-            .into_py_dict(py)
-            .unwrap();
-            let result = drop_suffixes(&py_dict, true).unwrap();
-            assert_eq!(result.get("key1"), Some(&"value1".to_string()), "single general key remains");
-            assert_eq!(result.get("key1_s1"), None, "duplicate suffix is skipped");
-            assert_eq!(result.get("key1_s2"), None, "duplicate suffix is skipped");
-            assert_eq!(result.get("key2"), None, "no general key is created for different suffix values");
-            assert_eq!(result.get("key2_s1"), Some(&"value2".to_string()), "nonduplicate suffix is preserved");
-            assert_eq!(result.get("key2_s2"), Some(&"value22".to_string()), "nonduplicate suffix is preserved");
-            assert_eq!(result.get("key3"), Some(&"value3".to_string()), "single suffix is converted to general key");
-        });
+        let dict: HashMap<ParamKey, ParamVal> = [
+            (ParamKey::Tuple(vec!["key1".to_string(), "_s1".to_string()]), ParamVal::String("value1".to_string())),
+            (ParamKey::Tuple(vec!["key1".to_string(), "_s2".to_string()]), ParamVal::String("value1".to_string())),
+            (ParamKey::Tuple(vec!["key2".to_string(), "_s1".to_string()]), ParamVal::String("value2".to_string())),
+            (ParamKey::Tuple(vec!["key2".to_string(), "_s2".to_string()]), ParamVal::String("value22".to_string())),
+            (ParamKey::Tuple(vec!["key3".to_string(), "_sX".to_string()]), ParamVal::String("value3".to_string())),
+        ].iter().cloned().collect();
+        let result = drop_suffixes(&dict, true).unwrap();
+        assert_eq!(result.get(&"key1".to_string().into()), Some(&"value1".to_string().into()), "single general key remains");
+        assert_eq!(result.get(&"key1_s1".to_string().into()), None, "duplicate suffix is skipped");
+        assert_eq!(result.get(&"key1_s2".to_string().into()), None, "duplicate suffix is skipped");
+        assert_eq!(result.get(&"key2".to_string().into()), None, "no general key is created for different suffix values");
+        assert_eq!(result.get(&"key2_s1".to_string().into()), Some(&"value2".to_string().into()), "nonduplicate suffix is preserved");
+        assert_eq!(result.get(&"key2_s2".to_string().into()), Some(&"value22".to_string().into()), "nonduplicate suffix is preserved");
+        assert_eq!(result.get(&"key3".to_string().into()), Some(&ParamVal::String("value3".to_string())), "single suffix is converted to general key");
     }
 
     #[test]
     fn test_drop_suffixes_with_mixed_keys() {
-        Python::initialize();
-        Python::attach(|py| {
-            let py_dict = [
-                (("key1", "_s2"), "value1"),
-                (("key2", "_s2"), "value22"),
-                (("key3", "_sX"), "value3"),
-            ]
-            .into_py_dict(py)
-            .unwrap();
-            py_dict.set_item("key1", "value1").unwrap();
-            py_dict.set_item(("key1", "_sY", "_sZ"), "value1").unwrap();
-            py_dict.set_item("key2", "value2").unwrap();
-            py_dict.set_item(("key2", "_sY", "_sZ"), "value222").unwrap();
-            py_dict.set_item("key4", "value4").unwrap();
-            py_dict.set_item(("key5", "_sY", "_sZ"), "value5").unwrap();
-            let result = drop_suffixes(&py_dict, true).unwrap();
-            assert_eq!(result.get("key1"), Some(&"value1".to_string()), "single general key remains");
-            assert_eq!(result.get("key1_s2"), None, "duplicate suffix is skipped");
-            assert_eq!(result.get("key1_sZ_sY"), None, "duplicate double suffix is skipped");
-            assert_eq!(result.get("key2"), Some(&"value2".to_string()), "general key is preserved");
-            assert_eq!(result.get("key2_s2"), Some(&"value22".to_string()), "single suffix is preserved together with general key");
-            assert_eq!(result.get("key2_sZ_sY"), Some(&"value222".to_string()), "duplicate double suffix is preserved together with general key");
-            assert_eq!(result.get("key3"), Some(&"value3".to_string()), "single suffix is converted to general key");
-            assert_eq!(result.get("key4"), Some(&"value4".to_string()), "single general key is preserved");
-            assert_eq!(result.get("key5"), Some(&"value5".to_string()), "single general key is preserved");
-        });
+        let mut dict: HashMap<ParamKey, ParamVal> = [
+            (ParamKey::Tuple(vec!["key1".to_string(), "_s2".to_string()]), ParamVal::String("value1".to_string())),
+            (ParamKey::Tuple(vec!["key2".to_string(), "_s2".to_string()]), ParamVal::String("value22".to_string())),
+            (ParamKey::Tuple(vec!["key3".to_string(), "_sX".to_string()]), ParamVal::String("value3".to_string())),
+        ].iter().cloned().collect();
+
+        // Add mixed entries (general keys and multi-suffix tuple)
+        dict.insert(ParamKey::String("key1".to_string()), ParamVal::String("value1".to_string()));
+        dict.insert(ParamKey::Tuple(vec!["key1".to_string(), "_sY".to_string(), "_sZ".to_string()]), ParamVal::String("value1".to_string()));
+        dict.insert(ParamKey::String("key2".to_string()), ParamVal::String("value2".to_string()));
+        dict.insert(ParamKey::Tuple(vec!["key2".to_string(), "_sY".to_string(), "_sZ".to_string()]), ParamVal::String("value222".to_string()));
+        dict.insert(ParamKey::String("key4".to_string()), ParamVal::String("value4".to_string()));
+        dict.insert(ParamKey::Tuple(vec!["key5".to_string(), "_sY".to_string(), "_sZ".to_string()]), ParamVal::String("value5".to_string()));
+
+        let result = drop_suffixes(&dict, true).unwrap();
+        assert_eq!(result.get(&"key1".to_string().into()), Some(&ParamVal::String("value1".to_string())), "single general key remains");
+        assert_eq!(result.get(&"key1_s2".to_string().into()), None, "duplicate suffix is skipped");
+        assert_eq!(result.get(&"key1_sZ_sY".to_string().into()), None, "duplicate double suffix is skipped");
+        assert_eq!(result.get(&"key2".to_string().into()), Some(&ParamVal::String("value2".to_string())), "general key is preserved");
+        assert_eq!(result.get(&"key2_s2".to_string().into()), Some(&ParamVal::String("value22".to_string())), "single suffix is preserved together with general key");
+        assert_eq!(result.get(&"key2_sZ_sY".to_string().into()), Some(&ParamVal::String("value222".to_string())), "duplicate double suffix is preserved together with general key");
+        assert_eq!(result.get(&"key3".to_string().into()), Some(&ParamVal::String("value3".to_string())), "single suffix is converted to general key");
+        assert_eq!(result.get(&"key4".to_string().into()), Some(&ParamVal::String("value4".to_string())), "single general key is preserved");
+        assert_eq!(result.get(&"key5".to_string().into()), Some(&ParamVal::String("value5".to_string())), "single general key is preserved");
     }
 
     #[test]
     fn test_drop_suffixes_with_skipdups_false() {
-        Python::initialize();
-        Python::attach(|py| {
-            let py_dict = [
-                (("key1", "_s1"), "value1"),
-                (("key1", "_s2"), "value1"),
-            ]
-            .into_py_dict(py)
-            .unwrap();
-            py_dict.set_item("key1", "value1").unwrap();
-            let result = drop_suffixes(&py_dict, false).unwrap();
-            assert_eq!(result.get("key1"), Some(&"value1".to_string()), "general key is preserved");
-            assert_eq!(result.get("key1_s1"), Some(&"value1".to_string()), "duplicate suffix is preserved");
-            assert_eq!(result.get("key1_s2"), Some(&"value1".to_string()), "duplicate suffix is preserved");
-        });
+        let mut dict: HashMap<ParamKey, ParamVal> = [
+            (ParamKey::Tuple(vec!["key1".to_string(), "_s1".to_string()]), ParamVal::String("value1".to_string())),
+            (ParamKey::Tuple(vec!["key1".to_string(), "_s2".to_string()]), ParamVal::String("value1".to_string())),
+        ].iter().cloned().collect();
+        dict.insert(ParamKey::String("key1".to_string()), ParamVal::String("value1".to_string()));
+        let result = drop_suffixes(&dict, false).unwrap();
+        assert_eq!(result.get(&"key1".to_string().into()), Some(&ParamVal::String("value1".to_string())), "general key is preserved");
+        assert_eq!(result.get(&"key1_s1".to_string().into()), Some(&ParamVal::String("value1".to_string())), "duplicate suffix is preserved");
+        assert_eq!(result.get(&"key1_s2".to_string().into()), Some(&ParamVal::String("value1".to_string())), "duplicate suffix is preserved");
     }
 
     #[test]
     fn test_drop_suffixes_with_reserved_keys() {
-        Python::initialize();
-        Python::attach(|py| {
-            let py_dict = [
-                (("key1", "_s1"), "value1"),
-            ]
-            .into_py_dict(py)
-            .unwrap();
-            for key in RESERVED_KEYS.iter() {
-                py_dict.set_item(*key, "reserved_value").unwrap();
-            }
-            let result = drop_suffixes(&py_dict, true).unwrap();
-            assert_eq!(result.get("key1"), Some(&"value1".to_string()), "suffixed key is reduced as usual");
-            for key in RESERVED_KEYS.iter() {
-                py_dict.set_item(*key, "reserved_value").unwrap();
-                assert_eq!(result.get(*key), Some(&"reserved_value".to_string()), "reserved key is preserved");
-            }
-        });
+        let mut dict: HashMap<ParamKey, ParamVal> = [
+            (ParamKey::Tuple(vec!["key1".to_string(), "_s1".to_string()]), ParamVal::String("value1".to_string())),
+        ].iter().cloned().collect();
+        for key in RESERVED_KEYS.iter() {
+            dict.insert(ParamKey::String(key.to_string()), ParamVal::String("reserved_value".to_string()));
+        }
+        let result = drop_suffixes(&dict, true).unwrap();
+        assert_eq!(result.get(&"key1".to_string().into()), Some(&ParamVal::String("value1".to_string())), "suffixed key is reduced as usual");
+        for key in RESERVED_KEYS.iter() {
+            assert_eq!(result.get(&key.to_string().into()), Some(&ParamVal::String("reserved_value".to_string())), "reserved key is preserved");
+        }
     }
 }
