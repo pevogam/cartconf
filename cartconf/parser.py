@@ -176,10 +176,11 @@ class Parser(object):
         * ``ide, scsi`` is equivalent to ``scsi, ide``.
         """
         or_filters = []
-        tokens = iter(tokens + [LEndL()])
         and_filter = []
         con_filter = []
         dots = 1
+
+        tokens = iter(tokens + [LEndL()])
 
         def check_token(
             token: "Token", allowed_tokens: list[type]
@@ -202,21 +203,21 @@ class Parser(object):
                     _, ident = check_token(next_nw(tokens), [LIdentifier])  # (iden
                     typet, _ = check_token(next_nw(tokens), [LSet, LRRBracket])  # =
                     if typet == LRRBracket:  # (xxx)
-                        token = Label(ident.string)
+                        label = Label(ident.string)
                     elif typet == LSet:  # (xxx = yyyy)
                         _, value = check_token(next_nw(tokens), [LIdentifier, LString])
                         check_token(next_nw(tokens), [LRRBracket])
-                        token = Label(ident.string, value.string)
+                        label = Label(ident.string, value.string)
                 else:
-                    token = Label(token.string)
+                    label = Label(token.string)
                 if dots == 1:
-                    con_filter.append(token)
+                    con_filter.append(label)
                 elif dots == 2:
                     and_filter.append(con_filter)
-                    con_filter = [token]
+                    con_filter = [label]
                 elif dots == 0 or dots > 2:
                     raise ParserError(
-                        'Syntax Error expected "." between' " Identifier.",
+                        "Syntax Error: Expected '.' or '..' between identifiers",
                         lexer.line,
                         lexer.filename,
                         lexer.linenum,
@@ -228,25 +229,20 @@ class Parser(object):
             elif typet in [LComa, LWhite]:
                 if dots > 0:
                     raise ParserError(
-                        "Syntax Error expected identifier between" ' "." and ",".',
+                        "Syntax Error: Expected identifier between '.' and ','",
                         lexer.line,
                         lexer.filename,
                         lexer.linenum,
                     )
+                if con_filter:
+                    and_filter.append(con_filter)
+                    con_filter = []
                 if and_filter:
-                    if con_filter:
-                        and_filter.append(con_filter)
-                        con_filter = []
                     or_filters.append(and_filter)
                     and_filter = []
-                elif con_filter:
-                    or_filters.append([con_filter])
-                    con_filter = []
-                elif typet == LIdentifier:
-                    or_filters.append([[Label(token.string)]])
                 else:
                     raise ParserError(
-                        'Syntax Error expected "," between' " Identifier.",
+                        "Syntax Error: Expected ',' between identifiers",
                         lexer.line,
                         lexer.filename,
                         lexer.linenum,
@@ -262,15 +258,12 @@ class Parser(object):
             typet, token = check_token(
                 next(tokens), [LIdentifier, LComa, LDot, LLRBracket, LEndL, LWhite]
             )
+        if con_filter:
+            and_filter.append(con_filter)
+            con_filter = []
         if and_filter:
-            if con_filter:
-                and_filter.append(con_filter)
-                con_filter = []
             or_filters.append(and_filter)
             and_filter = []
-        if con_filter:
-            or_filters.append([con_filter])
-            con_filter = []
         return or_filters
 
     def get_dicts(
