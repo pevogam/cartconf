@@ -24,7 +24,6 @@ Lexer = lexer.Lexer
 ParserError = parser.ParserError
 Label = parser.Label
 Node = parser.Node
-parse = parser.parse
 parse_string = parser.parse_string
 parse_file = parser.parse_file
 

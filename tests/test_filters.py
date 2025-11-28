@@ -109,7 +109,7 @@ class TestFilters(unittest.TestCase):
     def test_parse_filter(self):
         lexer = Lexer(content="test.value")
         lexer.set_prev_indent(-1)
-        tokens = lexer.get_until([Tokens.LEndL])
+        tokens = lexer.get_until([Tokens.default("endl")])
         filters = Filters.parse_filter(tokens[1:], lexer.line, lexer.filename, lexer.linenum)
         self.assertEqual(len(filters), 1)
         self.assertEqual(len(filters[0]), 1)
@@ -121,8 +121,8 @@ class TestFilters(unittest.TestCase):
         f = "only xxx.yyy..(xxx=333).aaa, ddd (eeee) rrr.aaa"
         lexer = Lexer(content=f)
         lexer.set_prev_indent(-1)
-        lexer.get_next_token([Tokens.LIndent])
-        lexer.get_next_token([Tokens.LOnly])
+        lexer.get_next_token([Tokens.default("indent")])
+        lexer.get_next_token([Tokens.default("only")])
         rest_tokens = lexer.get_rest_line()
         p_filter = Filters.parse_filter(rest_tokens, lexer.line, lexer.filename, lexer.linenum)
         self.assertEqual(p_filter,

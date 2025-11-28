@@ -32,7 +32,6 @@ fn cartconf(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     let tokens_module = PyModule::new(m.py(), "tokens")?;
     tokens_module.add_class::<tokens::Tokens>()?;
-    tokens_module.add_function(wrap_pyfunction!(tokens::substitution, m)?)?;
 
     let lexer_module = PyModule::new(m.py(), "lexer")?;
     lexer_module.add_class::<lexer::Reader>()?;
@@ -45,7 +44,6 @@ fn cartconf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let parser_module = PyModule::new(m.py(), "parser")?;
     parser_module.add_class::<parser::Label>()?;
     parser_module.add_class::<parser::Node>()?;
-    parser_module.add_function(wrap_pyfunction!(parser::parse, m)?)?;
     parser_module.add_function(wrap_pyfunction!(parser::parse_string, m)?)?;
     parser_module.add_function(wrap_pyfunction!(parser::parse_file, m)?)?;
     parser_module.add("ParserError", m.py().get_type::<parser::ParserError>())?;

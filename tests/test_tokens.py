@@ -28,8 +28,8 @@ class TestTokens(unittest.TestCase):
     def test_lendblock(self):
         t = LEndBlock(4)
         self.assertEqual(t.identifier, str(t))
-        self.assertEqual(str(t), "indent 4")
-        self.assertEqual(repr(t), "'indent 4'")
+        self.assertEqual(str(t), "endb 4")
+        self.assertEqual(repr(t), "'endb 4'")
         self.assertEqual(t.length, 4)
 
     def test_lidentifier(self):
@@ -110,8 +110,8 @@ class TestTokens(unittest.TestCase):
     def test_lcond(self):
         t = LCond()
         self.assertEqual(t.identifier, str(t))
-        self.assertEqual(str(t), "")
-        self.assertEqual(repr(t), "''")
+        self.assertEqual(str(t), "?")
+        self.assertEqual(repr(t), "'?'")
 
     def test_lnotcond(self):
         t = LNotCond()
@@ -357,8 +357,8 @@ class TestTokens(unittest.TestCase):
     def test_lapply_pre_dict(self):
         t = LApplyPreDict("name", {"key": "value"})
         self.assertEqual(t.identifier, str(t))
-        self.assertEqual(str(t), "apply_pre_dict {\"key\": \"value\"}")
-        self.assertEqual(repr(t), "'apply_pre_dict {\"key\": \"value\"}'")
+        self.assertEqual(str(t), "apply_pre_dict {key: value}")
+        self.assertEqual(repr(t), "'apply_pre_dict {key: value}'")
         self.assertEqual(t.name, "name")
 
     def test_lapply_pre_dict_apply(self):
