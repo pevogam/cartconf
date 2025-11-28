@@ -639,7 +639,7 @@ impl Lexer {
         self.rest_as_string = true;
         let lstring: Tokens = {
             let remainder_str = self.get_next_token(Some(vec![Tokens::default("String")]), None)?;
-            let _ = self.get_next_token(Some(vec![Tokens::default("lendl")]), None)?;
+            let _ = self.get_next_token(Some(vec![Tokens::default("endl")]), None)?;
             remainder_str
         };
         Ok(lstring)

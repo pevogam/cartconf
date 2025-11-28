@@ -4,7 +4,7 @@ use std::fmt::{Debug, Display};
 use std::rc::Rc;
 use std::cell::RefCell;
 
-use pyo3::{prelude::*, IntoPyObjectExt};
+use pyo3::prelude::*;
 use pyo3::exceptions::PyException;
 use pyo3::types::{PyAny, PyDict};
 
@@ -388,8 +388,6 @@ impl Node {
         lexer: &mut Lexer,
         pre_dict: &Bound<'_, PyDict>,
     ) -> PyResult<()> {
-        let py = pre_dict.py();
-
         // Build identifier_str
         let token_str = match token {
             Tokens::LIdentifier(s) => s.clone(),
@@ -428,32 +426,28 @@ impl Node {
             value_str = value_str[1..value_str.len() - 1].to_string();
         }
 
-        // Construct operator instance by calling its Python type
+        // Construct operator instance by likeness of the provided one
         let op: &Tokens = match identifier.last() {
             Some(last_token) => last_token,
             None => {
                 return Err(pyo3::exceptions::PyValueError::new_err("Empty identifier"));
             }
         };
-        let op_type = op.clone().into_bound_py_any(py)?.get_type();
-        let op_obj = op_type.call1((identifier_str.clone(), value_str.clone()))?;
+        let op_obj = op.like(identifier_str.clone(), value_str.clone())?;
 
         // If it's an LSet and value has no '$', apply directly to pre_dict
         let d_nin_val = !value_str.contains('$');
         if matches!(op, Tokens::LSet(_,_)) && d_nin_val {
-            op_obj.call_method1("apply_to_dict", (pre_dict,))?;
+            op_obj.apply_to_dict(pre_dict)?;
         } else {
             // If pre_dict has pending entries, either optimize or flush
             let pre_nonempty = pre_dict.len() != 0;
             if pre_nonempty {
                 // try to get op.name and check if it's present in pre_dict
-                let op_name = match op_obj.getattr("name") {
-                    Ok(n) => n.extract::<String>()?,
-                    Err(_) => String::new(),
-                };
+                let op_name = op_obj.name().unwrap_or_default();
                 if !op_name.is_empty() && d_nin_val && pre_dict.contains(op_name.as_str())? {
                     // apply and consume EOL
-                    op_obj.call_method1("apply_to_dict", (pre_dict,))?;
+                    op_obj.apply_to_dict(pre_dict)?;
                     lexer.get_next_token(Some(vec![lendl]), None)?;
                     return Ok(());
                 } else {
@@ -466,7 +460,7 @@ impl Node {
             self.add_content(
                 lexer.filename.clone(),
                 lexer.linenum,
-                op_obj.extract()?,
+                ContentType::Tokens(op_obj),
             )?;
         }
 

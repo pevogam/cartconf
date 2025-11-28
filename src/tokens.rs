@@ -177,6 +177,20 @@ impl Tokens {
         }
     }
 
+    pub fn like(&self, name: String, value: String) -> PyResult<Self> {
+        match self {
+            Tokens::LSet(_name, _value) => Ok(Tokens::LSet(name.to_string(), value.to_string())),
+            Tokens::LAppend(_name, _value) => Ok(Tokens::LAppend(name.to_string(), value.to_string())),
+            Tokens::LPrepend(_name, _value) => Ok(Tokens::LPrepend(name.to_string(), value.to_string())),
+            Tokens::LLazySet(_name, _value) => Ok(Tokens::LLazySet(name.to_string(), value.to_string())),
+            Tokens::LRegExpSet(_name, _value) => Ok(Tokens::LRegExpSet(name.to_string(), value.to_string())),
+            Tokens::LRegExpAppend(_name, _value) => Ok(Tokens::LRegExpAppend(name.to_string(), value.to_string())),
+            Tokens::LRegExpPrepend(_name, _value) => Ok(Tokens::LRegExpPrepend(name.to_string(), value.to_string())),
+            Tokens::LDel(_name, _value) => Ok(Tokens::LDel(name.to_string(), value.to_string())),
+            _ => Err(PyAttributeError::new_err("like is not a valid attribute for this token")),
+        }
+    }
+
     #[getter]
     pub fn length(&self) -> PyResult<isize> {
         match self {
@@ -197,7 +211,7 @@ impl Tokens {
     }
 
     #[getter]
-    fn name(&self) -> PyResult<String> {
+    pub fn name(&self) -> PyResult<String> {
         match self {
             Tokens::LSet(name, _value) => Ok(name.to_string()),
             Tokens::LAppend(name, _value) => Ok(name.to_string()),
@@ -239,7 +253,7 @@ impl Tokens {
         }
     }
 
-    fn apply_to_dict(&self, py_dict: &Bound<'_, PyDict>) -> PyResult<()> {
+    pub fn apply_to_dict(&self, py_dict: &Bound<'_, PyDict>) -> PyResult<()> {
         match self {
             Tokens::LSet(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) {
