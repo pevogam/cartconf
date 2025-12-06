@@ -7,7 +7,7 @@ use std::cell::RefCell;
 
 use pyo3::prelude::*;
 use pyo3::exceptions::PyException;
-use pyo3::types::{PyAny, PyDict};
+use pyo3::types::{PyAny};
 
 use crate::tokens::{ParamKey, ParamVal};
 use crate::tokens::Tokens;
@@ -757,7 +757,7 @@ impl Node {
                         for token in tokens.iter().take(tokens.len() - 1) {
                             values.push(token.string()?);
                         }
-                        // The python side has an inner list that we stringify here (just like the bool above)
+                        // The meta has an inner list that we stringify here (just like the bool above)
                         meta.entry(ident_str)
                             .or_insert_with(Vec::new)
                             .push(values.join(" ").to_string());
@@ -829,7 +829,7 @@ impl Node {
         indent: isize,
         variant_name: String,
         variant_indent: isize,
-        meta: &Bound<'_, PyDict>,
+        meta: &mut HashMap<String, Vec<String>>,
         defaults : bool,
         expand_defaults : Vec<String>,
     ) -> PyResult<Node> {
@@ -841,7 +841,9 @@ impl Node {
         }
 
         // Handle default variants
-        let meta_default = meta.get_item("default")?;
+        let meta_default = meta.get_mut("default");
+        let meta_default_values_empty = &mut Vec::new();
+        let meta_default_values = meta_default.unwrap_or(meta_default_values_empty);
         let meta_in_expand_defaults = !expand_defaults.contains(&variant_name);
 
         // Data used for the entire loop
@@ -976,16 +978,15 @@ impl Node {
             node3.dep = deps;
 
             // Determine if current variant is default from the meta variant information
-            if let Some(ref s) = meta_default {
-                let default_values = s.extract::<Vec<String>>()?;
-                for default_str in default_values.iter() {
+            if !meta_default_values.is_empty() {
+                for (i, default_str) in meta_default_values.iter().enumerate() {
                     let default_seq = default_str.split(' ')
                         .map(|x| Tokens::LIdentifier(x.to_string()))
                         .collect::<Vec<_>>();
                     if default_seq.len() == name.len() && default_seq.iter().zip(name.iter()).all(|(x, y)| x == y) {
                         is_default = true;
                         // Remove the matched default name values sequence
-                        s.call_method1("remove", (default_str.clone(),))?;
+                        meta_default_values.remove(i);
                         break;
                     }
                 }
@@ -1033,16 +1034,13 @@ impl Node {
         }
 
         // Check if all default variants were used
-        if let Some(ref s) = meta_default {
-            let default_values = s.extract::<Vec<String>>()?;
-            if !default_values.is_empty() {
-                return Err(PyErr::new::<ParserError, _>((
-                    format!("Missing default variant {:?}", default_values),
-                    Some(lexer.line.clone().unwrap_or("<none>".to_string())),
-                    Some(lexer.filename.clone()),
-                    Some(lexer.linenum),
-                )));
-            }
+        if !meta_default_values.is_empty() {
+            return Err(PyErr::new::<ParserError, _>((
+                format!("Missing default variant {:?}", meta_default_values),
+                Some(lexer.line.clone().unwrap_or("<none>".to_string())),
+                Some(lexer.filename.clone()),
+                Some(lexer.linenum),
+            )));
         }
 
         Ok(node4)
@@ -1091,7 +1089,7 @@ pub fn parse(
     // Variant tracking state
     let mut variant_name = String::new();
     let mut variant_indent = 0;
-    let meta = PyDict::new(py);
+    let mut meta = HashMap::new();
 
     // Pre-dictionary contains block of operation without collision with
     // other blocks or operations which increases speed almost twice.
@@ -1195,7 +1193,7 @@ pub fn parse(
                 variant_name = name;
                 variant_indent = indent;
                 for (key, values) in meta_dict {
-                    meta.set_item(key, values)?;
+                    meta.insert(key, values);
                 }
                 allowed = variants_allowed.to_vec();
             }
@@ -1208,7 +1206,7 @@ pub fn parse(
                     indent,
                     variant_name.clone(),
                     variant_indent,
-                    &meta,
+                    &mut meta,
                     defaults,
                     expand_defaults.clone().unwrap_or_default(),
                 )?;
@@ -1630,7 +1628,7 @@ mod tests {
             let mut node = Node::new();
             let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
             pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
-            let meta = PyDict::new(py);
+            let mut meta = HashMap::new();
 
             let grandparent_node = node.apply_variant(
                 py,
@@ -1639,7 +1637,7 @@ mod tests {
                 0,
                 "test".to_string(),
                 0,
-                &meta,
+                &mut meta,
                 false,
                 Vec::new(),
             ).expect("apply_variant failed");
