@@ -507,7 +507,6 @@ impl Node {
     */
     pub fn apply_include(
         &mut self,
-        py: Python<'_>,
         lexer: &mut Lexer,
         pre_dict: &mut HashMap<ParamKey, ParamVal>,
     ) -> PyResult<Node> {
@@ -549,7 +548,7 @@ impl Node {
         let mut new_lexer = Lexer::new(None, Some(filepath_str))?;
 
         // Parse with new lexer
-        parse(py, &mut new_lexer, self.clone(), -1, false, None)
+        parse(&mut new_lexer, self.clone(), -1, false, None)
     }
 
     /*
@@ -558,7 +557,6 @@ impl Node {
     */
     pub fn apply_condition(
         &mut self,
-        py: Python<'_>,
         identifier: Vec<Tokens>,
         token: Tokens,
         lexer: &mut Lexer,
@@ -591,7 +589,7 @@ impl Node {
         cond.condition = Some(Filters::Condition { filter : cfilter, line : lexer.line.clone().unwrap_or_default() });
 
         // Parse the condition block
-        cond = parse(py, lexer, cond, indent, false, None)?;
+        cond = parse(lexer, cond, indent, false, None)?;
 
         // Apply the current pre_dict and add the condition node as content
         self.apply_predict(lexer, pre_dict)?;
@@ -610,7 +608,6 @@ impl Node {
     */
     pub fn apply_notcondition(
         &mut self,
-        py: Python<'_>,
         lexer: &mut Lexer,
         pre_dict: &mut HashMap<ParamKey, ParamVal>,
         indent: isize,
@@ -652,7 +649,7 @@ impl Node {
         });
 
         // Parse the condition block
-        cond = parse(py, lexer, cond, indent, false, None)?;
+        cond = parse(lexer, cond, indent, false, None)?;
 
         // Apply the current pre_dict and add the condition node as content
         self.apply_predict(lexer, pre_dict)?;
@@ -822,7 +819,6 @@ impl Node {
     #[allow(clippy::too_many_arguments)]
     pub fn apply_variant(
         &mut self,
-        py: Python<'_>,
         lexer: &mut Lexer,
         pre_dict: &mut HashMap<ParamKey, ParamVal>,
         indent: isize,
@@ -955,7 +951,7 @@ impl Node {
                 )?;
             }
 
-            let mut node3 = parse(py, lexer, node2, indent, defaults, Some(expand_defaults.clone()))?;
+            let mut node3 = parse(lexer, node2, indent, defaults, Some(expand_defaults.clone()))?;
 
             // Set variant name and dependencies
             if !variant_name.is_empty() {
@@ -1047,7 +1043,6 @@ impl Node {
 }
 
 pub fn parse(
-    py: Python<'_>,
     lexer: &mut Lexer,
     mut node: Node,
     prev_indent: isize,
@@ -1127,7 +1122,7 @@ pub fn parse(
 
         match token {
             Tokens::LInclude() => {
-                node = node.apply_include(py, lexer, &mut pre_dict)?;
+                node = node.apply_include(lexer, &mut pre_dict)?;
                 lexer.set_prev_indent(prev_indent);
             }
 
@@ -1150,7 +1145,6 @@ pub fn parse(
                 if matches!(last_token, Tokens::LColon()) {
                     // Handle condition block
                     node.apply_condition(
-                        py,
                         identifier,
                         token,
                         lexer,
@@ -1183,7 +1177,7 @@ pub fn parse(
             }
 
             Tokens::LNotCond() => {
-                node.apply_notcondition(py, lexer, &mut pre_dict, indent)?;
+                node.apply_notcondition(lexer, &mut pre_dict, indent)?;
                 lexer.set_prev_indent(prev_indent);
             }
 
@@ -1199,7 +1193,6 @@ pub fn parse(
 
             Tokens::LVariant() => {
                 node = node.apply_variant(
-                    py,
                     lexer,
                     &mut pre_dict,
                     indent,
@@ -1282,7 +1275,6 @@ pub fn parse(
 #[pyfunction]
 #[pyo3(signature = (cfgstr, node, prev_indent=-1, defaults=true, expand_defaults=None))]
 pub fn parse_string(
-    py: Python<'_>,
     cfgstr: String,
     node: Node,
     prev_indent: isize,
@@ -1290,13 +1282,12 @@ pub fn parse_string(
     expand_defaults: Option<Vec<String>>,
 ) -> PyResult<Node> {
     let mut new_lexer = Lexer::new(Some(&cfgstr), None)?;
-    parse(py, &mut new_lexer, node, prev_indent, defaults, expand_defaults)
+    parse(&mut new_lexer, node, prev_indent, defaults, expand_defaults)
 }
 
 #[pyfunction]
 #[pyo3(signature = (cfgfile, node, prev_indent=-1, defaults=true, expand_defaults=None))]
 pub fn parse_file(
-    py: Python<'_>,
     cfgfile: String,
     node: Node,
     prev_indent: isize,
@@ -1304,13 +1295,12 @@ pub fn parse_file(
     expand_defaults: Option<Vec<String>>,
 ) -> PyResult<Node> {
     let mut new_lexer = Lexer::new(None, Some(&cfgfile))?;
-    parse(py, &mut new_lexer, node, prev_indent, defaults, expand_defaults)
+    parse(&mut new_lexer, node, prev_indent, defaults, expand_defaults)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyo3::prelude::Python;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -1338,334 +1328,303 @@ mod tests {
 
     #[test]
     fn test_apply_include() {
-        Python::initialize();
-        Python::attach(|py| {
-            // create temporary file with a minimal variants block
-            let mut tmp = NamedTempFile::new().expect("unable to create temp file");
-            writeln!(tmp, "variants:").unwrap();
-            writeln!(tmp, "  - test:").unwrap();
-            let tmp_path = tmp.path().to_str().unwrap().to_string();
+        // create temporary file with a minimal variants block
+        let mut tmp = NamedTempFile::new().expect("unable to create temp file");
+        writeln!(tmp, "variants:").unwrap();
+        writeln!(tmp, "  - test:").unwrap();
+        let tmp_path = tmp.path().to_str().unwrap().to_string();
 
-            // create a lexer with "include <path>"
-            let content = format!("include {}", tmp_path);
-            let mut lexer = Lexer::new(Some(&content), None).expect("Failed to create lexer");
-            // advance lexer to consume indent and include tokens
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("get_next_token indent");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("include")]), None).expect("get_next_token include");
+        // create a lexer with "include <path>"
+        let content = format!("include {}", tmp_path);
+        let mut lexer = Lexer::new(Some(&content), None).expect("Failed to create lexer");
+        // advance lexer to consume indent and include tokens
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("get_next_token indent");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("include")]), None).expect("get_next_token include");
 
-            let mut node = Node::new();
-            let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-            pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
+        let mut node = Node::new();
+        let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
+        pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
 
-            // apply_include should parse the included file and return a node with a child named "test"
-            let returned = node.apply_include(py, &mut lexer, &mut pre_dict).expect("apply_include failed");
-            assert!(pre_dict.is_empty());
-            let children = returned.get_children().unwrap();
-            assert_eq!(children.len(), 1);
-            let child = &children[0];
-            assert_eq!(child.name.len(), 1);
-            assert!(matches!(child.name[0], Label { .. }));
-            assert_eq!(child.name[0].name, "test".to_string());
-        });
+        // apply_include should parse the included file and return a node with a child named "test"
+        let returned = node.apply_include(&mut lexer, &mut pre_dict).expect("apply_include failed");
+        assert!(pre_dict.is_empty());
+        let children = returned.get_children().unwrap();
+        assert_eq!(children.len(), 1);
+        let child = &children[0];
+        assert_eq!(child.name.len(), 1);
+        assert!(matches!(child.name[0], Label { .. }));
+        assert_eq!(child.name[0].name, "test".to_string());
     }
 
     #[test]
     fn test_apply_operator_set_optimized() {
-        Python::initialize();
-        Python::attach(|_py| {
-            // create lexer for "key2 = value2"
-            let mut lexer = Lexer::new(Some("key2 = value2"), None).expect("Failed to create lexer");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent token");
-            let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier token");
-            // get identifier tokens up to '=' (no_white = true)
-            let identifier = lexer.get_until(vec![Tokens::default("=")], None, Some(true)).expect("get_until identifier");
+        // create lexer for "key2 = value2"
+        let mut lexer = Lexer::new(Some("key2 = value2"), None).expect("Failed to create lexer");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent token");
+        let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier token");
+        // get identifier tokens up to '=' (no_white = true)
+        let identifier = lexer.get_until(vec![Tokens::default("=")], None, Some(true)).expect("get_until identifier");
 
-            let mut node = Node::new();
-            let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-            pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
+        let mut node = Node::new();
+        let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
+        pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
 
-            // apply_operator should add key2 to pre_dict directly (optimized path)
-            node.apply_operator(identifier, token, &mut lexer, &mut pre_dict).expect("apply_operator failed");
-            // pre_dict now should contain both key1 and key2, and node content should be empty
-            assert_eq!(pre_dict.get(&"key1".to_string().into()), Some(&"value1".to_string().into()));
-            assert_eq!(pre_dict.get(&"key2".to_string().into()), Some(&"value2".to_string().into()));
-            let content = node.get_content().expect("get_content failed");
-            assert_eq!(content.len(), 0);
-        });
+        // apply_operator should add key2 to pre_dict directly (optimized path)
+        node.apply_operator(identifier, token, &mut lexer, &mut pre_dict).expect("apply_operator failed");
+        // pre_dict now should contain both key1 and key2, and node content should be empty
+        assert_eq!(pre_dict.get(&"key1".to_string().into()), Some(&"value1".to_string().into()));
+        assert_eq!(pre_dict.get(&"key2".to_string().into()), Some(&"value2".to_string().into()));
+        let content = node.get_content().expect("get_content failed");
+        assert_eq!(content.len(), 0);
     }
 
     #[test]
     fn test_apply_operator_append_safe() {
-        Python::initialize();
-        Python::attach(|_py| {
-            // content: "key1 += &value2"
-            let mut lexer = Lexer::new(Some("key1 += &value2"), None).expect("Failed to create lexer");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent token");
-            let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier token");
-            let identifier = lexer.get_until(vec![Tokens::default("+=")], None, Some(true)).expect("get_until identifier");
+        // content: "key1 += &value2"
+        let mut lexer = Lexer::new(Some("key1 += &value2"), None).expect("Failed to create lexer");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent token");
+        let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier token");
+        let identifier = lexer.get_until(vec![Tokens::default("+=")], None, Some(true)).expect("get_until identifier");
 
-            let mut node = Node::new();
-            let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-            pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
+        let mut node = Node::new();
+        let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
+        pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
 
-            node.apply_operator(identifier, token, &mut lexer, &mut pre_dict).expect("apply_operator failed");
+        node.apply_operator(identifier, token, &mut lexer, &mut pre_dict).expect("apply_operator failed");
 
-            // pre_dict should be updated
-            assert_eq!(pre_dict.get(&"key1".to_string().into()), Some(&"value1&value2".to_string().into()));
-            // node content should be empty
-            let content = node.get_content().expect("get_content failed");
-            assert_eq!(content.len(), 0);
-        });
+        // pre_dict should be updated
+        assert_eq!(pre_dict.get(&"key1".to_string().into()), Some(&"value1&value2".to_string().into()));
+        // node content should be empty
+        let content = node.get_content().expect("get_content failed");
+        assert_eq!(content.len(), 0);
     }
 
     #[test]
     fn test_apply_operator_append_unsafe() {
-        Python::initialize();
-        Python::attach(|_py| {
-            // content: "key2 += &value2" (key2 not present in pre_dict therefore flush)
-            let mut lexer = Lexer::new(Some("key2 += &value2"), None).expect("Failed to create lexer");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent token");
-            let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier token");
-            let identifier = lexer.get_until(vec![Tokens::default("+=")], None, Some(true)).expect("get_until identifier");
+        // content: "key2 += &value2" (key2 not present in pre_dict therefore flush)
+        let mut lexer = Lexer::new(Some("key2 += &value2"), None).expect("Failed to create lexer");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent token");
+        let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier token");
+        let identifier = lexer.get_until(vec![Tokens::default("+=")], None, Some(true)).expect("get_until identifier");
 
-            let mut node = Node::new();
-            let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-            pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
+        let mut node = Node::new();
+        let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
+        pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
 
-            node.apply_operator(identifier, token, &mut lexer, &mut pre_dict).expect("apply_operator failed");
+        node.apply_operator(identifier, token, &mut lexer, &mut pre_dict).expect("apply_operator failed");
 
-            // pre_dict should be flushed (cleared)
-            assert!(pre_dict.is_empty());
-            // node content should be extended with append operation step
-            let content = node.get_content().expect("get_content failed");
-            assert_eq!(content.len(), 2);
-            // first should be an LApplyPreDict, second an LAppend
-            match &content[0].content_type {
-                ContentType::Tokens(Tokens::LApplyPreDict(_, map)) => {
-                    assert_eq!(map.get(&"key1".to_string().into()), Some(&"value1".to_string().into()));
-                }
-                other => panic!("Unexpected first content type: {:?}", other),
+        // pre_dict should be flushed (cleared)
+        assert!(pre_dict.is_empty());
+        // node content should be extended with append operation step
+        let content = node.get_content().expect("get_content failed");
+        assert_eq!(content.len(), 2);
+        // first should be an LApplyPreDict, second an LAppend
+        match &content[0].content_type {
+            ContentType::Tokens(Tokens::LApplyPreDict(_, map)) => {
+                assert_eq!(map.get(&"key1".to_string().into()), Some(&"value1".to_string().into()));
             }
-            match &content[1].content_type {
-                ContentType::Tokens(Tokens::LAppend(key, value)) => {
-                    assert_eq!(key, "key2");
-                    assert_eq!(value, "&value2");
-                }
-                other => panic!("Unexpected second content type: {:?}", other),
+            other => panic!("Unexpected first content type: {:?}", other),
+        }
+        match &content[1].content_type {
+            ContentType::Tokens(Tokens::LAppend(key, value)) => {
+                assert_eq!(key, "key2");
+                assert_eq!(value, "&value2");
             }
-        });
+            other => panic!("Unexpected second content type: {:?}", other),
+        }
     }
 
     #[test]
     fn test_apply_deletion() {
-        Python::initialize();
-        Python::attach(|_py| {
-            // content: "del key"
-            let mut lexer = Lexer::new(Some("del key"), None).expect("Failed to create lexer");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("del")]), None).expect("del");
+        // content: "del key"
+        let mut lexer = Lexer::new(Some("del key"), None).expect("Failed to create lexer");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("del")]), None).expect("del");
 
-            let mut node = Node::new();
-            let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-            pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
+        let mut node = Node::new();
+        let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
+        pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
 
-            node.apply_deletion(&mut lexer, &mut pre_dict).expect("apply_deletion failed");
+        node.apply_deletion(&mut lexer, &mut pre_dict).expect("apply_deletion failed");
 
-            // pre_dict should be flushed (cleared)
-            assert!(pre_dict.is_empty());
-            // node content should be extended with delete operation step
-            let content = node.get_content().expect("get_content failed");
-            assert_eq!(content.len(), 2);
-            match &content[0].content_type {
-                ContentType::Tokens(Tokens::LApplyPreDict(_, map)) => {
-                    assert_eq!(map.get(&"key1".to_string().into()), Some(&"value1".to_string().into()));
-                }
-                other => panic!("Unexpected first content type: {:?}", other),
+        // pre_dict should be flushed (cleared)
+        assert!(pre_dict.is_empty());
+        // node content should be extended with delete operation step
+        let content = node.get_content().expect("get_content failed");
+        assert_eq!(content.len(), 2);
+        match &content[0].content_type {
+            ContentType::Tokens(Tokens::LApplyPreDict(_, map)) => {
+                assert_eq!(map.get(&"key1".to_string().into()), Some(&"value1".to_string().into()));
             }
-            match &content[1].content_type {
-                ContentType::Tokens(Tokens::LDel(name, _)) => {
-                    assert_eq!(name, "key");
-                }
-                other => panic!("Unexpected second content type: {:?}", other),
+            other => panic!("Unexpected first content type: {:?}", other),
+        }
+        match &content[1].content_type {
+            ContentType::Tokens(Tokens::LDel(name, _)) => {
+                assert_eq!(name, "key");
             }
-        });
+            other => panic!("Unexpected second content type: {:?}", other),
+        }
     }
 
     #[test]
     fn test_apply_condition() {
-        Python::initialize();
-        Python::attach(|py| {
-            // content: "key:\n value"
-            let mut lexer = Lexer::new(Some("key:\nvalue"), None).expect("Failed to create lexer");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
-            let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier");
-            let identifier = lexer.get_until(vec![Tokens::default(":")], None, Some(true)).expect("get_until");
+        // content: "key:\n value"
+        let mut lexer = Lexer::new(Some("key:\nvalue"), None).expect("Failed to create lexer");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
+        let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier");
+        let identifier = lexer.get_until(vec![Tokens::default(":")], None, Some(true)).expect("get_until");
 
-            let mut node = Node::new();
-            let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-            pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
+        let mut node = Node::new();
+        let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
+        pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
 
-            node.apply_condition(py, identifier, token, &mut lexer, &mut pre_dict, 0).expect("apply_condition failed");
+        node.apply_condition(identifier, token, &mut lexer, &mut pre_dict, 0).expect("apply_condition failed");
 
-            // pre_dict should be flushed (cleared)
-            assert!(pre_dict.is_empty());
-            let content = node.get_content().expect("get_content failed");
-            assert_eq!(content.len(), 2);
-            // first should be LApplyPreDict, second a Node with a positive condition
-            match &content[0].content_type {
-                ContentType::Tokens(Tokens::LApplyPreDict(_, _)) => {}
-                other => panic!("Unexpected first content type: {:?}", other),
-            }
-            match &content[1].content_type {
-                ContentType::Node(n) => {
-                    // positive condition expected
-                    if let Some(Filters::Condition { .. }) = n.condition {
-                        // ok
-                    } else {
-                        panic!("Expected Condition, got {:?}", n.condition);
-                    }
+        // pre_dict should be flushed (cleared)
+        assert!(pre_dict.is_empty());
+        let content = node.get_content().expect("get_content failed");
+        assert_eq!(content.len(), 2);
+        // first should be LApplyPreDict, second a Node with a positive condition
+        match &content[0].content_type {
+            ContentType::Tokens(Tokens::LApplyPreDict(_, _)) => {}
+            other => panic!("Unexpected first content type: {:?}", other),
+        }
+        match &content[1].content_type {
+            ContentType::Node(n) => {
+                // positive condition expected
+                if let Some(Filters::Condition { .. }) = n.condition {
+                    // ok
+                } else {
+                    panic!("Expected Condition, got {:?}", n.condition);
                 }
-                other => panic!("Unexpected second content type: {:?}", other),
             }
-        });
+            other => panic!("Unexpected second content type: {:?}", other),
+        }
     }
 
     #[test]
     fn test_apply_notcondition() {
-        Python::initialize();
-        Python::attach(|py| {
-            // content: "!key:\n value"
-            let mut lexer = Lexer::new(Some("!key:\nvalue"), None).expect("Failed to create lexer");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("!")]), None).expect("notcond");
+        // content: "!key:\n value"
+        let mut lexer = Lexer::new(Some("!key:\nvalue"), None).expect("Failed to create lexer");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("!")]), None).expect("notcond");
 
-            let mut node = Node::new();
-            let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-            pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
+        let mut node = Node::new();
+        let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
+        pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
 
-            node.apply_notcondition(py, &mut lexer, &mut pre_dict, 0).expect("apply_notcondition failed");
+        node.apply_notcondition(&mut lexer, &mut pre_dict, 0).expect("apply_notcondition failed");
 
-            // pre_dict should be flushed (cleared)
-            assert!(pre_dict.is_empty());
-            let content = node.get_content().expect("get_content failed");
-            assert_eq!(content.len(), 2);
-            // first should be LApplyPreDict, second a Node with a negative condition
-            match &content[0].content_type {
-                ContentType::Tokens(Tokens::LApplyPreDict(_, _)) => {}
-                other => panic!("Unexpected first content type: {:?}", other),
-            }
-            match &content[1].content_type {
-                ContentType::Node(n) => {
-                    // negative condition expected
-                    if let Some(Filters::NegativeCondition { .. }) = n.condition {
-                        // ok
-                    } else {
-                        panic!("Expected NegativeCondition, got {:?}", n.condition);
-                    }
+        // pre_dict should be flushed (cleared)
+        assert!(pre_dict.is_empty());
+        let content = node.get_content().expect("get_content failed");
+        assert_eq!(content.len(), 2);
+        // first should be LApplyPreDict, second a Node with a negative condition
+        match &content[0].content_type {
+            ContentType::Tokens(Tokens::LApplyPreDict(_, _)) => {}
+            other => panic!("Unexpected first content type: {:?}", other),
+        }
+        match &content[1].content_type {
+            ContentType::Node(n) => {
+                // negative condition expected
+                if let Some(Filters::NegativeCondition { .. }) = n.condition {
+                    // ok
+                } else {
+                    panic!("Expected NegativeCondition, got {:?}", n.condition);
                 }
-                other => panic!("Unexpected second content type: {:?}", other),
             }
-        });
+            other => panic!("Unexpected second content type: {:?}", other),
+        }
     }
 
     #[test]
     fn test_apply_variants() {
-        Python::initialize();
-        Python::attach(|_py| {
-            // content: "variants test:"
-            let mut lexer = Lexer::new(Some("variants test:"), None).expect("Failed to create lexer");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("variants")]), None).expect("variants");
+        // content: "variants test:"
+        let mut lexer = Lexer::new(Some("variants test:"), None).expect("Failed to create lexer");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("variants")]), None).expect("variants");
 
-            let node = Node::new();
-            let (variant_name, meta) = node.apply_variants(&mut lexer).expect("apply_variants failed");
+        let node = Node::new();
+        let (variant_name, meta) = node.apply_variants(&mut lexer).expect("apply_variants failed");
 
-            // variant name should be "test" and meta empty
-            assert_eq!(variant_name, "test");
-            assert!(meta.is_empty());
-            // content should be empty
-            let content = node.get_content().expect("get_content failed");
-            assert_eq!(content.len(), 0);
-        });
+        // variant name should be "test" and meta empty
+        assert_eq!(variant_name, "test");
+        assert!(meta.is_empty());
+        // content should be empty
+        let content = node.get_content().expect("get_content failed");
+        assert_eq!(content.len(), 0);
     }
 
     #[test]
     fn test_apply_variants_meta() {
-        Python::initialize();
-        Python::attach(|_py| {
-            // content: "variants test [meta1] [meta2=val2] [ meta3 ] [ meta4 = val4 val5 ]:"
-            let txt = r#"variants test [meta1] [meta2=val2] [ meta3 ] [ meta4 = val4 val5 ]:"#;
-            let mut lexer = Lexer::new(Some(txt), None).expect("Failed to create lexer");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("variants")]), None).expect("variants");
+        // content: "variants test [meta1] [meta2=val2] [ meta3 ] [ meta4 = val4 val5 ]:"
+        let txt = r#"variants test [meta1] [meta2=val2] [ meta3 ] [ meta4 = val4 val5 ]:"#;
+        let mut lexer = Lexer::new(Some(txt), None).expect("Failed to create lexer");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("variants")]), None).expect("variants");
 
-            let node = Node::new();
-            let (variant_name, meta) = node.apply_variants(&mut lexer).expect("apply_variants failed");
+        let node = Node::new();
+        let (variant_name, meta) = node.apply_variants(&mut lexer).expect("apply_variants failed");
 
-            // variant name should be "test"
-            assert_eq!(variant_name, "test");
-            // meta contents should be parsed appropriately
-            assert_eq!(meta.get("meta1").map(|v| v.as_slice()), Some(&["true".to_string()][..]));
-            assert_eq!(meta.get("meta2").map(|v| v.as_slice()), Some(&["val2".to_string()][..]));
-            assert_eq!(meta.get("meta3").map(|v| v.as_slice()), Some(&["true".to_string()][..]));
-            assert_eq!(meta.get("meta4").map(|v| v.as_slice()), Some(&["val4 val5".to_string()][..]));
-            // content should be empty
-            let content = node.get_content().expect("get_content failed");
-            assert_eq!(content.len(), 0);
-        });
+        // variant name should be "test"
+        assert_eq!(variant_name, "test");
+        // meta contents should be parsed appropriately
+        assert_eq!(meta.get("meta1").map(|v| v.as_slice()), Some(&["true".to_string()][..]));
+        assert_eq!(meta.get("meta2").map(|v| v.as_slice()), Some(&["val2".to_string()][..]));
+        assert_eq!(meta.get("meta3").map(|v| v.as_slice()), Some(&["true".to_string()][..]));
+        assert_eq!(meta.get("meta4").map(|v| v.as_slice()), Some(&["val4 val5".to_string()][..]));
+        // content should be empty
+        let content = node.get_content().expect("get_content failed");
+        assert_eq!(content.len(), 0);
     }
 
     #[test]
     fn test_apply_variant() {
-        Python::initialize();
-        Python::attach(|py| {
-            // content: "- test:"
-            let mut lexer = Lexer::new(Some("- test:"), None).expect("Failed to create lexer");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
-            let _ = lexer.get_next_token(Some(vec![Tokens::default("-")]), None).expect("dash");
+        // content: "- test:"
+        let mut lexer = Lexer::new(Some("- test:"), None).expect("Failed to create lexer");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
+        let _ = lexer.get_next_token(Some(vec![Tokens::default("-")]), None).expect("dash");
 
-            let mut node = Node::new();
-            let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-            pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
-            let mut meta = HashMap::new();
+        let mut node = Node::new();
+        let mut pre_dict: HashMap<ParamKey, ParamVal> = HashMap::new();
+        pre_dict.insert("key1".to_string().into(), "value1".to_string().into());
+        let mut meta = HashMap::new();
 
-            let grandparent_node = node.apply_variant(
-                py,
-                &mut lexer,
-                &mut pre_dict,
-                0,
-                "test".to_string(),
-                0,
-                &mut meta,
-                false,
-                Vec::new(),
-            ).expect("apply_variant failed");
+        let grandparent_node = node.apply_variant(
+            &mut lexer,
+            &mut pre_dict,
+            0,
+            "test".to_string(),
+            0,
+            &mut meta,
+            false,
+            Vec::new(),
+        ).expect("apply_variant failed");
 
-            // pre_dict should be flushed (cleared)
-            assert!(pre_dict.is_empty());
+        // pre_dict should be flushed (cleared)
+        assert!(pre_dict.is_empty());
 
-            // original node should receive the flushed pre_dict content
-            let content = node.get_content().expect("get_content");
-            assert!(!content.is_empty());
-            match &content[0].content_type {
-                ContentType::Tokens(Tokens::LApplyPreDict(_, map)) => {
-                    assert_eq!(map.get(&"key1".to_string().into()), Some(&"value1".to_string().into()));
-                }
-                other => panic!("Unexpected parent content: {:?}", other),
+        // original node should receive the flushed pre_dict content
+        let content = node.get_content().expect("get_content");
+        assert!(!content.is_empty());
+        match &content[0].content_type {
+            ContentType::Tokens(Tokens::LApplyPreDict(_, map)) => {
+                assert_eq!(map.get(&"key1".to_string().into()), Some(&"value1".to_string().into()));
             }
+            other => panic!("Unexpected parent content: {:?}", other),
+        }
 
-            // grandparent node should have one child (the variant) whose name is "test"
-            let parents = grandparent_node.get_children().unwrap();
-            assert_eq!(parents.len(), 1);
-            let parent_node = &parents[0];
-            assert_eq!(parent_node.name.len(), 1);
-            assert!(matches!(parent_node.name[0], Label { .. }));
-            assert_eq!(parent_node.name[0].name, "test".to_string());
+        // grandparent node should have one child (the variant) whose name is "test"
+        let parents = grandparent_node.get_children().unwrap();
+        assert_eq!(parents.len(), 1);
+        let parent_node = &parents[0];
+        assert_eq!(parent_node.name.len(), 1);
+        assert!(matches!(parent_node.name[0], Label { .. }));
+        assert_eq!(parent_node.name[0].name, "test".to_string());
 
-            // child should include the original grand child as its child
-            let children = parent_node.get_children().unwrap();
-            assert_eq!(children.len(), 1);
-            assert_eq!(children[0], node);
-        });
+        // child should include the original grand child as its child
+        let children = parent_node.get_children().unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0], node);
     }
 }
