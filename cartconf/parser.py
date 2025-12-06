@@ -138,9 +138,9 @@ class Parser(object):
     def get_dicts(
         self,
         node: Node = None,
-        ctx: list[list[Label]] = None,
+        ctx: list[Label] = None,
         content: list[tuple[str, int, "Token"]] = None,
-        shortname: list[str] = None,
+        shortname: list[Label] = None,
         dep: list[str] = None,
         skipdups: bool = True,
     ) -> Generator[dict[str, str], None, None]:
@@ -164,9 +164,9 @@ class Parser(object):
     def get_dicts_plain(
         self,
         node: Node = None,
-        ctx: list[list[Label]] = None,
+        ctx: list[Label] = None,
         content: list[tuple[str, int, "Token"]] = None,
-        shortname: list[str] = None,
+        shortname: list[Label] = None,
         dep: list[str] = None,
     ) -> Generator[dict[str, str], None, None]:
         """
@@ -347,9 +347,9 @@ class Parser(object):
     def get_dicts_joined(
         self,
         node: Node = None,
-        ctx: list[list[Label]] = None,
+        ctx: list[Label] = None,
         content: list[tuple[str, int, "Token"]] = None,
-        shortname: list[str] = None,
+        shortname: list[Label] = None,
         dep: list[str] = None,
         skipdups: bool = True,
     ) -> Generator[dict[str, str], None, None]:
@@ -360,7 +360,7 @@ class Parser(object):
         :param ctx: node labels/names
         :param content: previous content in plain
         :param shortname: short name
-        :param dep: dependmake_nameencies
+        :param dep: dependencies
         :returns: dictionary generator
 
         Process 'join' entries and unpack join filters in the node.
@@ -453,9 +453,9 @@ class Parser(object):
         self,
         onlys: list[tuple[str, int, Filter]],
         node: Node = None,
-        ctx: list[list[Label]] = None,
+        ctx: list[Label] = None,
         content: list[tuple[str, int, "Token"]] = None,
-        shortname: list[str] = None,
+        shortname: list[Label] = None,
         dep: list[str] = None,
     ) -> Generator[dict[str, str], None, None]:
         """
