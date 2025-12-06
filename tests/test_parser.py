@@ -1001,7 +1001,7 @@ class ParserTest(unittest.TestCase):
             True)
 
     def test_missing_include(self):
-        self.assertRaises(parser.MissingIncludeError,
+        self.assertRaises(parser.ParserError,
                           self._compare_string_config, """
                 include xxxxxxxxx/xxxxxxxxxxx
                 """,

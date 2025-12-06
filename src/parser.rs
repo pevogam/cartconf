@@ -533,13 +533,12 @@ impl Node {
 
         // Check file exists
         if !filepath.is_file() {
-            let line: String = lexer.line.clone().unwrap_or_default();
-            let filename: String = lexer.filename.clone();
-            let linenum: isize = lexer.linenum;
-
-            let exceptions = py.import("cartconf.exceptions")?;
-            let err = exceptions.getattr("MissingIncludeError")?;
-            return Err(PyErr::from_value(err.call1((line, filename, linenum))?));
+            return Err(PyErr::new::<ParserError, _>((
+                "file does not exist or it's not a regular file".to_string(),
+                lexer.line.clone(),
+                Some(lexer.filename.clone()),
+                Some(lexer.linenum),
+            )));
         }
 
         // Apply current pre_dict and create new lexer for included file
@@ -678,7 +677,7 @@ impl Node {
         if self.condition.is_some() {
             return Err(PyErr::new::<ParserError, _>((
                 "'variants' is not allowed inside a conditional block".to_string(),
-                Some(lexer.line.clone()),
+                lexer.line.clone(),
                 Some(lexer.filename.clone()),
                 Some(lexer.linenum),
             )));
@@ -708,7 +707,7 @@ impl Node {
                 if !variant_name.is_empty() {
                     return Err(PyErr::new::<ParserError, _>((
                         "Syntax ERROR expected '[' or ':'".to_string(),
-                        Some(lexer.line.clone()),
+                        lexer.line.clone(),
                         Some(lexer.filename.clone()),
                         Some(lexer.linenum),
                     )));
@@ -764,7 +763,7 @@ impl Node {
                     } else {
                         return Err(PyErr::new::<ParserError, _>((
                             "Syntax ERROR expected ']'".to_string(),
-                            Some(lexer.line.clone()),
+                            lexer.line.clone(),
                             Some(lexer.filename.clone()),
                             Some(lexer.linenum),
                         )));
@@ -786,7 +785,7 @@ impl Node {
                 if val == "true" {
                     return Err(PyErr::new::<ParserError, _>((
                         "Syntax ERROR expected [default=xxx]".to_string(),
-                        Some(lexer.line.clone()),
+                        lexer.line.clone(),
                         Some(lexer.filename.clone()),
                         Some(lexer.linenum),
                     )));
@@ -798,7 +797,7 @@ impl Node {
         if matches!(vtoken, Tokens::LEndL()) {
             return Err(PyErr::new::<ParserError, _>((
                 "Syntax ERROR expected ':'".to_string(),
-                Some(lexer.line.clone()),
+                lexer.line.clone(),
                 Some(lexer.filename.clone()),
                 Some(lexer.linenum),
             )));
@@ -1037,7 +1036,7 @@ impl Node {
         if !meta_default_values.is_empty() {
             return Err(PyErr::new::<ParserError, _>((
                 format!("Missing default variant {:?}", meta_default_values),
-                Some(lexer.line.clone().unwrap_or("<none>".to_string())),
+                lexer.line.clone(),
                 Some(lexer.filename.clone()),
                 Some(lexer.linenum),
             )));
@@ -1172,7 +1171,7 @@ pub fn parse(
                 } else {
                     return Err(PyErr::new::<ParserError, _>((
                         "Syntax ERROR expected ':' or operand".to_string(),
-                        Some(lexer.line.clone()),
+                        lexer.line.clone(),
                         Some(lexer.filename.clone()),
                         Some(lexer.linenum),
                     )));
@@ -1271,7 +1270,7 @@ pub fn parse(
             _ => {
                 return Err(PyErr::new::<ParserError, _>((
                     "Syntax ERROR expected".to_string(),
-                    Some(lexer.line.clone()),
+                    lexer.line.clone(),
                     Some(lexer.filename.clone()),
                     Some(lexer.linenum),
                 )));

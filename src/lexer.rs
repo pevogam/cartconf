@@ -537,7 +537,7 @@ impl Lexer {
                     "Unexpected token '{:?}' not among expected ones {:?}",
                     token, check_tokens.iter(),
                 ),
-                Some(self.line.clone()),
+                self.line.clone(),
                 Some(self.filename.clone()),
                 Some(self.linenum),
             )));
@@ -572,7 +572,7 @@ impl Lexer {
                     "Lexer returned no token at position {}",
                     self.pos,
                 ),
-                Some(self.line.clone()),
+                self.line.clone(),
                 Some(self.filename.clone()),
                 Some(self.linenum),
             )))
@@ -605,7 +605,7 @@ impl Lexer {
                         "Unexpected token '{:?}' not among expected ones {:?}",
                         next_token, check_tokens.iter(),
                     ),
-                    Some(self.line.clone()),
+                    self.line.clone(),
                     Some(self.filename.clone()),
                     Some(self.linenum),
                 )));
