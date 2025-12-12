@@ -416,6 +416,221 @@ class ParserTest(unittest.TestCase):
             self.assertEqual(content_stage[0], "<string>")
         self.assertIsNone(self.parser.filename)
 
+    def test_process_content_operators(self):
+        """Check that operators are all kept in new content."""
+        p = parser.Parser()
+        op1 = parser.LSet("a", "b")
+        op2 = parser.LAppend("c", "d")
+        op3 = parser.LPrepend("e", "f")
+        content = [
+            ("<string>", 1, op1),
+            ("<string>", 2, op2),
+            ("<string>", 3, op3)
+        ]
+
+        ctx, labels = [], []
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        self.assertEqual(new_content, content)
+        self.assertEqual(failed_filters, [])
+
+    def test_process_content_only_filter(self):
+        """Check that a context matching only filter is removed or else failed."""
+        p = parser.Parser()
+        op = parser.LSet("a", "b")
+        label_x = parser.Label("x")
+        label_y = parser.Label("y")
+        only = parser.OnlyFilter([[[label_x]]], "x")
+        content = [
+            ("<string>", 1, op),
+            ("<string>", 2, only)
+        ]
+
+        # remove as irrelevant if matches
+        ctx, labels = [label_x], []
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        self.assertEqual(new_content, [("<string>", 1, op)])
+        self.assertEqual(failed_filters, [])
+
+        # consider as failed if does not match
+        ctx, labels = [label_y], []
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        self.assertEqual(new_content, [("<string>", 1, op)])
+        self.assertEqual(failed_filters, [("<string>", 2, only)])
+
+        # postpone if ambiguous
+        ctx, labels = [label_y], [label_x]
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        self.assertEqual(len(new_content), 2)
+        self.assertEqual(new_content[0], ("<string>", 1, op))
+        self.assertEqual(new_content[1], ("<string>", 2, only))
+        self.assertEqual(failed_filters, [])
+
+    def test_process_content_no_filter(self):
+        """Check that a context matching no filter is failed or else removed."""
+        p = parser.Parser()
+        op = parser.LSet("a", "b")
+        label_x = parser.Label("x")
+        label_y = parser.Label("y")
+        no = parser.NoFilter([[[label_x]]], "x")
+        content = [
+            ("<string>", 1, op),
+            ("<string>", 2, no)
+        ]
+
+        # consider as failed if matches
+        ctx, labels = [label_x], []
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        self.assertEqual(new_content, [("<string>", 1, op)])
+        self.assertEqual(failed_filters, [("<string>", 2, no)])
+
+        # remove as irrelevant if does not match
+        ctx, labels = [label_y], []
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        self.assertEqual(new_content, [("<string>", 1, op)])
+        self.assertEqual(failed_filters, [])
+
+        # postpone if ambiguous
+        ctx, labels = [label_y], [label_x]
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        self.assertEqual(len(new_content), 2)
+        self.assertEqual(new_content[0], ("<string>", 1, op))
+        self.assertEqual(new_content[1], ("<string>", 2, no))
+        self.assertEqual(failed_filters, [])
+
+    def test_process_content_condition_filter(self):
+        """Check that a context matching condition filter is unpacked or else not unpacked."""
+        p = parser.Parser()
+        op1 = parser.LSet("a", "b")
+        label_x = parser.Label("x")
+        label_y = parser.Label("y")
+        conditional_node = parser.Node()
+        conditional_node.condition = parser.Condition([[[label_x]]], "x")
+        op2 = parser.LSet("c", "d")
+        conditional_node.add_content("<string>", 3, op2)
+        content = [
+            ("<string>", 1, op1),
+            ("<string>", 2, conditional_node)
+        ]
+
+        # unpack if matches
+        ctx, labels = [label_x], []
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        self.assertEqual(len(new_content), 2)
+        self.assertEqual(new_content[0], ("<string>", 1, op1))
+        self.assertEqual(new_content[1], ("<string>", 3, op2))
+        self.assertEqual(failed_filters, [])
+
+        # do not unpack if does not match
+        ctx, labels = [label_y], []
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        self.assertEqual(len(new_content), 1)
+        self.assertEqual(new_content[0], ("<string>", 1, op1))
+        self.assertEqual(failed_filters, [])
+
+        # postpone if ambiguous
+        ctx, labels = [label_y], [label_x]
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        self.assertEqual(len(new_content), 2)
+        self.assertEqual(new_content[0], ("<string>", 1, op1))
+        self.assertEqual(new_content[1], ("<string>", 2, conditional_node))
+        self.assertEqual(failed_filters, [])
+
+    def test_process_content_negative_condition_filter(self):
+        """Check that a context matching negative condition filter is unpacked or else not unpacked."""
+        p = parser.Parser()
+        op1 = parser.LSet("a", "b")
+        label_x = parser.Label("x")
+        label_y = parser.Label("y")
+        conditional_node = parser.Node()
+        conditional_node.condition = parser.NegativeCondition([[[label_x]]], "x")
+        op2 = parser.LSet("c", "d")
+        conditional_node.add_content("<string>", 3, op2)
+        content = [
+            ("<string>", 1, op1),
+            ("<string>", 2, conditional_node)
+        ]
+
+        # unpack if does not match
+        ctx, labels = [label_x], []
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        self.assertEqual(len(new_content), 1)
+        self.assertEqual(new_content[0], ("<string>", 1, op1))
+        self.assertEqual(failed_filters, [])
+
+        # do not unpack if matches
+        ctx, labels = [label_y], []
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        self.assertEqual(len(new_content), 2)
+        self.assertEqual(new_content[0], ("<string>", 1, op1))
+        self.assertEqual(new_content[1], ("<string>", 3, op2))
+        self.assertEqual(failed_filters, [])
+
+        # postpone if ambiguous
+        ctx, labels = [label_y], [label_x]
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        self.assertEqual(len(new_content), 2)
+        self.assertEqual(new_content[0], ("<string>", 1, op1))
+        self.assertEqual(new_content[1], ("<string>", 2, conditional_node))
+        self.assertEqual(failed_filters, [])
+
+    def test_process_content_nested_condition_with_operator(self):
+        """Check that operators inside matched Condition blocks are unpacked correctly."""
+        p = parser.Parser()
+        op1 = parser.LSet("a", "b")
+        label_x = parser.Label("x")
+        label_y = parser.Label("y")
+        conditional_node = parser.Node()
+        conditional_node.condition = parser.Condition([[[label_x]]], "x")
+        op2 = parser.LSet("c", "d")
+        conditional_node.add_content("<string>", 3, op2)
+        nested_only = parser.OnlyFilter([[[label_y]]], "y")
+        conditional_node.add_content("<string>", 4, nested_only)
+        content = [
+            ("<string>", 1, op1),
+            ("<string>", 2, conditional_node)
+        ]
+
+        # unpack if matches but expect nested filter to not match and fail the unpacking
+        ctx, labels = [label_x], []
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+
+        self.assertEqual(len(new_content), 2)
+        self.assertEqual(new_content[0], ("<string>", 1, op1))
+        self.assertEqual(new_content[1], ("<string>", 3, op2))
+        self.assertEqual(failed_filters, [("<string>", 2, conditional_node)])
+        self.assertEqual(more_filters, [("<string>", 4, nested_only)])
+
+    def test_process_content_empty(self):
+        """Check that empty content is handled correctly."""
+        p = parser.Parser()
+        label = parser.Label("x")
+
+        ctx, labels = [[]], []
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, [], labels, new_content, failed_filters, more_filters)
+        self.assertEqual(new_content, [])
+        self.assertEqual(failed_filters, [])
+
+        ctx, labels = [label], []
+        new_content, failed_filters, more_filters = [], [], []
+        p.process_content(ctx, [], labels, new_content, failed_filters, more_filters)
+        self.assertEqual(new_content, [])
+        self.assertEqual(failed_filters, [])
+
     def test_get_dicts(self):
         self.parser.parse_string("variants:\n  - test:\n    key = value\n")
         dicts = list(self.parser.get_dicts())

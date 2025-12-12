@@ -162,6 +162,20 @@ impl Filters {
         self.__str__()
     }
 
+    fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        match self {
+            Filters::Filter { filter } | Filters::NoOnlyFilter { filter, .. } | Filters::OnlyFilter { filter, .. } | Filters::NoFilter { filter, .. } | Filters::JoinFilter { filter, .. } | Filters::Condition { filter, .. } | Filters::NegativeCondition { filter, .. } => {
+                if other.hasattr("filter")? {
+                    let other_filter: Vec<Vec<Vec<Label>>> = other.getattr("filter")?.extract()?;
+                    Ok(filter.clone() == other_filter)
+                } else {
+                    Ok(false)
+                }
+            }
+            _ => Ok(false)
+        }
+    }
+
     /// Try to match as many blocks as possible from context.
     #[staticmethod]
     fn match_adjacent(block: Vec<Label>, ctx: Vec<Label>) -> usize {
