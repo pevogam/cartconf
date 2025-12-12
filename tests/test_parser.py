@@ -429,8 +429,7 @@ class ParserTest(unittest.TestCase):
         ]
 
         ctx, labels = [], []
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, content, labels)
         self.assertEqual(new_content, content)
         self.assertEqual(failed_filters, [])
 
@@ -448,22 +447,19 @@ class ParserTest(unittest.TestCase):
 
         # remove as irrelevant if matches
         ctx, labels = [label_x], []
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, content, labels)
         self.assertEqual(new_content, [("<string>", 1, op)])
         self.assertEqual(failed_filters, [])
 
         # consider as failed if does not match
         ctx, labels = [label_y], []
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, content, labels)
         self.assertEqual(new_content, [("<string>", 1, op)])
         self.assertEqual(failed_filters, [("<string>", 2, only)])
 
         # postpone if ambiguous
         ctx, labels = [label_y], [label_x]
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, content, labels)
         self.assertEqual(len(new_content), 2)
         self.assertEqual(new_content[0], ("<string>", 1, op))
         self.assertEqual(new_content[1], ("<string>", 2, only))
@@ -483,22 +479,19 @@ class ParserTest(unittest.TestCase):
 
         # consider as failed if matches
         ctx, labels = [label_x], []
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, content, labels)
         self.assertEqual(new_content, [("<string>", 1, op)])
         self.assertEqual(failed_filters, [("<string>", 2, no)])
 
         # remove as irrelevant if does not match
         ctx, labels = [label_y], []
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, content, labels)
         self.assertEqual(new_content, [("<string>", 1, op)])
         self.assertEqual(failed_filters, [])
 
         # postpone if ambiguous
         ctx, labels = [label_y], [label_x]
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, content, labels)
         self.assertEqual(len(new_content), 2)
         self.assertEqual(new_content[0], ("<string>", 1, op))
         self.assertEqual(new_content[1], ("<string>", 2, no))
@@ -521,8 +514,7 @@ class ParserTest(unittest.TestCase):
 
         # unpack if matches
         ctx, labels = [label_x], []
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, content, labels)
         self.assertEqual(len(new_content), 2)
         self.assertEqual(new_content[0], ("<string>", 1, op1))
         self.assertEqual(new_content[1], ("<string>", 3, op2))
@@ -530,16 +522,14 @@ class ParserTest(unittest.TestCase):
 
         # do not unpack if does not match
         ctx, labels = [label_y], []
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, content, labels)
         self.assertEqual(len(new_content), 1)
         self.assertEqual(new_content[0], ("<string>", 1, op1))
         self.assertEqual(failed_filters, [])
 
         # postpone if ambiguous
         ctx, labels = [label_y], [label_x]
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, content, labels)
         self.assertEqual(len(new_content), 2)
         self.assertEqual(new_content[0], ("<string>", 1, op1))
         self.assertEqual(new_content[1], ("<string>", 2, conditional_node))
@@ -562,16 +552,14 @@ class ParserTest(unittest.TestCase):
 
         # unpack if does not match
         ctx, labels = [label_x], []
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, content, labels)
         self.assertEqual(len(new_content), 1)
         self.assertEqual(new_content[0], ("<string>", 1, op1))
         self.assertEqual(failed_filters, [])
 
         # do not unpack if matches
         ctx, labels = [label_y], []
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, content, labels)
         self.assertEqual(len(new_content), 2)
         self.assertEqual(new_content[0], ("<string>", 1, op1))
         self.assertEqual(new_content[1], ("<string>", 3, op2))
@@ -579,8 +567,7 @@ class ParserTest(unittest.TestCase):
 
         # postpone if ambiguous
         ctx, labels = [label_y], [label_x]
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, content, labels)
         self.assertEqual(len(new_content), 2)
         self.assertEqual(new_content[0], ("<string>", 1, op1))
         self.assertEqual(new_content[1], ("<string>", 2, conditional_node))
@@ -605,14 +592,12 @@ class ParserTest(unittest.TestCase):
 
         # unpack if matches but expect nested filter to not match and fail the unpacking
         ctx, labels = [label_x], []
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, content, labels, new_content, failed_filters, more_filters)
-
+        new_content, failed_filters, failed_cond_filters = p.process_content(ctx, content, labels)
         self.assertEqual(len(new_content), 2)
         self.assertEqual(new_content[0], ("<string>", 1, op1))
         self.assertEqual(new_content[1], ("<string>", 3, op2))
         self.assertEqual(failed_filters, [("<string>", 2, conditional_node)])
-        self.assertEqual(more_filters, [("<string>", 4, nested_only)])
+        self.assertEqual(failed_cond_filters, [("<string>", 4, nested_only)])
 
     def test_process_content_empty(self):
         """Check that empty content is handled correctly."""
@@ -620,14 +605,12 @@ class ParserTest(unittest.TestCase):
         label = parser.Label("x")
 
         ctx, labels = [[]], []
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, [], labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, [], labels)
         self.assertEqual(new_content, [])
         self.assertEqual(failed_filters, [])
 
         ctx, labels = [label], []
-        new_content, failed_filters, more_filters = [], [], []
-        p.process_content(ctx, [], labels, new_content, failed_filters, more_filters)
+        new_content, failed_filters, _ = p.process_content(ctx, [], labels)
         self.assertEqual(new_content, [])
         self.assertEqual(failed_filters, [])
 
