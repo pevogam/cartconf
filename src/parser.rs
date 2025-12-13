@@ -310,9 +310,118 @@ impl Node {
         Ok(())
     }
 
+    /*
+    Process content with respect to the current context returning new
+    processed content with failed regular and conditional filters.
+
+    More details on how this works:
+    1. Check that the filters in content are OK with the current
+        context (ctx).
+    2. Move the parts of content that are still relevant into
+        new_content and unpack conditional blocks if appropriate.
+        For example, if an 'only' statement fully matches ctx, it
+        becomes irrelevant and is not appended to new_content.
+        If a conditional block fully matches, its contents are
+        unpacked into new_content.
+    3. Move failed filters into failed_filters, so that next time we
+        reach this node or one of its ancestors, we'll check those
+        filters first.
+    4. Optionally also return conditional failed filters if present.
+    */
+    pub fn process_content(
+        &mut self,
+        ctx: Vec<Label>,
+        labels: Vec<Label>
+    ) -> PyResult<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
+        let mut new_content: Vec<ContentStep> = Vec::new();
+        let mut failed_filters: Vec<ContentStep> = Vec::new();
+
+        for step in &self.content {
+            match &step.content_type {
+                // operator tokens are passed through unchanged
+                ContentType::Tokens(_) | ContentType::String(_) => {
+                    new_content.push(step.clone());
+                }
+
+                _ => {
+                    // step is an OnlyFilter/NoFilter/Condition/NegativeCondition
+                    let filter = match &step.content_type {
+                        ContentType::Filters(f) => f,
+                        ContentType::Node(n) => {
+                            match n.condition {
+                                Some(ref f) => f,
+                                None => return Err(pyo3::exceptions::PyTypeError::new_err(
+                                    format!("Empty conditional node in {:?}", step)
+                                ))
+                            }
+                        },
+                        _ => return Err(pyo3::exceptions::PyTypeError::new_err(
+                            format!("Unexpected content type for {:?}", step.content_type)
+                        )),
+                    };
+                    if filter.requires_action(ctx.clone(), labels.clone())? {
+                        // this filter requires action now
+                        match &step.content_type {
+                            // node represents conditional block with its own content
+                            ContentType::Node(n) => {
+                                /* TODO: add optional logging
+                                self._debug(
+                                    "    conditional block matches:" " %r (%s:%s)",
+                                    filter.line,
+                                    filename,
+                                    linenum,
+                                )
+                                */
+                                let mut cond_node = n.clone();
+                                // check and unpack the content inside this conditional node
+                                let (cond_content,
+                                    mut failed_cond_filters,
+                                    deeper_failed_filters) = cond_node
+                                        .process_content(ctx.clone(), labels.clone())?;
+                                new_content.extend(cond_content);
+                                if !failed_cond_filters.is_empty() {
+                                    // record the entire conditional step as a failing filter
+                                    failed_filters.push(step.clone());
+                                    failed_cond_filters.extend(deeper_failed_filters.into_iter());
+                                    return Ok((new_content, failed_filters, failed_cond_filters));
+                                }
+                                // conditional block unpacked successfully
+                                continue;
+                            }
+                            // plain filters (only/no) fail to apply
+                            _ => {
+                                /* TODO: add optional logging
+                                self._debug(
+                                    "    filter did not pass: %r (%s:%s)",
+                                    filter.line,
+                                    filename,
+                                    linenum,
+                                )
+                                */
+                                failed_filters.push(step.clone());
+                                return Ok((new_content, failed_filters, Vec::new()));
+                            }
+                        }
+                    }
+                    else if filter.is_irrelevant(ctx.clone(), labels.clone())? {
+                        // this filter is no longer relevant and can be removed
+                        continue
+                    }
+                    else {
+                        // keep the filter and check it again later
+                        new_content.push(step.clone());
+                    }
+                }
+            }
+        }
+
+        Ok((new_content, failed_filters, Vec::new()))
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn get_failed_cases(&self) -> PyResult<Vec<(Vec<Label>, Vec<ContentStep>, Vec<ContentStep>)>> {
         Ok(self.failed_cases.clone().into())
+
     }
 
     pub fn add_failed_case(

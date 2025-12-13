@@ -161,92 +161,6 @@ class Parser(object):
         dep = dep or []
         return self.get_dicts_joined(node, ctx, content, shortname, dep, skipdups)
 
-    def process_content(
-        self,
-        ctx: list[Label],
-        content: list[tuple[str, int, "Token | Filter"]],
-        labels: list[Label],
-    ) -> tuple[list[tuple[str, int, "Token | Filter"]],
-               list[tuple[str, int, Filter]],
-               list[tuple[str, int, Filter]]]:
-        """
-        Process content with respect to the current context.
-
-        :param ctx: node labels/names
-        :param content: previous content in plain
-        :param labels: descendant labels
-        :returns: new processed content with failed regular and conditional filters
-
-        More details on how this works:
-        1. Check that the filters in content are OK with the current
-           context (ctx).
-        2. Move the parts of content that are still relevant into
-           new_content and unpack conditional blocks if appropriate.
-           For example, if an 'only' statement fully matches ctx, it
-           becomes irrelevant and is not appended to new_content.
-           If a conditional block fully matches, its contents are
-           unpacked into new_content.
-        3. Move failed filters into failed_filters, so that next time we
-           reach this node or one of its ancestors, we'll check those
-           filters first.
-        4. Optionally also return conditional failed filters if present.
-        """
-        new_content = []
-        failed_filters = []
-
-        for t in content:
-            filename, linenum, obj = t
-            if tokens_oper_key(obj) in list(tokens_oper):
-                new_content.append(t)
-                continue
-
-            filter = (
-                obj.condition
-                if hasattr(obj, "condition") and obj.condition is not None
-                else obj
-            )
-            # obj is an OnlyFilter/NoFilter/Condition/NegativeCondition
-            if filter.requires_action(ctx, labels):
-                # this filter requires action now
-                if type(filter) is OnlyFilter or type(filter) is NoFilter:
-                    self._debug(
-                        "    filter did not pass: %r (%s:%s)",
-                        filter.line,
-                        filename,
-                        linenum,
-                    )
-                    failed_filters += [t]
-                    return new_content, failed_filters, []
-                else:
-                    self._debug(
-                        "    conditional block matches:" " %r (%s:%s)",
-                        filter.line,
-                        filename,
-                        linenum,
-                    )
-                    # check and unpack the content inside this condition object
-                    cond_content, failed_cond_filters, deeper_failed_filters = (
-                        self.process_content(
-                            ctx,
-                            obj.get_content(),
-                            labels,
-                        )
-                    )
-                    new_content += cond_content
-                    if failed_cond_filters:
-                        failed_filters += [t]
-                        failed_cond_filters += deeper_failed_filters
-                        return new_content, failed_filters, failed_cond_filters
-                    continue
-            elif filter.is_irrelevant(ctx, labels):
-                # this filter is no longer relevant and can be removed
-                continue
-            else:
-                # keep the filter and check it again later
-                new_content.append(t)
-
-        return new_content, failed_filters, []
-
     def get_dicts_plain(
         self,
         node: Node = None,
@@ -304,19 +218,13 @@ class Parser(object):
 
         # Check content and unpack it into new_content
         internal_content, failed_internal_filters, failed_cond_filters = (
-            self.process_content(
-                ctx,
-                node.get_content(),
-                labels,
-            )
+            node.process_content(ctx, labels)
         )
         failed_internal_filters += failed_cond_filters
+        content_node = Node()
+        content_node.swap_content(content)
         external_content, failed_external_filters, failed_cond_filters = (
-            self.process_content(
-                ctx,
-                content,
-                labels,
-            )
+            content_node.process_content(ctx, labels)
         )
         # NOTE: the failed filters should go into the failed internal filters
         # because we don't expect them to come from outside this node, even if
