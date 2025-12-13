@@ -233,29 +233,6 @@ class Parser(object):
                 new_content.append(t)
         return True
 
-    @staticmethod
-    def might_pass(
-        node, ctx, content, labels,
-        failed_ctx, failed_external_filters, failed_internal_filters,
-    ):
-        all_content = content + node.get_content()
-        for t in failed_external_filters + failed_internal_filters:
-            if t not in all_content:
-                return True
-        for t in failed_external_filters:
-            _, _, external_filter = t
-            if not external_filter.might_pass(failed_ctx, ctx, labels):
-                return False
-        for t in failed_internal_filters:
-            if t not in node.get_content():
-                return True
-
-        for t in failed_internal_filters:
-            _, _, internal_filter = t
-            if not internal_filter.might_pass(failed_ctx, ctx, labels):
-                return False
-        return True
-
     def get_dicts_plain(
         self,
         node: Node = None,
@@ -299,7 +276,7 @@ class Parser(object):
 
         # Check previously failed filters
         for i, failed_case in enumerate(node.get_failed_cases()):
-            if not Parser.might_pass(node, ctx, content, labels, *failed_case):
+            if not node.failed_case_might_pass(i, ctx, labels, content):
                 self._debug(
                     "\n*    this subtree has failed before %s\n"
                     "         content: %s\n"

@@ -329,16 +329,66 @@ impl Node {
         Ok(())
     }
 
-    pub fn update_failed_case(
+    pub fn prioritize_failed_case(
         &mut self,
         idx: usize,
-        ctx: Vec<Label>,
-        external_filters: Vec<ContentStep>,
-        internal_filters: Vec<ContentStep>,
     ) -> PyResult<()> {
-        self.failed_cases.push_front((ctx, external_filters, internal_filters));
-        _ = self.failed_cases.remove(idx);
+        let failed_case = self.failed_cases.remove(idx);
+        match failed_case {
+            Some(f) => self.failed_cases.push_front(f),
+            None => { return Ok(()); }
+        };
         Ok(())
+    }
+
+    pub fn failed_case_might_pass(
+        &self,
+        idx: usize,
+        ctx: Vec<Label>,
+        labels: Vec<Label>,
+        content: Vec<ContentStep>
+    ) -> PyResult<bool> {
+        let node_content = self.get_content()?;
+        let all_content: Vec<&ContentStep> = content.iter().chain(&node_content).collect();
+        let failed_case = match self.failed_cases.get(idx) {
+            Some(f) => f,
+            None => { return Ok(false); }
+        };
+        let (failed_ctx, failed_external_filters, failed_internal_filters) = failed_case;
+
+        // might pass if any filter (external or internal) is missing from all_content
+        let in_all_content = |step: &ContentStep| all_content.contains(&step);
+        if failed_external_filters.iter().any(|t| !in_all_content(t))
+            || failed_internal_filters.iter().any(|t| !in_all_content(t))
+        {
+            return Ok(true);
+        }
+
+        // cannot pass if at least one external filter cannot pass
+        for ContentStep {content_type, ..} in failed_external_filters {
+            if let ContentType::Filters(external_filter) = content_type
+                && !external_filter.might_pass(failed_ctx.clone(), ctx.clone(), labels.clone())? {
+                    return Ok(false);
+                }
+        }
+
+        // might pass if any internal filter is missing only from the node content
+        if failed_internal_filters
+            .iter()
+            .any(|t| !node_content.contains(t))
+        {
+            return Ok(true);
+        }
+
+        // cannot pass if at least one internal filter cannot pass
+        for ContentStep {content_type, ..} in failed_internal_filters {
+            if let ContentType::Filters(internal_filter) = content_type
+                && !internal_filter.might_pass(failed_ctx.clone(), ctx.clone(), labels.clone())? {
+                    return Ok(false);
+                }
+        }
+
+        Ok(true)
     }
 
     #[pyo3(signature = (indent, recurse=false))]
