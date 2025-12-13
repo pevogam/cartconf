@@ -500,6 +500,28 @@ impl Node {
         Ok(true)
     }
 
+    #[staticmethod]
+    pub fn join_names(n1: &str, n2: &str) -> String {
+        // find the common prefix between the two names
+        let common_prefix_len = n1
+            .chars()
+            .zip(n2.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let common_prefix = &n1[..common_prefix_len];
+
+        // strip the last dot-separated component from the common prefix
+        let p = common_prefix.rsplit_once('.').map_or("", |(before, _)| before);
+        if p.is_empty() {
+            format!("{}.{}", n1, n2)
+        } else {
+            // remove the common prefix part from both names
+            let p1 = &n1[p.len()..];
+            let p2 = &n2[p.len()..];
+            format!("{}{}{}", p, p1, p2)
+        }
+    }
+
     #[pyo3(signature = (indent, recurse=false))]
     pub fn dump(&self, indent: usize, recurse: bool) -> PyResult<String> {
         let mut dump_lines = vec![

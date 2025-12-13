@@ -359,25 +359,6 @@ class Parser(object):
                 yield drop_suffixes(d, skipdups=skipdups) if parent else d
             node.swap_content(old_content[:])
 
-    @staticmethod
-    def join_names(n1: str, n2: str) -> str:
-        """
-        Produce a new name from two old names where two dictionaries were joined.
-
-        :param n1: name of the first dictionary
-        :param n2: name of the second dictionary
-        :returns: a new name reusing variant names
-        """
-        common_prefix = n1[: [x[0] == x[1] for x in list(zip(n1, n2))].index(0)]
-        cp = ".".join(common_prefix.split(".")[:-1])
-        p1 = re.sub(r"^" + cp, "", n1)
-        p2 = re.sub(r"^" + cp, "", n2)
-        if cp:
-            name = cp + p1 + p2
-        else:
-            name = p1 + "." + p2
-        return name
-
     def join_filters(
         self,
         onlys: list[tuple[str, int, Filter]],
@@ -427,6 +408,6 @@ class Parser(object):
 
                     d = d1.copy()
                     d.update(d2)
-                    d["name"] = Parser.join_names(d1["name"], d2["name"])
-                    d["shortname"] = Parser.join_names(d1["shortname"], d2["shortname"])
+                    d["name"] = Node.join_names(d1["name"], d2["name"])
+                    d["shortname"] = Node.join_names(d1["shortname"], d2["shortname"])
                     yield d

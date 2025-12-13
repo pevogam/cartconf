@@ -315,6 +315,12 @@ class NodeTest(unittest.TestCase):
         self.assertEqual(new_content, [])
         self.assertEqual(failed_filters, [])
 
+    def test_join_names(self):
+        name1 = "test1.subtest1"
+        name2 = "test1.subtest2"
+        combined_name = parser.Node.join_names(name1, name2)
+        self.assertEqual(combined_name, "test1.subtest1.subtest2")
+
     def test_dump(self):
         node = parser.Node()
         empty_dumped_str = node.dump(0)
@@ -640,12 +646,6 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(len(dicts), 1)
         self.assertEqual(dicts[0]["name"], "test")
         self.assertEqual(dicts[0]["key"], "value")
-
-    def test_join_names(self):
-        name1 = "test1.subtest1"
-        name2 = "test1.subtest2"
-        combined_name = self.parser.join_names(name1, name2)
-        self.assertEqual(combined_name, "test1.subtest1.subtest2")
 
     def test_join_filters(self):
         self.parser.parse_string("variants:\n  - test1:\n    key1 = value1\n  - test2:\n    key2 = value2\n")
