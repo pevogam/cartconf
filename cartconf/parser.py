@@ -2,9 +2,7 @@
 Module for readers, lexers, and parsers as well as their components.
 """
 
-import os
 import logging
-import re
 from typing import Generator
 
 from .exceptions import *
@@ -30,13 +28,88 @@ parse_file = parser.parse_file
 
 class PreDict(object):
 
-    def __init__(self, ctx=None, content=None, shortname=None, dep=None):
+    num_failed_cases = 5
+
+    def __init__(
+        self,
+        ctx: list[Label] = None,
+        content: list[tuple[str, int, "Token"]] = None,
+        shortname: list[Label] = None,
+        dep: list[str] = None,
+    ) -> None:
         self.ctx: list[Label] = ctx or []
         self.content: list[tuple[str, int, "Token"]] = content or []
         self.shortname: list[Label] = shortname or []
         self.dep: list[str] = dep or []
 
-    def get_dict(self):
+    def __str__(self) -> str:
+        return f"PreDict(ctx={self.ctx}, content={self.content}, shortname={self.shortname}, dep={self.dep})"
+
+    def copy(self) -> "PreDict":
+        return PreDict(
+            self.ctx.copy(), self.content.copy(), self.shortname.copy(), self.dep.copy()
+        )
+
+    def update_from_node(self, node: Node) -> bool:
+        # if self.debug:    #Print dict on which is working now.
+        #    print(node.dump(0))
+        # Update dep
+        for d in node.dep:
+            for dd in d:
+                self.dep += [".".join([str(label) for label in self.ctx + dd])]
+        # Update ctx
+        self.ctx += node.name
+        labels = list(node.labels)
+
+        # if node.name:
+        #    self._debug("checking out %r", name)
+
+        # Check previously failed filters
+        for i, failed_case in enumerate(node.get_failed_cases()):
+            if not node.failed_case_might_pass(i, self.ctx, labels, self.content):
+                # self._debug(
+                #    "\n*    this subtree has failed before %s\n"
+                #    "         content: %s\n"
+                #    "         failcase:%s\n",
+                #    name,
+                #    self.content + node.get_content(),
+                #    failed_case,
+                # )
+                node.prioritize_failed_case(i)
+                return False
+
+        # Check content and unpack it into new content
+        internal_content, failed_internal_filters, failed_cond_filters = (
+            node.process_content(self.ctx, labels)
+        )
+        failed_internal_filters += failed_cond_filters
+        content_node = Node()
+        content_node.swap_content(self.content)
+        external_content, failed_external_filters, failed_cond_filters = (
+            content_node.process_content(self.ctx, labels)
+        )
+        # NOTE: the failed filters should go into the failed internal filters
+        # because we don't expect them to come from outside this node, even if
+        # the condition itself was external
+        failed_internal_filters += failed_cond_filters
+        self.content = internal_content + external_content
+        if failed_internal_filters or failed_external_filters:
+            node.add_failed_case(
+                self.ctx,
+                failed_external_filters,
+                failed_internal_filters,
+                self.num_failed_cases,
+            )
+            # self._debug("Failed_cases %s", node.get_failed_cases())
+            return False
+
+        # Update shortname
+        if node.append_to_shortname:
+            self.shortname += node.name
+
+        return True
+
+    def get_dict(self) -> dict[str, str]:
         d = {
             "name": ".".join([str(label) for label in self.ctx]),
             "dep": self.dep,
@@ -48,9 +121,6 @@ class PreDict(object):
 
 
 class Parser(object):
-    # pylint: disable=W0102
-
-    num_failed_cases = 5
 
     def __init__(
         self,
@@ -184,71 +254,13 @@ class Parser(object):
         :returns: (recursive) dictionary generator
         """
         pre_dict = pre_dict or PreDict()
-        ctx, shortname, dep = pre_dict.ctx, pre_dict.shortname, pre_dict.dep
-        content = pre_dict.content
+        new_pre_dict = pre_dict.copy()
         node = node or self.node
-
-        # if self.debug:    #Print dict on which is working now.
-        #    print(node.dump(0))
-        # Update dep
-        for d in node.dep:
-            for dd in d:
-                dep = dep + [".".join([str(label) for label in ctx + dd])]
-        # Update ctx
-        ctx = ctx + node.name
-        labels = list(node.labels)
-        # Get the current name
-        name = ".".join([str(label) for label in ctx])
-
-        if node.name:
-            self._debug("checking out %r", name)
-
-        # Check previously failed filters
-        for i, failed_case in enumerate(node.get_failed_cases()):
-            if not node.failed_case_might_pass(i, ctx, labels, content):
-                self._debug(
-                    "\n*    this subtree has failed before %s\n"
-                    "         content: %s\n"
-                    "         failcase:%s\n",
-                    name,
-                    content + node.get_content(),
-                    failed_case,
-                )
-                node.update_failed_case(i, *failed_case)
-                return
-
-        # Check content and unpack it into new_content
-        internal_content, failed_internal_filters, failed_cond_filters = (
-            node.process_content(ctx, labels)
-        )
-        failed_internal_filters += failed_cond_filters
-        content_node = Node()
-        content_node.swap_content(content)
-        external_content, failed_external_filters, failed_cond_filters = (
-            content_node.process_content(ctx, labels)
-        )
-        # NOTE: the failed filters should go into the failed internal filters
-        # because we don't expect them to come from outside this node, even if
-        # the condition itself was external
-        failed_internal_filters += failed_cond_filters
-        new_content = internal_content + external_content
-        if failed_internal_filters or failed_external_filters:
-            node.add_failed_case(
-                ctx,
-                failed_external_filters,
-                failed_external_filters,
-                Parser.num_failed_cases,
-            )
-            self._debug("Failed_cases %s", node.get_failed_cases())
+        if not new_pre_dict.update_from_node(node):
             return
-
-        # Update shortname
-        if node.append_to_shortname:
-            shortname = shortname + node.name
 
         # Recurse into children
         count = 0
-        new_pre_dict = PreDict(ctx, new_content, shortname, dep)
         if self.defaults and ".".join(str(node.var_name)) not in self.expand_defaults:
             for n in node.get_children():
                 for d in self.get_dicts_joined(new_pre_dict, n):
