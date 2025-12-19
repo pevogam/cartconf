@@ -642,7 +642,7 @@ class ParserTest(unittest.TestCase):
 
     def test_get_dicts_joined(self):
         self.parser.parse_string("variants:\n  - test:\n    key = value\n    join test\n")
-        dicts = list(self.parser.get_dicts())
+        dicts = list(self.parser.get_dicts_joined())
         self.assertEqual(len(dicts), 1)
         self.assertEqual(dicts[0]["name"], "test")
         self.assertEqual(dicts[0]["key"], "value")
@@ -1797,6 +1797,84 @@ class ParserTest(unittest.TestCase):
                  'test100': 'Baz'},
             ],
             True)
+
+    def test_double_join(self):
+        self._compare_string_config("""
+            k1 = v0
+            k2 = v0
+            ka = v0
+            kb = v0
+            variants:
+                - test1:
+                    k1 = v1
+                - test2:
+                    k2 = v2
+            variants:
+                - a:
+                    ka = va
+                    suffix _s1
+                - b:
+                    kb = vb
+                    suffix _s2
+            join a b
+        """, [
+            {
+                '_name_map_file': {'<string>': 'b.test1'},
+                '_short_name_map_file': {'<string>': 'b.test1'},
+                'dep': [],
+                'name': 'a.test1.b.test1',
+                'shortname': 'a.test1.b.test1',
+                'ka_s1': 'va',
+                'ka_s2': 'v0',
+                'kb_s1': 'v0',
+                'kb_s2': 'vb',
+                'k1': 'v1',
+                'k2': 'v0',
+            },
+            {
+                '_name_map_file': {'<string>': 'b.test2'},
+                '_short_name_map_file': {'<string>': 'b.test2'},
+                'dep': [],
+                'name': 'a.test1.b.test2',
+                'shortname': 'a.test1.b.test2',
+                'ka_s1': 'va',
+                'ka_s2': 'v0',
+                'kb_s1': 'v0',
+                'kb_s2': 'vb',
+                'k1_s1': 'v1',
+                'k1_s2': 'v0',
+                'k2_s1': 'v0',
+                'k2_s2': 'v2',
+            },
+            {
+                '_name_map_file': {'<string>': 'b.test1'},
+                '_short_name_map_file': {'<string>': 'b.test1'},
+                'dep': [],
+                'name': 'a.test2.b.test1',
+                'shortname': 'a.test2.b.test1',
+                'ka_s1': 'va',
+                'ka_s2': 'v0',
+                'kb_s1': 'v0',
+                'kb_s2': 'vb',
+                'k1_s1': 'v0',
+                'k1_s2': 'v1',
+                'k2_s1': 'v2',
+                'k2_s2': 'v0',
+            },
+            {
+                '_name_map_file': {'<string>': 'b.test2'},
+                '_short_name_map_file': {'<string>': 'b.test2'},
+                'dep': [],
+                'name': 'a.test2.b.test2',
+                'shortname': 'a.test2.b.test2',
+                'ka_s1': 'va',
+                'ka_s2': 'v0',
+                'kb_s1': 'v0',
+                'kb_s2': 'vb',
+                'k1': 'v0',
+                'k2': 'v2',
+            },
+        ])
 
 
 if __name__ == '__main__':

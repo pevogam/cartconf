@@ -28,6 +28,25 @@ parse_string = parser.parse_string
 parse_file = parser.parse_file
 
 
+class PreDict(object):
+
+    def __init__(self, ctx=None, content=None, shortname=None, dep=None):
+        self.ctx: list[Label] = ctx or []
+        self.content: list[tuple[str, int, "Token"]] = content or []
+        self.shortname: list[Label] = shortname or []
+        self.dep: list[str] = dep or []
+
+    def get_dict(self):
+        d = {
+            "name": ".".join([str(label) for label in self.ctx]),
+            "dep": self.dep,
+            "shortname": ".".join([str(sn.name) for sn in self.shortname]),
+        }
+        for _, _, op in self.content:
+            op.apply_to_dict(d)
+        return d
+
+
 class Parser(object):
     # pylint: disable=W0102
 
@@ -137,55 +156,37 @@ class Parser(object):
 
     def get_dicts(
         self,
+        pre_dict: PreDict = None,
         node: Node = None,
-        ctx: list[Label] = None,
-        content: list[tuple[str, int, "Token"]] = None,
-        shortname: list[Label] = None,
-        dep: list[str] = None,
         skipdups: bool = True,
     ) -> Generator[dict[str, str], None, None]:
         """
         Get dictionaries from a parser and given or its current node.
 
+        :param pre_dict: pre-dictionary of parsed content
         :param node: node to start from
-        :param ctx: node labels/names
-        :param content: previous content in plain
-        :param shortname: short name
-        :param dep: dependencies
-        :returns: dictionary generator
+        :returns: (recursive) dictionary generator
         """
-        node = node or self.node
-        ctx = ctx or []
-        content = content or []
-        shortname = shortname or []
-        dep = dep or []
-        return self.get_dicts_joined(node, ctx, content, shortname, dep, skipdups)
+        return self.get_dicts_joined(pre_dict, node, skipdups)
 
     def get_dicts_plain(
         self,
+        pre_dict: PreDict = None,
         node: Node = None,
-        ctx: list[Label] = None,
-        content: list[tuple[str, int, "Token"]] = None,
-        shortname: list[Label] = None,
-        dep: list[str] = None,
     ) -> Generator[dict[str, str], None, None]:
         """
         Generate dictionaries from the code parsed so far.
 
         This should be called after parsing something.
 
+        :param pre_dict: pre-dictionary of parsed content
         :param node: node to start from
-        :param ctx: node labels/names
-        :param content: previous content in plain
-        :param shortname: short name
-        :param dep: dependencies
-        :returns: dictionary generator
+        :returns: (recursive) dictionary generator
         """
+        pre_dict = pre_dict or PreDict()
+        ctx, shortname, dep = pre_dict.ctx, pre_dict.shortname, pre_dict.dep
+        content = pre_dict.content
         node = node or self.node
-        ctx = ctx or []
-        content = content or []
-        shortname = shortname or []
-        dep = dep or []
 
         # if self.debug:    #Print dict on which is working now.
         #    print(node.dump(0))
@@ -247,49 +248,38 @@ class Parser(object):
 
         # Recurse into children
         count = 0
+        new_pre_dict = PreDict(ctx, new_content, shortname, dep)
         if self.defaults and ".".join(str(node.var_name)) not in self.expand_defaults:
             for n in node.get_children():
-                for d in self.get_dicts_joined(n, ctx, new_content, shortname, dep):
+                for d in self.get_dicts_joined(new_pre_dict, n):
                     count += 1
                     yield d
                 if n.default and count:
                     break
         else:
             for n in node.get_children():
-                for d in self.get_dicts_joined(n, ctx, new_content, shortname, dep):
+                for d in self.get_dicts_joined(new_pre_dict, n):
                     count += 1
                     yield d
         # Reached leaf?
         if not node.get_children():
             self._debug("    reached leaf, returning it")
-            d = {
-                "name": name,
-                "dep": dep,
-                "shortname": ".".join([str(sn.name) for sn in shortname]),
-            }
-            for _, _, op in new_content:
-                op.apply_to_dict(d)
+            d = new_pre_dict.get_dict()
             apply_suffix_bounds(d)
             yield d
 
     def get_dicts_joined(
         self,
+        pre_dict: PreDict = None,
         node: Node = None,
-        ctx: list[Label] = None,
-        content: list[tuple[str, int, "Token"]] = None,
-        shortname: list[Label] = None,
-        dep: list[str] = None,
         skipdups: bool = True,
     ) -> Generator[dict[str, str], None, None]:
         """
         Get possibly joined dictionaries added using only filters.
 
+        :param pre_dict: pre-dictionary of parsed content
         :param node: node to start from
-        :param ctx: node labels/names
-        :param content: previous content in plain
-        :param shortname: short name
-        :param dep: dependencies
-        :returns: dictionary generator
+        :returns: (recursive) dictionary generator
 
         Process 'join' entries and unpack join filters in the node.
 
@@ -309,11 +299,8 @@ class Parser(object):
             Transforms into:
                 join a a
         """
+        pre_dict = pre_dict or PreDict()
         node = node or self.node
-        ctx = ctx or []
-        content = content or []
-        shortname = shortname or []
-        dep = dep or []
 
         # Keep track to know who is a parent generator
         parent = False
@@ -342,7 +329,7 @@ class Parser(object):
 
         if not joins:
             # Return generator
-            for d in self.get_dicts_plain(node, ctx, content, shortname, dep):
+            for d in self.get_dicts_plain(pre_dict, node):
                 yield drop_suffixes(d, skipdups=skipdups) if parent else d
         else:
             # Rewrite all separate joins in one node as many `only'
@@ -355,37 +342,28 @@ class Parser(object):
 
             old_content = node.get_content()
             node.swap_content(new_content)
-            for d in self.join_filters(onlys, node, ctx, content, shortname, dep):
+            for d in self.join_filters(onlys, pre_dict, node):
                 yield drop_suffixes(d, skipdups=skipdups) if parent else d
             node.swap_content(old_content[:])
 
     def join_filters(
         self,
         onlys: list[tuple[str, int, Filter]],
+        pre_dict: PreDict = None,
         node: Node = None,
-        ctx: list[Label] = None,
-        content: list[tuple[str, int, "Token"]] = None,
-        shortname: list[Label] = None,
-        dep: list[str] = None,
     ) -> Generator[dict[str, str], None, None]:
         """
         Perform all joins as filters on added dictionaries.
 
         :param onlys: list of only filters
+        :param pre_dict: pre-dictionary of parsed content
         :param node: node to start from
-        :param ctx: node labels/names
-        :param content: previous content in plain
-        :param shortname: short name
-        :param dep: dependencies
-        :returns: (resursive) dictionary generator
+        :returns: (recursive) dictionary generator
 
         Each `join' is the same as an `only' filter.
         """
+        pre_dict = pre_dict or PreDict()
         node = node or self.node
-        ctx = ctx or []
-        content = content or []
-        shortname = shortname or []
-        dep = dep or []
 
         # Current join/only
         only = onlys[:1]
@@ -396,15 +374,13 @@ class Parser(object):
             node.add_content(f, i, obj)
 
         if not remains:
-            for d in self.get_dicts_plain(node, ctx, content, shortname, dep):
+            for d in self.get_dicts_plain(pre_dict, node):
                 yield d
         else:
-            for d1 in self.get_dicts_plain(node, ctx, content, shortname, dep):
+            for d1 in self.get_dicts_plain(pre_dict, node):
                 # Current frame multiply by all variants from bottom
                 node.swap_content(content_orig)
-                for d2 in self.join_filters(
-                    remains, node, ctx, content, shortname, dep
-                ):
+                for d2 in self.join_filters(remains, pre_dict, node):
 
                     d = d1.copy()
                     d.update(d2)
