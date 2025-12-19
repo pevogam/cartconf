@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use pyo3::prelude::*;
-use pyo3::exceptions::PyException;
+use pyo3::exceptions::{PyException, PyTypeError, PyValueError};
 use pyo3::types::{PyAny};
 
 use crate::tokens::{ParamKey, ParamVal};
@@ -209,7 +209,7 @@ impl<'py> FromPyObject<'_, 'py> for ContentStep {
         if let Ok((filename, linenum, content_type)) = object.extract::<(String, isize, ContentType)>() {
             return Ok(ContentStep { filename, linenum, content_type });
         }
-        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+        Err(PyErr::new::<PyTypeError, _>(
             "Failed to extract ContentStep from python object",
         ))
     }
@@ -350,12 +350,12 @@ impl Node {
                         ContentType::Node(n) => {
                             match n.condition {
                                 Some(ref f) => f,
-                                None => return Err(pyo3::exceptions::PyTypeError::new_err(
+                                None => return Err(PyTypeError::new_err(
                                     format!("Empty conditional node in {:?}", step)
                                 ))
                             }
                         },
-                        _ => return Err(pyo3::exceptions::PyTypeError::new_err(
+                        _ => return Err(PyTypeError::new_err(
                             format!("Unexpected content type for {:?}", step.content_type)
                         )),
                     };
@@ -577,7 +577,7 @@ impl Node {
         // Build identifier_str
         let token_str = match token {
             Tokens::LIdentifier(s) => s.clone(),
-            _ => return Err(pyo3::exceptions::PyValueError::new_err(
+            _ => return Err(PyValueError::new_err(
                 format!("Expected LIdentifier token but got {}", token)
             )),
         };
@@ -592,7 +592,7 @@ impl Node {
             for t in &identifier[..identifier.len() - 1] {
                 parts.push(match t {
                     Tokens::LIdentifier(s) => s.clone(),
-                    _ => return Err(pyo3::exceptions::PyValueError::new_err(
+                    _ => return Err(PyValueError::new_err(
                         format!("Expected LIdentifier token but got {}", t)
                     )),
                 });
@@ -616,7 +616,7 @@ impl Node {
         let op: &Tokens = match identifier.last() {
             Some(last_token) => last_token,
             None => {
-                return Err(pyo3::exceptions::PyValueError::new_err("Empty identifier"));
+                return Err(PyValueError::new_err("Empty identifier"));
             }
         };
         let op_obj = op.like(identifier_str.clone(), value_str.clone())?;
@@ -725,7 +725,7 @@ impl Node {
         self.apply_predict(lexer, pre_dict)?;
 
         let filepath_str = filepath.to_str()
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid filepath"))?;
+            .ok_or_else(|| PyErr::new::<PyValueError, _>("Invalid filepath"))?;
         let mut new_lexer = Lexer::new(None, Some(filepath_str))?;
 
         // Parse with new lexer
@@ -872,7 +872,7 @@ impl Node {
         let mut vtoken: Tokens = match tokens.last() {
             Some(last_token) => last_token.clone(),
             None => {
-                return Err(pyo3::exceptions::PyValueError::new_err("Empty token list"));
+                return Err(PyValueError::new_err("Empty token list"));
             }
         };
 
@@ -925,7 +925,7 @@ impl Node {
                     let last_token: &Tokens = match tokens.last() {
                         Some(last_token) => last_token,
                         None => {
-                            return Err(pyo3::exceptions::PyValueError::new_err("Empty variants"));
+                            return Err(PyValueError::new_err("Empty variants"));
                         }
                     };
 
@@ -1319,7 +1319,7 @@ pub fn parse(
                 let last_token: &Tokens = match identifier.last() {
                     Some(last_token) => last_token,
                     None => {
-                        return Err(pyo3::exceptions::PyValueError::new_err("Empty identifier"));
+                        return Err(PyValueError::new_err("Empty identifier"));
                     }
                 };
 
