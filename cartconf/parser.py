@@ -30,6 +30,26 @@ class PreDict(object):
 
     num_failed_cases = 5
 
+    @property
+    def ctx(self):
+        return [label for ctx in self._ctx for label in ctx]
+
+    @property
+    def content(self):
+        return [step for content in self._content for step in content]
+
+    @property
+    def final_content(self):
+        return self._content[-1] + self._ctx_content[-1]
+
+    @property
+    def shortname(self):
+        return [label for shortname in self._shortname for label in shortname]
+
+    @property
+    def dep(self):
+        return [s for dep in self._dep for s in dep]
+
     def __init__(
         self,
         ctx: list[Label] = None,
@@ -37,36 +57,58 @@ class PreDict(object):
         shortname: list[Label] = None,
         dep: list[str] = None,
     ) -> None:
-        self.ctx: list[Label] = ctx or []
-        self.content: list[tuple[str, int, "Token"]] = content or []
-        self.shortname: list[Label] = shortname or []
-        self.dep: list[str] = dep or []
+        self._ctx: list[list[Label]] = [ctx] if ctx else [[]]
+        self._content: list[list[tuple[str, int, "Token"]]] = (
+            [content] if content else [[]]
+        )
+        self._ctx_content: list[list[tuple[str, int, "Token"]]] = [[]]
+        self._shortname: list[list[Label]] = [shortname] if shortname else [[]]
+        self._dep: list[list[str]] = [dep] if dep else [[]]
+
+        self.branch: list[Node] = []
+        self.route: list[int | None] = []
+        self.joins: list[Generator[dict[str, str], None, None]] = []
 
     def __str__(self) -> str:
         return f"PreDict(ctx={self.ctx}, content={self.content}, shortname={self.shortname}, dep={self.dep})"
 
     def copy(self) -> "PreDict":
-        return PreDict(
-            self.ctx.copy(), self.content.copy(), self.shortname.copy(), self.dep.copy()
-        )
+        new = PreDict()
+
+        new._ctx = self._ctx.copy()
+        new._content = self._content.copy()
+        new._ctx_content = self._ctx_content.copy()
+        new._shortname = self._shortname.copy()
+        new._dep = self._dep.copy()
+
+        new.branch = self.branch.copy()
+        new.route = self.route.copy()
+        new.joins = self.joins.copy()
+
+        return new
 
     def update_from_node(self, node: Node) -> bool:
+        ctx, shortname, dep = [], [], []
+        content = self.final_content
         # if self.debug:    #Print dict on which is working now.
         #    print(node.dump(0))
         # Update dep
         for d in node.dep:
             for dd in d:
-                self.dep += [".".join([str(label) for label in self.ctx + dd])]
+                dep += [".".join([str(label) for label in self.ctx + dd])]
         # Update ctx
-        self.ctx += node.name
+        ctx += node.name
         labels = list(node.labels)
+        # Update shortname
+        if node.append_to_shortname:
+            shortname += node.name
 
         # if node.name:
         #    self._debug("checking out %r", name)
 
         # Check previously failed filters
-        for i, failed_case in enumerate(node.get_failed_cases()):
-            if not node.failed_case_might_pass(i, self.ctx, labels, self.content):
+        for i in range(len(node.get_failed_cases())):
+            if not node.failed_case_might_pass(i, self.ctx + ctx, labels, self.content):
                 # self._debug(
                 #    "\n*    this subtree has failed before %s\n"
                 #    "         content: %s\n"
@@ -78,21 +120,35 @@ class PreDict(object):
                 node.prioritize_failed_case(i)
                 return False
 
+        self._ctx += [ctx]
+        self._content += [[]]
+        self._ctx_content += [[]]
+        self._shortname += [shortname]
+        self._dep += [dep]
+
+        self.branch += [node]
+        self.route += [None]
+        self.joins += [None]
+
         # Check content and unpack it into new content
         internal_content, failed_internal_filters, failed_cond_filters = (
-            node.process_content(self.ctx, labels)
+            node.process_content(self.ctx + ctx, labels)
         )
         failed_internal_filters += failed_cond_filters
         content_node = Node()
-        content_node.swap_content(self.content)
+        content_node.swap_content(content)
         external_content, failed_external_filters, failed_cond_filters = (
-            content_node.process_content(self.ctx, labels)
+            content_node.process_content(self.ctx + ctx, labels)
         )
+
+        # update redundant filters from updated external content
+        self._ctx_content[-1] = external_content
+        self._content[-1] = internal_content
+
         # NOTE: the failed filters should go into the failed internal filters
         # because we don't expect them to come from outside this node, even if
         # the condition itself was external
         failed_internal_filters += failed_cond_filters
-        self.content = internal_content + external_content
         if failed_internal_filters or failed_external_filters:
             node.add_failed_case(
                 self.ctx,
@@ -103,11 +159,18 @@ class PreDict(object):
             # self._debug("Failed_cases %s", node.get_failed_cases())
             return False
 
-        # Update shortname
-        if node.append_to_shortname:
-            self.shortname += node.name
-
         return True
+
+    def reset_from_last_node(self):
+        self.branch.pop()
+        self.route.pop()
+        self.joins.pop()
+        # should only pop these if route could be popped
+        self._ctx.pop()
+        self._ctx_content.pop()
+        self._content.pop()
+        self._shortname.pop()
+        self._dep.pop()
 
     def get_dict(self) -> dict[str, str]:
         d = {
@@ -115,7 +178,7 @@ class PreDict(object):
             "dep": self.dep,
             "shortname": ".".join([str(sn.name) for sn in self.shortname]),
         }
-        for _, _, op in self.content:
+        for _, _, op in self.final_content:
             op.apply_to_dict(d)
         return d
 
@@ -237,13 +300,20 @@ class Parser(object):
         :param node: node to start from
         :returns: (recursive) dictionary generator
         """
-        return self.get_dicts_joined(pre_dict, node, skipdups)
+        pre_dict = pre_dict or PreDict()
+        while True:
+            # mark current call as top-level parent generator for proper behavior
+            self.parent_generator = True
+            d = self.get_dicts_joined(pre_dict, node, skipdups=skipdups)
+            if d is None:
+                break
+            yield drop_suffixes(d, skipdups=skipdups)
 
     def get_dicts_plain(
         self,
         pre_dict: PreDict = None,
         node: Node = None,
-    ) -> Generator[dict[str, str], None, None]:
+    ) -> dict[str, str] | None:
         """
         Generate dictionaries from the code parsed so far.
 
@@ -251,47 +321,72 @@ class Parser(object):
 
         :param pre_dict: pre-dictionary of parsed content
         :param node: node to start from
-        :returns: (recursive) dictionary generator
+        :returns: generated params dictionary
         """
         pre_dict = pre_dict or PreDict()
-        new_pre_dict = pre_dict.copy()
         node = node or self.node
-        if not new_pre_dict.update_from_node(node):
-            return
 
-        # Recurse into children
-        count = 0
-        if self.defaults and ".".join(str(node.var_name)) not in self.expand_defaults:
-            for n in node.get_children():
-                for d in self.get_dicts_joined(new_pre_dict, n):
-                    count += 1
-                    yield d
-                if n.default and count:
-                    break
+        if node in pre_dict.branch:
+            depth = pre_dict.branch.index(node)
+            # leaf nodes can only be reached once
+            if not node.get_children():
+                return None
         else:
-            for n in node.get_children():
-                for d in self.get_dicts_joined(new_pre_dict, n):
-                    count += 1
-                    yield d
+            if pre_dict.branch and node not in pre_dict.branch[-1].get_children():
+                raise ValueError("Discontinuous pre-dict branch, cannot get dicts")
+            if not pre_dict.update_from_node(node):
+                return None
+            depth = len(pre_dict.branch) - 1
+
         # Reached leaf?
         if not node.get_children():
             self._debug("    reached leaf, returning it")
-            d = new_pre_dict.get_dict()
+            d = pre_dict.get_dict()
             apply_suffix_bounds(d)
-            yield d
+            return d
+
+        # Recurse into children
+        children = node.get_children()
+        while True:
+            if pre_dict.route[depth] is None:
+                # start with 0th child
+                pre_dict.route[depth] = 0
+            elif (
+                depth + 1 == len(pre_dict.route) - 1
+            ):  # one for leaf down from final index
+                # move to next child
+                pre_dict.route[depth] += 1
+                # remove all previous grand children and their effects on pre-dict
+                for _ in range(depth + 1, len(pre_dict.route)):
+                    pre_dict.reset_from_last_node()
+            if pre_dict.route[depth] + 1 > len(children):
+                break
+            child = children[pre_dict.route[depth]]
+            if (
+                self.defaults
+                and ".".join(str(node.var_name)) not in self.expand_defaults
+            ):
+                if any(c.default for c in children) and not child.default:
+                    return None
+            d = self.get_dicts_joined(pre_dict, child)
+            # completed children recursion is consumed until we run out of children
+            if d is None:
+                continue
+            return d
+        return None
 
     def get_dicts_joined(
         self,
         pre_dict: PreDict = None,
         node: Node = None,
         skipdups: bool = True,
-    ) -> Generator[dict[str, str], None, None]:
+    ) -> dict[str, str] | None:
         """
         Get possibly joined dictionaries added using only filters.
 
         :param pre_dict: pre-dictionary of parsed content
         :param node: node to start from
-        :returns: (recursive) dictionary generator
+        :returns: generated params dictionary
 
         Process 'join' entries and unpack join filters in the node.
 
@@ -325,44 +420,54 @@ class Parser(object):
         # Node is a current block. It has content, its contents: node.get_content()
         # Content without joins
         new_content = []
-
         # All joins in current node
         joins = []
-
         for t in node.get_content():
             filename, linenum, obj = t
-
             if not isinstance(obj, JoinFilter):
                 new_content.append(t)
                 continue
-
             # Accumulate all joins at one node
             joins += [t]
 
-        if not joins:
-            # Return generator
-            for d in self.get_dicts_plain(pre_dict, node):
-                yield drop_suffixes(d, skipdups=skipdups) if parent else d
-        else:
-            # Rewrite all separate joins in one node as many `only'
-            onlys = []
-            for j in joins:
-                filename, linenum, obj = j
-                for word in obj.filter:
-                    f = OnlyFilter([word], str(word))
-                    onlys += [(filename, linenum, f)]
+        if joins:
+            if len(pre_dict.joins) == 0 or pre_dict.joins[-1] is None:
 
-            old_content = node.get_content()
-            node.swap_content(new_content)
-            for d in self.join_filters(onlys, pre_dict, node):
-                yield drop_suffixes(d, skipdups=skipdups) if parent else d
-            node.swap_content(old_content[:])
+                # Rewrite all separate joins in one node as many `only'
+                onlys = []
+                for j in joins:
+                    filename, linenum, obj = j
+                    for word in obj.filter:
+                        f = OnlyFilter([word], str(word))
+                        onlys += [(filename, linenum, f)]
+
+                # register the generator as leaf for current pre-dict and continue with a copy
+                old_pre_dict = pre_dict.copy()
+                pre_dict.update_from_node(node)
+                pre_dict.joins[-1] = self.join_filters(
+                    onlys, new_content, old_pre_dict, node
+                )
+            else:
+                raise RuntimeError("Should not obtain joins if joins already expanded")
+
+        # pre-existing generator has a next dictionary
+        d = None
+        if len(pre_dict.joins) > 0 and pre_dict.joins[-1] is not None:
+            try:
+                d = next(pre_dict.joins[-1])
+            except StopIteration:
+                pre_dict.route[-1] = len(node.get_children())
+
+        if not joins and d is None:
+            d = self.get_dicts_plain(pre_dict, node)
+        return drop_suffixes(d, skipdups=skipdups) if d and parent else d
 
     def join_filters(
         self,
         onlys: list[tuple[str, int, Filter]],
-        pre_dict: PreDict = None,
-        node: Node = None,
+        content_orig: list[list[tuple[str, int, "Token"]]],
+        pre_dict_orig: PreDict,
+        node: Node,
     ) -> Generator[dict[str, str], None, None]:
         """
         Perform all joins as filters on added dictionaries.
@@ -374,28 +479,29 @@ class Parser(object):
 
         Each `join' is the same as an `only' filter.
         """
-        pre_dict = pre_dict or PreDict()
-        node = node or self.node
-
         # Current join/only
         only = onlys[:1]
         remains = onlys[1:]
 
-        content_orig = node.get_content()
+        node.swap_content(content_orig)
         for f, i, obj in only:
             node.add_content(f, i, obj)
+        pre_dict = pre_dict_orig.copy()
 
-        if not remains:
-            for d in self.get_dicts_plain(pre_dict, node):
-                yield d
-        else:
-            for d1 in self.get_dicts_plain(pre_dict, node):
+        while True:
+            d1 = self.get_dicts_plain(pre_dict, node)
+            if d1 is None:
+                break
+            if not remains:
+                yield d1
+            else:
+
                 # Current frame multiply by all variants from bottom
-                node.swap_content(content_orig)
-                for d2 in self.join_filters(remains, pre_dict, node):
-
+                for d2 in self.join_filters(remains, content_orig, pre_dict_orig, node):
                     d = d1.copy()
                     d.update(d2)
                     d["name"] = Node.join_names(d1["name"], d2["name"])
                     d["shortname"] = Node.join_names(d1["shortname"], d2["shortname"])
                     yield d
+
+        node.swap_content(content_orig)
