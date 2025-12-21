@@ -67,7 +67,9 @@ class PreDict(object):
 
         self.branch: list[Node] = []
         self.route: list[int | None] = []
-        self.joins: list[Generator[dict[str, str], None, None]] = []
+        self.joins: list[list[tuple[str, int, Filter] | None] | None] = []
+        self.join_dicts: list[list[dict[str, str] | None] | None] = []
+        self.join_pre_dicts: list[list["PreDict" | None] | None] = []
 
     def __str__(self) -> str:
         return f"PreDict(ctx={self.ctx}, content={self.content}, shortname={self.shortname}, dep={self.dep})"
@@ -84,6 +86,19 @@ class PreDict(object):
         new.branch = self.branch.copy()
         new.route = self.route.copy()
         new.joins = self.joins.copy()
+        new.join_dicts = self.join_dicts.copy()
+        new.join_pre_dicts = self.join_pre_dicts.copy()
+
+        return new
+
+    def shallow_copy(self) -> "PreDict":
+        new = PreDict()
+
+        new._ctx[0] = self.ctx
+        new._content[0] = self._content[-1]
+        new._ctx_content[0] = self._ctx_content[-1]
+        new._shortname[0] = self.shortname
+        new._dep[0] = self.dep
 
         return new
 
@@ -129,6 +144,8 @@ class PreDict(object):
         self.branch += [node]
         self.route += [None]
         self.joins += [None]
+        self.join_dicts += [None]
+        self.join_pre_dicts += [None]
 
         # Check content and unpack it into new content
         internal_content, failed_internal_filters, failed_cond_filters = (
@@ -165,6 +182,9 @@ class PreDict(object):
         self.branch.pop()
         self.route.pop()
         self.joins.pop()
+        self.join_dicts.pop()
+        self.join_pre_dicts.pop()
+
         # should only pop these if route could be popped
         self._ctx.pop()
         self._ctx_content.pop()
@@ -417,91 +437,119 @@ class Parser(object):
             # No one else is
             self.parent_generator = False
 
-        # Node is a current block. It has content, its contents: node.get_content()
-        # Content without joins
-        new_content = []
-        # All joins in current node
-        joins = []
-        for t in node.get_content():
-            filename, linenum, obj = t
-            if not isinstance(obj, JoinFilter):
-                new_content.append(t)
-                continue
-            # Accumulate all joins at one node
-            joins += [t]
+        joins = pre_dict.joins[-1] if pre_dict.joins else None
+        if joins is None:
 
-        if joins:
-            if len(pre_dict.joins) == 0 or pre_dict.joins[-1] is None:
+            # Node is a current block. It has content, its contents: node.get_content()
+            # Content without joins
+            plain_content = []
+            # All joins in current node
+            joins = []
+            for t in node.get_content():
+                filename, linenum, obj = t
+                if not isinstance(obj, JoinFilter):
+                    plain_content.append(t)
+                    continue
+                # Accumulate all joins at one node
+                joins += [t]
 
-                # Rewrite all separate joins in one node as many `only'
-                onlys = []
-                for j in joins:
-                    filename, linenum, obj = j
-                    for word in obj.filter:
-                        f = OnlyFilter([word], str(word))
-                        onlys += [(filename, linenum, f)]
+            # Rewrite all separate joins in one node as many `only'
+            onlys = []
+            for j in joins:
+                filename, linenum, obj = j
+                for word in obj.filter:
+                    f = OnlyFilter([word], str(word))
+                    onlys += [(filename, linenum, f)]
 
-                # register the generator as leaf for current pre-dict and continue with a copy
-                old_pre_dict = pre_dict.copy()
+            joins = onlys
+            if len(joins) > 0:
+                # register join recursion as leaf for current pre-dict and continue with copies
                 pre_dict.update_from_node(node)
-                pre_dict.joins[-1] = self.join_filters(
-                    onlys, new_content, old_pre_dict, node
-                )
-            else:
-                raise RuntimeError("Should not obtain joins if joins already expanded")
+                pre_dict.joins[-1] = joins
+                pre_dict.join_dicts[-1] = [None for _ in joins]
+                pre_dict.join_pre_dicts[-1] = [None for _ in joins]
+                # provide join-free content to processed node
+                node.swap_content(plain_content)
 
-        # pre-existing generator has a next dictionary
         d = None
-        if len(pre_dict.joins) > 0 and pre_dict.joins[-1] is not None:
-            try:
-                d = next(pre_dict.joins[-1])
-            except StopIteration:
-                pre_dict.route[-1] = len(node.get_children())
-
-        if not joins and d is None:
+        if joins:
+            join_node = pre_dict.branch[-1]
+            d = self.join_filters(pre_dict, join_node)
+            if d is None:
+                pre_dict.route[-1] = len(join_node.get_children())
+        if d is None:
             d = self.get_dicts_plain(pre_dict, node)
         return drop_suffixes(d, skipdups=skipdups) if d and parent else d
 
     def join_filters(
         self,
-        onlys: list[tuple[str, int, Filter]],
-        content_orig: list[list[tuple[str, int, "Token"]]],
-        pre_dict_orig: PreDict,
-        node: Node,
-    ) -> Generator[dict[str, str], None, None]:
+        pre_dict: PreDict = None,
+        node: Node = None,
+    ) -> dict[str, str] | None:
         """
         Perform all joins as filters on added dictionaries.
 
-        :param onlys: list of only filters
         :param pre_dict: pre-dictionary of parsed content
         :param node: node to start from
-        :returns: (recursive) dictionary generator
+        :returns: generated params dictionary
 
         Each `join' is the same as an `only' filter.
         """
-        # Current join/only
-        only = onlys[:1]
-        remains = onlys[1:]
+        pre_dict = pre_dict or PreDict()
+        node = node or self.node
 
-        node.swap_content(content_orig)
-        for f, i, obj in only:
-            node.add_content(f, i, obj)
-        pre_dict = pre_dict_orig.copy()
+        joins = pre_dict.joins[-1]
+        dicts = pre_dict.join_dicts[-1]
+        pre_dicts = pre_dict.join_pre_dicts[-1]
 
+        # join requires greedy dictionary expansion for variants of the same node
+        width = 0
         while True:
-            d1 = self.get_dicts_plain(pre_dict, node)
-            if d1 is None:
+            if width < 0:
                 break
-            if not remains:
-                yield d1
-            else:
+            if width < len(dicts) - 1 and dicts[width + 1]:
+                width += 1
+                continue
 
-                # Current frame multiply by all variants from bottom
-                for d2 in self.join_filters(remains, content_orig, pre_dict_orig, node):
-                    d = d1.copy()
-                    d.update(d2)
-                    d["name"] = Node.join_names(d1["name"], d2["name"])
-                    d["shortname"] = Node.join_names(d1["shortname"], d2["shortname"])
-                    yield d
+            # reset and update the pre-dict with differently filtered current node
+            if pre_dicts[width] is None:
+                # provide previous pre-dict clones to extend with a modified current node
+                sub_pre_dict = pre_dict.copy()
+                sub_pre_dict.reset_from_last_node()
+                pre_dicts[width] = sub_pre_dict.shallow_copy()
+            if node not in pre_dicts[width].branch:
+                content_orig = node.get_content()
+                # Current join/only
+                node.add_content(*joins[width])
+                if not pre_dicts[width].update_from_node(node):
+                    return None
+                node.swap_content(content_orig)
 
-        node.swap_content(content_orig)
+            dicts[width] = self.get_dicts_plain(pre_dicts[width], node)
+            if not dicts[width]:
+                # remove all previous grand children and their effects on current pre-dict clone
+                for _ in range(
+                    len(pre_dicts[width].route) - 1, len(pre_dicts[width].route)
+                ):
+                    pre_dicts[width].reset_from_last_node()
+                width -= 1
+                continue
+
+            # Current frame multiply by all variants from before
+            if width == len(dicts) - 1:
+                d = {}
+                name, shortname = "", ""
+                for di in dicts:
+                    name = Node.join_names(name, di["name"]) if name else di["name"]
+                    shortname = (
+                        Node.join_names(shortname, di["shortname"])
+                        if shortname
+                        else di["shortname"]
+                    )
+                    d.update(di)
+                d["name"], d["shortname"] = name, shortname
+                return d
+
+            width += 1
+
+        return None

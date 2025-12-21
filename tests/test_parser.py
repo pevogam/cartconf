@@ -962,18 +962,138 @@ class ParserTest(unittest.TestCase):
     def test_join_filters(self):
         self.parser.parse_string("variants:\n  - test1:\n    key1 = value1\n  - test2:\n    key2 = value2\n")
         self.parser.filename = "testfile"
-        onlys = [(self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("test1")]]], "test1")),
+        joins = [(self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("test1")]]], "test1")),
                  (self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("test2")]]], "test2"))]
-        dicts = list(self.parser.join_filters(
-            onlys,
-            self.parser.node.get_content(),
-            parser.PreDict(),
-            self.parser.node,
-        ))
-        self.assertEqual(len(dicts), 1)
-        self.assertEqual(dicts[0]["name"], "test1.test2")
-        self.assertEqual(dicts[0]["key1"], "value1")
-        self.assertEqual(dicts[0]["key2"], "value2")
+        pre_dict = parser.PreDict()
+        pre_dict.update_from_node(self.parser.node)
+        pre_dict.joins[-1] = joins
+        pre_dict.join_dicts[-1] = [None for _ in joins]
+        pre_dict.join_pre_dicts[-1] = [None for _ in joins]
+
+        d = self.parser.join_filters(pre_dict)
+        self.assertEqual(d["name"], "test1.test2")
+        self.assertEqual(d["key1"], "value1")
+        self.assertEqual(d["key2"], "value2")
+        self.assertEqual(pre_dict.route, [None])
+        self.assertEqual(pre_dict.joins, [joins])
+        self.assertEqual(len(pre_dict.join_dicts), 1)
+        self.assertEqual(len(pre_dict.join_dicts[-1]), 2)
+        self.assertEqual(pre_dict.join_dicts[-1][0]["name"], "test1")
+        self.assertEqual(pre_dict.join_dicts[-1][1]["name"], "test2")
+        self.assertEqual(len(pre_dict.join_pre_dicts), 1)
+        self.assertEqual(len(pre_dict.join_pre_dicts[-1]), 2)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].content[0], joins[0])
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
+
+    def test_join_filters_deep(self):
+        self.parser.parse_string("""
+            k1 = v0
+            k2 = v0
+            ka = v0
+            kb = v0
+            variants:
+                - test1:
+                    k1 = v1
+                - test2:
+                    k2 = v2
+            variants:
+                - a:
+                    ka = va
+                - b:
+                    kb = vb
+        """)
+        self.parser.filename = "testfile"
+        joins = [(self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("a")]]], "test1")),
+                 (self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("b")]]], "test2"))]
+        pre_dict = parser.PreDict()
+        pre_dict.update_from_node(self.parser.node)
+        pre_dict.joins[-1] = joins
+        pre_dict.join_dicts[-1] = [None for _ in joins]
+        pre_dict.join_pre_dicts[-1] = [None for _ in joins]
+
+        d = self.parser.join_filters(pre_dict)
+        self.assertEqual(d["name"], "a.test1.b.test1")
+        # b variant contains overwriting default value for ka
+        self.assertEqual(d["ka"], "v0")
+        self.assertEqual(d["kb"], "vb")
+        self.assertEqual(d["k1"], "v1")
+        self.assertEqual(d["k2"], "v0")
+        self.assertEqual(pre_dict.route, [None])
+        self.assertEqual(pre_dict.joins, [joins])
+        self.assertEqual(len(pre_dict.join_dicts), 1)
+        self.assertEqual(len(pre_dict.join_dicts[-1]), 2)
+        self.assertEqual(pre_dict.join_dicts[-1][0]["name"], "a.test1")
+        self.assertEqual(pre_dict.join_dicts[-1][1]["name"], "b.test1")
+        self.assertEqual(len(pre_dict.join_pre_dicts), 1)
+        self.assertEqual(len(pre_dict.join_pre_dicts[-1]), 2)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].content[0], joins[0])
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
+
+        d = self.parser.join_filters(pre_dict)
+        self.assertEqual(d["name"], "a.test1.b.test2")
+        # b variant contains overwriting default value for ka
+        self.assertEqual(d["ka"], "v0")
+        self.assertEqual(d["kb"], "vb")
+        # b.test2 variant contains overwriting default value for k1
+        self.assertEqual(d["k1"], "v0")
+        self.assertEqual(d["k2"], "v2")
+        self.assertEqual(pre_dict.route, [None])
+        self.assertEqual(pre_dict.joins, [joins])
+        self.assertEqual(len(pre_dict.join_dicts), 1)
+        self.assertEqual(len(pre_dict.join_dicts[-1]), 2)
+        self.assertEqual(pre_dict.join_dicts[-1][0]["name"], "a.test1")
+        self.assertEqual(pre_dict.join_dicts[-1][1]["name"], "b.test2")
+        self.assertEqual(len(pre_dict.join_pre_dicts), 1)
+        self.assertEqual(len(pre_dict.join_pre_dicts[-1]), 2)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].content[0], joins[0])
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
+
+        d = self.parser.join_filters(pre_dict)
+        self.assertEqual(d["name"], "a.test2.b.test1")
+        # b variant contains overwriting default value for ka
+        self.assertEqual(d["ka"], "v0")
+        self.assertEqual(d["kb"], "vb")
+        self.assertEqual(d["k1"], "v1")
+        # b.test1 variant contains overwriting default value for k2
+        self.assertEqual(d["k2"], "v0")
+        self.assertEqual(pre_dict.route, [None])
+        self.assertEqual(pre_dict.joins, [joins])
+        self.assertEqual(len(pre_dict.join_dicts), 1)
+        self.assertEqual(len(pre_dict.join_dicts[-1]), 2)
+        self.assertEqual(pre_dict.join_dicts[-1][0]["name"], "a.test2")
+        self.assertEqual(pre_dict.join_dicts[-1][1]["name"], "b.test1")
+        self.assertEqual(len(pre_dict.join_pre_dicts), 1)
+        self.assertEqual(len(pre_dict.join_pre_dicts[-1]), 2)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].content[0], joins[0])
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
+
+        d = self.parser.join_filters(pre_dict)
+        self.assertEqual(d["name"], "a.test2.b.test2")
+        # b variant contains overwriting default value for ka
+        self.assertEqual(d["ka"], "v0")
+        self.assertEqual(d["kb"], "vb")
+        self.assertEqual(d["k1"], "v0")
+        self.assertEqual(d["k2"], "v2")
+        self.assertEqual(pre_dict.route, [None])
+        self.assertEqual(pre_dict.joins, [joins])
+        self.assertEqual(len(pre_dict.join_dicts), 1)
+        self.assertEqual(len(pre_dict.join_dicts[-1]), 2)
+        self.assertEqual(pre_dict.join_dicts[-1][0]["name"], "a.test2")
+        self.assertEqual(pre_dict.join_dicts[-1][1]["name"], "b.test2")
+        self.assertEqual(len(pre_dict.join_pre_dicts), 1)
+        self.assertEqual(len(pre_dict.join_pre_dicts[-1]), 2)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].content[0], joins[0])
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
 
     def test_get_dicts_joined(self):
         self.parser.parse_string("""
