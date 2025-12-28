@@ -229,14 +229,6 @@ class Parser(object):
         if self.filename:
             self.parse_file(self.filename)
 
-        # get_dicts_joined() - is recursive generator, it can invoke itself,
-        # as well as it can be called outside to get dict list
-        # It is necessary somehow to mark the top-level generator,
-        # to be able to process all variables, do suffix stuff, drops dupes, etc....
-        # It can be safely done only on the top level get_dicts_joined()
-        # Parent generator will reset this flag
-        self.parent_generator = True
-
     def _debug(self, s, *args):
         if self.debug:
             LOG.debug(s, *args)
@@ -307,7 +299,7 @@ class Parser(object):
         string = "%s = %s" % (key, value)
         self.parse_string(string)
 
-    def get_dicts(
+    def get_dicts_gen(
         self,
         pre_dict: PreDict = None,
         node: Node = None,
@@ -322,12 +314,14 @@ class Parser(object):
         """
         pre_dict = pre_dict or PreDict()
         while True:
-            # mark current call as top-level parent generator for proper behavior
-            self.parent_generator = True
-            d = self.get_dicts_joined(pre_dict, node, skipdups=skipdups)
+            # Since get_dicts() is recursive generator, it can invoke itself
+            # and it can also be called outside to get dict generator.
+            # Use special dropsufs argument to mark the top-level generator,
+            # to be able to process all variables, do suffix stuff, drop dupes, etc.
+            d = self.get_dicts(pre_dict, node, dropsufs=True, skipdups=skipdups)
             if d is None:
                 break
-            yield drop_suffixes(d, skipdups=skipdups)
+            yield d
 
     def get_dicts_plain(
         self,
@@ -388,17 +382,18 @@ class Parser(object):
             ):
                 if any(c.default for c in children) and not child.default:
                     return None
-            d = self.get_dicts_joined(pre_dict, child)
+            d = self.get_dicts(pre_dict, child)
             # completed children recursion is consumed until we run out of children
             if d is None:
                 continue
             return d
         return None
 
-    def get_dicts_joined(
+    def get_dicts(
         self,
         pre_dict: PreDict = None,
         node: Node = None,
+        dropsufs: bool = False,
         skipdups: bool = True,
     ) -> dict[str, str] | None:
         """
@@ -428,14 +423,6 @@ class Parser(object):
         """
         pre_dict = pre_dict or PreDict()
         node = node or self.node
-
-        # Keep track to know who is a parent generator
-        parent = False
-        if self.parent_generator:
-            # I am parent of the all
-            parent = True
-            # No one else is
-            self.parent_generator = False
 
         joins = pre_dict.joins[-1] if pre_dict.joins else None
         if joins is None:
@@ -474,14 +461,14 @@ class Parser(object):
         d = None
         if joins:
             join_node = pre_dict.branch[-1]
-            d = self.join_filters(pre_dict, join_node)
+            d = self.get_dicts_joined(pre_dict, join_node)
             if d is None:
                 pre_dict.route[-1] = len(join_node.get_children())
         if d is None:
             d = self.get_dicts_plain(pre_dict, node)
-        return drop_suffixes(d, skipdups=skipdups) if d and parent else d
+        return drop_suffixes(d, skipdups=skipdups) if d and dropsufs else d
 
-    def join_filters(
+    def get_dicts_joined(
         self,
         pre_dict: PreDict = None,
         node: Node = None,

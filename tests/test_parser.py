@@ -737,7 +737,6 @@ class ParserTest(unittest.TestCase):
         self.assertFalse(self.parser.defaults)
         self.assertEqual(self.parser.expand_defaults, [])
         self.assertIsNone(self.parser.filename)
-        self.assertTrue(self.parser.parent_generator)
 
     def test_parse_file(self):
         with tempfile.NamedTemporaryFile() as temp_file:
@@ -766,9 +765,9 @@ class ParserTest(unittest.TestCase):
             self.assertEqual(content_stage[0], "<string>")
         self.assertIsNone(self.parser.filename)
 
-    def test_get_dicts(self):
+    def test_get_dicts_gen(self):
         self.parser.parse_string("variants:\n  - test:\n    key = value\n")
-        dicts = list(self.parser.get_dicts())
+        dicts = list(self.parser.get_dicts_gen())
         self.assertEqual(len(dicts), 1)
         self.assertEqual(dicts[0]["name"], "test")
         self.assertEqual(dicts[0]["_name_map_file"]["<string>"], "test")
@@ -959,7 +958,7 @@ class ParserTest(unittest.TestCase):
         self.assertIsNone(self.parser.get_dicts_plain(pre_dict))
         self.assertEqual(pre_dict.route, [2])
 
-    def test_join_filters(self):
+    def test_get_dicts_joined(self):
         self.parser.parse_string("variants:\n  - test1:\n    key1 = value1\n  - test2:\n    key2 = value2\n")
         self.parser.filename = "testfile"
         joins = [(self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("test1")]]], "test1")),
@@ -970,7 +969,7 @@ class ParserTest(unittest.TestCase):
         pre_dict.join_dicts[-1] = [None for _ in joins]
         pre_dict.join_pre_dicts[-1] = [None for _ in joins]
 
-        d = self.parser.join_filters(pre_dict)
+        d = self.parser.get_dicts_joined(pre_dict)
         self.assertEqual(d["name"], "test1.test2")
         self.assertEqual(d["key1"], "value1")
         self.assertEqual(d["key2"], "value2")
@@ -987,7 +986,7 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
 
-    def test_join_filters_deep(self):
+    def test_get_dicts_joined_deep(self):
         self.parser.parse_string("""
             k1 = v0
             k2 = v0
@@ -1013,7 +1012,7 @@ class ParserTest(unittest.TestCase):
         pre_dict.join_dicts[-1] = [None for _ in joins]
         pre_dict.join_pre_dicts[-1] = [None for _ in joins]
 
-        d = self.parser.join_filters(pre_dict)
+        d = self.parser.get_dicts_joined(pre_dict)
         self.assertEqual(d["name"], "a.test1.b.test1")
         # b variant contains overwriting default value for ka
         self.assertEqual(d["ka"], "v0")
@@ -1033,7 +1032,7 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
 
-        d = self.parser.join_filters(pre_dict)
+        d = self.parser.get_dicts_joined(pre_dict)
         self.assertEqual(d["name"], "a.test1.b.test2")
         # b variant contains overwriting default value for ka
         self.assertEqual(d["ka"], "v0")
@@ -1054,7 +1053,7 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
 
-        d = self.parser.join_filters(pre_dict)
+        d = self.parser.get_dicts_joined(pre_dict)
         self.assertEqual(d["name"], "a.test2.b.test1")
         # b variant contains overwriting default value for ka
         self.assertEqual(d["ka"], "v0")
@@ -1075,7 +1074,7 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
 
-        d = self.parser.join_filters(pre_dict)
+        d = self.parser.get_dicts_joined(pre_dict)
         self.assertEqual(d["name"], "a.test2.b.test2")
         # b variant contains overwriting default value for ka
         self.assertEqual(d["ka"], "v0")
@@ -1095,7 +1094,7 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
 
-    def test_get_dicts_joined(self):
+    def test_get_dicts(self):
         self.parser.parse_string("""
             k1 = v0
             k2 = v0
@@ -1118,7 +1117,7 @@ class ParserTest(unittest.TestCase):
         """)
         pre_dict = parser.PreDict()
 
-        d = self.parser.get_dicts_joined(pre_dict)
+        d = self.parser.get_dicts(pre_dict, dropsufs=True)
         self.assertEqual(d["name"], "a.test1.test2")
         # variant local parameter is overwritten
         self.assertEqual(d["ka"], "va")
@@ -1140,8 +1139,7 @@ class ParserTest(unittest.TestCase):
         self.assertIsNone(pre_dict.joins[0])
         self.assertIsNotNone(pre_dict.joins[1])
 
-        self.parser.parent_generator = True
-        d = self.parser.get_dicts_joined(pre_dict)
+        d = self.parser.get_dicts(pre_dict, dropsufs=True)
         self.assertEqual(d["name"], "b.test1.test2")
         # variant default parameter is not overwritten
         self.assertEqual(d["ka"], "v0")
@@ -1163,20 +1161,20 @@ class ParserTest(unittest.TestCase):
         self.assertIsNone(pre_dict.joins[0])
         self.assertIsNotNone(pre_dict.joins[1])
 
-        self.assertIsNone(self.parser.get_dicts_joined(pre_dict))
+        self.assertIsNone(self.parser.get_dicts(pre_dict))
         self.assertEqual(pre_dict.route, [2])
         self.assertEqual(len(pre_dict.joins), 1)
         self.assertIsNone(pre_dict.joins[0])
 
-    def test_get_dicts_joined_single(self):
+    def test_get_dicts_single(self):
         self.parser.parse_string("variants:\n  - test:\n    key = value\n    join test\n")
-        d = self.parser.get_dicts_joined()
+        d = self.parser.get_dicts()
         self.assertEqual(d["name"], "test")
         self.assertEqual(d["key"], "value")
 
     def _compare_parser_dictionaries(self, parser: parser.Parser, reference: dict[str, str]) -> None:
         """Check if the parser dictionaries match reference ones."""
-        result = list(parser.get_dicts())
+        result = list(parser.get_dicts_gen())
         # as the dictionary list is very large, test each item individually:
         self.assertEqual(len(result), len(reference))
         for resdict, refdict in zip(result, reference):
