@@ -187,87 +187,6 @@ class Parser(object):
         shortname = shortname or []
         dep = dep or []
 
-        def process_content(content, failed_filters):
-            # 1. Check that the filters in content are OK with the current
-            #    context (ctx).
-            # 2. Move the parts of content that are still relevant into
-            #    new_content and unpack conditional blocks if appropriate.
-            #    For example, if an 'only' statement fully matches ctx, it
-            #    becomes irrelevant and is not appended to new_content.
-            #    If a conditional block fully matches, its contents are
-            #    unpacked into new_content.
-            # 3. Move failed filters into failed_filters, so that next time we
-            #    reach this node or one of its ancestors, we'll check those
-            #    filters first.
-            blocked_filters = []
-            for t in content:
-                filename, linenum, obj = t
-                if tokens_oper_key(obj) in list(tokens_oper):
-                    new_content.append(t)
-                    continue
-                filter = (
-                    obj.condition
-                    if hasattr(obj, "condition") and obj.condition is not None
-                    else obj
-                )
-                # obj is an OnlyFilter/NoFilter/Condition/NegativeCondition
-                if filter.requires_action(ctx, labels):
-                    # This filter requires action now
-                    if type(filter) is OnlyFilter or type(filter) is NoFilter:
-                        if filter not in blocked_filters:
-                            self._debug(
-                                "    filter did not pass: %r (%s:%s)",
-                                filter.line,
-                                filename,
-                                linenum,
-                            )
-                            failed_filters += [t]
-                            return False
-                        else:
-                            continue
-                    else:
-                        self._debug(
-                            "    conditional block matches:" " %r (%s:%s)",
-                            filter.line,
-                            filename,
-                            linenum,
-                        )
-                        # Check and unpack the content inside this Condition
-                        # object (note: the failed filters should go into
-                        # new_internal_filters because we don't expect them to
-                        # come from outside this node, even if the Condition
-                        # itself was external)
-                        if not process_content(obj.get_content(), new_internal_filters):
-                            failed_filters += [t]
-                            return False
-                        continue
-                elif filter.is_irrelevant(ctx, labels):
-                    # This filter is no longer relevant and can be removed
-                    continue
-                else:
-                    # Keep the filter and check it again later
-                    new_content.append(t)
-            return True
-
-        def might_pass(failed_ctx, failed_external_filters, failed_internal_filters):
-            all_content = content + node.get_content()
-            for t in failed_external_filters + failed_internal_filters:
-                if t not in all_content:
-                    return True
-            for t in failed_external_filters:
-                _, _, external_filter = t
-                if not external_filter.might_pass(failed_ctx, ctx, labels):
-                    return False
-            for t in failed_internal_filters:
-                if t not in node.get_content():
-                    return True
-
-            for t in failed_internal_filters:
-                _, _, internal_filter = t
-                if not internal_filter.might_pass(failed_ctx, ctx, labels):
-                    return False
-            return True
-
         # if self.debug:    #Print dict on which is working now.
         #    print(node.dump(0))
         # Update dep
@@ -285,7 +204,7 @@ class Parser(object):
 
         # Check previously failed filters
         for i, failed_case in enumerate(node.get_failed_cases()):
-            if not might_pass(*failed_case):
+            if not node.failed_case_might_pass(i, ctx, labels, content):
                 self._debug(
                     "\n*    this subtree has failed before %s\n"
                     "         content: %s\n"
@@ -298,16 +217,25 @@ class Parser(object):
                 return
 
         # Check content and unpack it into new_content
-        new_content = []
-        new_external_filters = []
-        new_internal_filters = []
-        if not process_content(
-            node.get_content(), new_internal_filters
-        ) or not process_content(content, new_external_filters):
+        internal_content, failed_internal_filters, failed_cond_filters = (
+            node.process_content(ctx, labels)
+        )
+        failed_internal_filters += failed_cond_filters
+        content_node = Node()
+        content_node.swap_content(content)
+        external_content, failed_external_filters, failed_cond_filters = (
+            content_node.process_content(ctx, labels)
+        )
+        # NOTE: the failed filters should go into the failed internal filters
+        # because we don't expect them to come from outside this node, even if
+        # the condition itself was external
+        failed_internal_filters += failed_cond_filters
+        new_content = internal_content + external_content
+        if failed_internal_filters or failed_external_filters:
             node.add_failed_case(
                 ctx,
-                new_external_filters,
-                new_internal_filters,
+                failed_external_filters,
+                failed_external_filters,
                 Parser.num_failed_cases,
             )
             self._debug("Failed_cases %s", node.get_failed_cases())
@@ -431,24 +359,6 @@ class Parser(object):
                 yield drop_suffixes(d, skipdups=skipdups) if parent else d
             node.swap_content(old_content[:])
 
-    def join_names(self, n1: str, n2: str) -> str:
-        """
-        Produce a new name from two old names where two dictionaries were joined.
-
-        :param n1: name of the first dictionary
-        :param n2: name of the second dictionary
-        :returns: a new name reusing variant names
-        """
-        common_prefix = n1[: [x[0] == x[1] for x in list(zip(n1, n2))].index(0)]
-        cp = ".".join(common_prefix.split(".")[:-1])
-        p1 = re.sub(r"^" + cp, "", n1)
-        p2 = re.sub(r"^" + cp, "", n2)
-        if cp:
-            name = cp + p1 + p2
-        else:
-            name = p1 + "." + p2
-        return name
-
     def join_filters(
         self,
         onlys: list[tuple[str, int, Filter]],
@@ -498,6 +408,6 @@ class Parser(object):
 
                     d = d1.copy()
                     d.update(d2)
-                    d["name"] = self.join_names(d1["name"], d2["name"])
-                    d["shortname"] = self.join_names(d1["shortname"], d2["shortname"])
+                    d["name"] = Node.join_names(d1["name"], d2["name"])
+                    d["shortname"] = Node.join_names(d1["shortname"], d2["shortname"])
                     yield d
