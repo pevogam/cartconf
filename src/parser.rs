@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::fmt::{Debug, Display};
 use std::mem;
 use std::rc::Rc;
@@ -14,6 +15,8 @@ use crate::tokens::Tokens;
 use crate::filters::Filters;
 use crate::lexer::Lexer;
 use crate::lexer::LexerError;
+
+static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 #[pyclass(extends=PyException)]
 #[derive(Debug)]
@@ -216,30 +219,38 @@ impl<'py> FromPyObject<'_, 'py> for ContentStep {
 }
 
 #[pyclass(unsendable)]
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct Node {
     #[pyo3(get, set)]
     pub var_name: Vec<Label>,
     #[pyo3(get, set)]
     pub name: Vec<Label>,
+    #[pyo3(get)]
+    pub labels: Vec<Label>,
     #[pyo3(get, set)]
     pub filename: String,
     #[pyo3(get, set)]
     pub dep: Vec<Vec<Vec<Label>>>,
-    #[pyo3(get, set)]
-    pub condition: Option<Filters>,
     pub content: Vec<ContentStep>,
-    children: VecDeque<Rc<RefCell<Node>>>,
-    #[pyo3(get)]
-    pub labels: Vec<Label>,
-    #[pyo3(get, set)]
-    pub append_to_shortname: bool,
-    #[allow(clippy::type_complexity)]
     pub failed_cases: VecDeque<(Vec<Label>, Vec<ContentStep>, Vec<ContentStep>)>,
     #[pyo3(get, set)]
+    pub append_to_shortname: bool,
+
+    #[pyo3(get, set)]
+    pub condition: Option<Filters>,
+
+    #[pyo3(get, set)]
     pub default: bool,
+    #[pyo3(get)]
+    pub id: u64,
+    children: VecDeque<Rc<RefCell<Node>>>,
 }
 
+impl PartialEq for Node {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
 impl Default for Node {
     fn default() -> Self {
         Self::new()
@@ -253,21 +264,22 @@ impl Node {
         Node {
             var_name: Vec::new(),
             name: Vec::new(),
+            labels: Vec::new(),
             filename: String::new(),
             dep: Vec::new(),
-            condition: None,
             content: Vec::new(),
-            children: VecDeque::new(),
-            labels: Vec::new(),
-            append_to_shortname: false,
             failed_cases: VecDeque::new(),
+            append_to_shortname: false,
+            condition: None,
             default: false,
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            children: VecDeque::new(),
         }
     }
 
     pub fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
         if let Ok(other_node) = other.extract::<Node>() {
-            Ok(self == &other_node)
+            Ok(self.id == other_node.id)
         } else {
             Ok(false)
         }
