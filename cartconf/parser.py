@@ -325,8 +325,7 @@ class Parser(object):
 
     def get_dicts_plain(
         self,
-        pre_dict: PreDict = None,
-        node: Node = None,
+        pre_dict: PreDict,
     ) -> dict[str, str] | None:
         """
         Generate dictionaries from the code parsed so far.
@@ -337,34 +336,28 @@ class Parser(object):
         :param node: node to start from
         :returns: generated params dictionary
         """
-        pre_dict = pre_dict or PreDict()
-        node = node or self.node
-
-        if node in pre_dict.branch:
-            depth = pre_dict.branch.index(node)
-            # leaf nodes can only be reached once
-            if not node.get_children():
-                return None
-        else:
-            if pre_dict.branch and node not in pre_dict.branch[-1].get_children():
-                raise ValueError("Discontinuous pre-dict branch, cannot get dicts")
-            if not pre_dict.update_from_node(node):
-                return None
-            depth = len(pre_dict.branch) - 1
-
-        # Reached leaf?
-        if not node.get_children():
-            self._debug("    reached leaf, returning it")
-            d = pre_dict.get_dict()
-            apply_suffix_bounds(d)
-            return d
+        if len(pre_dict.branch) == 0:
+            raise RuntimeError("Pre-dictionary needs at least one node")
+        depth = len(pre_dict.branch) - 1
 
         # Recurse into children
-        children = node.get_children()
         while True:
+            if depth < 0:
+                break
+            node = pre_dict.branch[depth]
+            children = node.get_children()
+
             if pre_dict.route[depth] is None:
                 # start with 0th child
                 pre_dict.route[depth] = 0
+
+                # Reached leaf?
+                if not children:
+                    self._debug("    reached leaf, returning it")
+                    d = pre_dict.get_dict()
+                    apply_suffix_bounds(d)
+                    return d
+
             elif (
                 depth + 1 == len(pre_dict.route) - 1
             ):  # one for leaf down from final index
@@ -374,7 +367,9 @@ class Parser(object):
                 for _ in range(depth + 1, len(pre_dict.route)):
                     pre_dict.reset_from_last_node()
             if pre_dict.route[depth] + 1 > len(children):
-                break
+                depth -= 1
+                continue
+
             child = children[pre_dict.route[depth]]
             if (
                 self.defaults
@@ -385,6 +380,8 @@ class Parser(object):
             d = self.get_dicts(pre_dict, child)
             # completed children recursion is consumed until we run out of children
             if d is None:
+                # handle earlier reset of the same pre-dict by a nested getter
+                depth = min(depth, len(pre_dict.branch) - 1)
                 continue
             return d
         return None
@@ -392,7 +389,7 @@ class Parser(object):
     def get_dicts(
         self,
         pre_dict: PreDict = None,
-        node: Node = None,
+        init_node: Node = None,
         dropsufs: bool = False,
         skipdups: bool = True,
     ) -> dict[str, str] | None:
@@ -422,9 +419,17 @@ class Parser(object):
                 join a a
         """
         pre_dict = pre_dict or PreDict()
-        node = node or self.node
+        init_node = init_node or self.node
+        if init_node not in pre_dict.branch:
+            if pre_dict.branch and init_node not in pre_dict.branch[-1].get_children():
+                raise ValueError("Discontinuous pre-dict branch, cannot get dicts")
+            if not pre_dict.update_from_node(init_node):
+                return None
 
-        joins = pre_dict.joins[-1] if pre_dict.joins else None
+        # due to pre-dict cloning current pre-dict must only contain one join at the end
+        depth = len(pre_dict.branch) - 1
+        node = pre_dict.branch[depth]
+        joins = pre_dict.joins[depth]
         if joins is None:
 
             # Node is a current block. It has content, its contents: node.get_content()
@@ -451,7 +456,6 @@ class Parser(object):
             joins = onlys
             if len(joins) > 0:
                 # register join recursion as leaf for current pre-dict and continue with copies
-                pre_dict.update_from_node(node)
                 pre_dict.joins[-1] = joins
                 pre_dict.join_dicts[-1] = [None for _ in joins]
                 pre_dict.join_pre_dicts[-1] = [None for _ in joins]
@@ -460,34 +464,32 @@ class Parser(object):
 
         d = None
         if joins:
-            join_node = pre_dict.branch[-1]
-            d = self.get_dicts_joined(pre_dict, join_node)
+            d = self.get_dicts_joined(pre_dict)
             if d is None:
-                pre_dict.route[-1] = len(join_node.get_children())
+                pre_dict.route[-1] = len(node.get_children())
         if d is None:
-            d = self.get_dicts_plain(pre_dict, node)
+            d = self.get_dicts_plain(pre_dict)
         return drop_suffixes(d, skipdups=skipdups) if d and dropsufs else d
 
     def get_dicts_joined(
         self,
-        pre_dict: PreDict = None,
-        node: Node = None,
+        pre_dict: PreDict,
     ) -> dict[str, str] | None:
         """
         Perform all joins as filters on added dictionaries.
 
         :param pre_dict: pre-dictionary of parsed content
-        :param node: node to start from
         :returns: generated params dictionary
 
         Each `join' is the same as an `only' filter.
         """
-        pre_dict = pre_dict or PreDict()
-        node = node or self.node
-
-        joins = pre_dict.joins[-1]
-        dicts = pre_dict.join_dicts[-1]
-        pre_dicts = pre_dict.join_pre_dicts[-1]
+        if len(pre_dict.branch) == 0:
+            raise RuntimeError("Pre-dictionary needs at least one node")
+        depth = len(pre_dict.branch) - 1
+        node = pre_dict.branch[depth]
+        joins = pre_dict.joins[depth]
+        dicts = pre_dict.join_dicts[depth]
+        pre_dicts = pre_dict.join_pre_dicts[depth]
 
         # join requires greedy dictionary expansion for variants of the same node
         width = 0
@@ -512,7 +514,7 @@ class Parser(object):
                     return None
                 node.swap_content(content_orig)
 
-            dicts[width] = self.get_dicts_plain(pre_dicts[width], node)
+            dicts[width] = self.get_dicts(pre_dicts[width], node)
             if not dicts[width]:
                 # remove all previous grand children and their effects on current pre-dict clone
                 for _ in range(
