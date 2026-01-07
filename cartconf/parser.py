@@ -251,13 +251,15 @@ class PreDict(object):
                 continue
 
             child = children[self.route[depth]]
+            if not self.update_from_node(child):
+                continue
             if (
                 self.defaults
                 and ".".join(str(node.var_name)) not in self.expand_defaults
             ):
                 if any(c.default for c in children) and not child.default:
                     return None
-            d = self.get_dicts(child)
+            d = self.get_dicts()
             # completed children recursion is consumed until we run out of children
             if d is None:
                 # handle earlier reset of the same pre-dict by a nested getter
@@ -305,7 +307,7 @@ class PreDict(object):
                     return None
                 node.swap_content(content_orig)
 
-            dicts[width] = pre_dicts[width].get_dicts(node)
+            dicts[width] = pre_dicts[width].get_dicts()
             if not dicts[width]:
                 # remove all previous grand children and their effects on current pre-dict clone
                 for _ in range(
@@ -336,14 +338,12 @@ class PreDict(object):
 
     def get_dicts(
         self,
-        init_node: Node,
         dropsufs: bool = False,
         skipdups: bool = True,
     ) -> dict[str, str] | None:
         """
         Get possibly joined dictionaries added using only filters.
 
-        :param init_node: node to start from
         :returns: generated params dictionary
 
         Process 'join' entries and unpack join filters in the node.
@@ -364,15 +364,11 @@ class PreDict(object):
             Transforms into:
                 join a a
         """
-        if init_node not in self.branch:
-            if self.branch and init_node not in self.branch[-1].get_children():
-                raise ValueError("Discontinuous pre-dict branch, cannot get dicts")
-            if not self.update_from_node(init_node):
-                return None
-
-        # due to pre-dict cloning current pre-dict must only contain one join at the end
+        if len(self.branch) == 0:
+            raise RuntimeError("Pre-dictionary needs at least one node")
         depth = len(self.branch) - 1
         node = self.branch[depth]
+        # due to pre-dict cloning current pre-dict must only contain one join at the end
         joins = self.joins[depth]
         if joins is None:
 
@@ -522,12 +518,14 @@ class Parser(object):
         :returns: (recursive) dictionary generator
         """
         pre_dict = PreDict(defaults=self.defaults)
+        if not pre_dict.update_from_node(self.node):
+            return
         while True:
             # Since get_dicts() is recursive generator, it can invoke itself
             # and it can also be called outside to get dict generator.
             # Use special dropsufs argument to mark the top-level generator,
             # to be able to process all variables, do suffix stuff, drop dupes, etc.
-            d = pre_dict.get_dicts(self.node, dropsufs=True, skipdups=skipdups)
+            d = pre_dict.get_dicts(dropsufs=True, skipdups=skipdups)
             if d is None:
                 break
             yield d
