@@ -56,6 +56,8 @@ class PreDict(object):
         content: list[tuple[str, int, "Token"]] = None,
         shortname: list[Label] = None,
         dep: list[str] = None,
+        defaults: bool = False,
+        expand_defaults: list[str] = None,
     ) -> None:
         self._ctx: list[list[Label]] = [ctx] if ctx else [[]]
         self._content: list[list[tuple[str, int, "Token"]]] = (
@@ -70,6 +72,11 @@ class PreDict(object):
         self.joins: list[list[tuple[str, int, Filter] | None] | None] = []
         self.join_dicts: list[list[dict[str, str] | None] | None] = []
         self.join_pre_dicts: list[list["PreDict" | None] | None] = []
+
+        # :param defaults: whether to use default variants
+        self.defaults = defaults
+        # :param expand_defaults: list of default variants to expand
+        self.expand_defaults = expand_defaults or []
 
     def __str__(self) -> str:
         return f"PreDict(ctx={self.ctx}, content={self.content}, shortname={self.shortname}, dep={self.dep})"
@@ -202,6 +209,212 @@ class PreDict(object):
             op.apply_to_dict(d)
         return d
 
+    def get_dicts_plain(self) -> dict[str, str] | None:
+        """
+        Generate dictionaries from the pre-dict parsed so far.
+
+        :returns: generated params dictionary
+
+        This should be called after parsing something or seeding the
+        pre-dict with an initial node.
+        """
+        if len(self.branch) == 0:
+            raise RuntimeError("Pre-dictionary needs at least one node")
+        depth = len(self.branch) - 1
+
+        # Recurse into children
+        while True:
+            if depth < 0:
+                break
+            node = self.branch[depth]
+            children = node.get_children()
+
+            if self.route[depth] is None:
+                # start with 0th child
+                self.route[depth] = 0
+
+                # Reached leaf?
+                if not children:
+                    # self._debug("    reached leaf, returning it")
+                    d = self.get_dict()
+                    apply_suffix_bounds(d)
+                    return d
+
+            elif depth + 1 == len(self.route) - 1:  # one for leaf down from final index
+                # move to next child
+                self.route[depth] += 1
+                # remove all previous grand children and their effects on pre-dict
+                for _ in range(depth + 1, len(self.route)):
+                    self.reset_from_last_node()
+            if self.route[depth] + 1 > len(children):
+                depth -= 1
+                continue
+
+            child = children[self.route[depth]]
+            if (
+                self.defaults
+                and ".".join(str(node.var_name)) not in self.expand_defaults
+            ):
+                if any(c.default for c in children) and not child.default:
+                    return None
+            d = self.get_dicts(child)
+            # completed children recursion is consumed until we run out of children
+            if d is None:
+                # handle earlier reset of the same pre-dict by a nested getter
+                depth = min(depth, len(self.branch) - 1)
+                continue
+            return d
+        return None
+
+    def get_dicts_joined(self) -> dict[str, str] | None:
+        """
+        Perform all joins as filters on added dictionaries.
+
+        :returns: generated params dictionary
+
+        Each `join' is the same as an `only' filter.
+        """
+        if len(self.branch) == 0:
+            raise RuntimeError("Pre-dictionary needs at least one node")
+        depth = len(self.branch) - 1
+        node = self.branch[depth]
+        joins = self.joins[depth]
+        dicts = self.join_dicts[depth]
+        pre_dicts = self.join_pre_dicts[depth]
+
+        # join requires greedy dictionary expansion for variants of the same node
+        width = 0
+        while True:
+            if width < 0:
+                break
+            if width < len(dicts) - 1 and dicts[width + 1]:
+                width += 1
+                continue
+
+            # reset and update the pre-dict with differently filtered current node
+            if pre_dicts[width] is None:
+                # provide previous pre-dict clones to extend with a modified current node
+                sub_pre_dict = self.copy()
+                sub_pre_dict.reset_from_last_node()
+                pre_dicts[width] = sub_pre_dict.shallow_copy()
+            if node not in pre_dicts[width].branch:
+                content_orig = node.get_content()
+                # Current join/only
+                node.add_content(*joins[width])
+                if not pre_dicts[width].update_from_node(node):
+                    return None
+                node.swap_content(content_orig)
+
+            dicts[width] = pre_dicts[width].get_dicts(node)
+            if not dicts[width]:
+                # remove all previous grand children and their effects on current pre-dict clone
+                for _ in range(
+                    len(pre_dicts[width].route) - 1, len(pre_dicts[width].route)
+                ):
+                    pre_dicts[width].reset_from_last_node()
+                width -= 1
+                continue
+
+            # Current frame multiply by all variants from before
+            if width == len(dicts) - 1:
+                d = {}
+                name, shortname = "", ""
+                for di in dicts:
+                    name = Node.join_names(name, di["name"]) if name else di["name"]
+                    shortname = (
+                        Node.join_names(shortname, di["shortname"])
+                        if shortname
+                        else di["shortname"]
+                    )
+                    d.update(di)
+                d["name"], d["shortname"] = name, shortname
+                return d
+
+            width += 1
+
+        return None
+
+    def get_dicts(
+        self,
+        init_node: Node,
+        dropsufs: bool = False,
+        skipdups: bool = True,
+    ) -> dict[str, str] | None:
+        """
+        Get possibly joined dictionaries added using only filters.
+
+        :param init_node: node to start from
+        :returns: generated params dictionary
+
+        Process 'join' entries and unpack join filters in the node.
+
+        Main rules for joining via filters:
+
+        1) join filter_1 filter_2 ....
+            multiplies all dictionaries as:
+                all_variants_match_filter_1 * all_variants_match_filter_2 * ....
+        2) join only_one_filter
+                == only only_one_filter
+        3) join filter_1 filter_1
+            also works and transforms to:
+                all_variants_match_filter_1 * all_variants_match_filter_1
+            Example:
+                join a
+                join a
+            Transforms into:
+                join a a
+        """
+        if init_node not in self.branch:
+            if self.branch and init_node not in self.branch[-1].get_children():
+                raise ValueError("Discontinuous pre-dict branch, cannot get dicts")
+            if not self.update_from_node(init_node):
+                return None
+
+        # due to pre-dict cloning current pre-dict must only contain one join at the end
+        depth = len(self.branch) - 1
+        node = self.branch[depth]
+        joins = self.joins[depth]
+        if joins is None:
+
+            # Node is a current block. It has content, its contents: node.get_content()
+            # Content without joins
+            plain_content = []
+            # All joins in current node
+            joins = []
+            for t in node.get_content():
+                filename, linenum, obj = t
+                if not isinstance(obj, JoinFilter):
+                    plain_content.append(t)
+                    continue
+                # Accumulate all joins at one node
+                joins += [t]
+
+            # Rewrite all separate joins in one node as many `only'
+            onlys = []
+            for j in joins:
+                filename, linenum, obj = j
+                for word in obj.filter:
+                    f = OnlyFilter([word], str(word))
+                    onlys += [(filename, linenum, f)]
+
+            joins = onlys
+            if len(joins) > 0:
+                # register join recursion as leaf for current pre-dict and continue with copies
+                self.joins[-1] = joins
+                self.join_dicts[-1] = [None for _ in joins]
+                self.join_pre_dicts[-1] = [None for _ in joins]
+                # provide join-free content to processed node
+                node.swap_content(plain_content)
+
+        d = None
+        if joins:
+            d = self.get_dicts_joined()
+            if d is None:
+                self.route[-1] = len(node.get_children())
+        if d is None:
+            d = self.get_dicts_plain()
+        return drop_suffixes(d, skipdups=skipdups) if d and dropsufs else d
+
 
 class Parser(object):
 
@@ -301,244 +514,20 @@ class Parser(object):
 
     def get_dicts_gen(
         self,
-        pre_dict: PreDict = None,
-        node: Node = None,
         skipdups: bool = True,
     ) -> Generator[dict[str, str], None, None]:
         """
         Get dictionaries from a parser and given or its current node.
 
-        :param pre_dict: pre-dictionary of parsed content
-        :param node: node to start from
         :returns: (recursive) dictionary generator
         """
-        pre_dict = pre_dict or PreDict()
+        pre_dict = PreDict(defaults=self.defaults)
         while True:
             # Since get_dicts() is recursive generator, it can invoke itself
             # and it can also be called outside to get dict generator.
             # Use special dropsufs argument to mark the top-level generator,
             # to be able to process all variables, do suffix stuff, drop dupes, etc.
-            d = self.get_dicts(pre_dict, node, dropsufs=True, skipdups=skipdups)
+            d = pre_dict.get_dicts(self.node, dropsufs=True, skipdups=skipdups)
             if d is None:
                 break
             yield d
-
-    def get_dicts_plain(
-        self,
-        pre_dict: PreDict,
-    ) -> dict[str, str] | None:
-        """
-        Generate dictionaries from the code parsed so far.
-
-        This should be called after parsing something.
-
-        :param pre_dict: pre-dictionary of parsed content
-        :param node: node to start from
-        :returns: generated params dictionary
-        """
-        if len(pre_dict.branch) == 0:
-            raise RuntimeError("Pre-dictionary needs at least one node")
-        depth = len(pre_dict.branch) - 1
-
-        # Recurse into children
-        while True:
-            if depth < 0:
-                break
-            node = pre_dict.branch[depth]
-            children = node.get_children()
-
-            if pre_dict.route[depth] is None:
-                # start with 0th child
-                pre_dict.route[depth] = 0
-
-                # Reached leaf?
-                if not children:
-                    self._debug("    reached leaf, returning it")
-                    d = pre_dict.get_dict()
-                    apply_suffix_bounds(d)
-                    return d
-
-            elif (
-                depth + 1 == len(pre_dict.route) - 1
-            ):  # one for leaf down from final index
-                # move to next child
-                pre_dict.route[depth] += 1
-                # remove all previous grand children and their effects on pre-dict
-                for _ in range(depth + 1, len(pre_dict.route)):
-                    pre_dict.reset_from_last_node()
-            if pre_dict.route[depth] + 1 > len(children):
-                depth -= 1
-                continue
-
-            child = children[pre_dict.route[depth]]
-            if (
-                self.defaults
-                and ".".join(str(node.var_name)) not in self.expand_defaults
-            ):
-                if any(c.default for c in children) and not child.default:
-                    return None
-            d = self.get_dicts(pre_dict, child)
-            # completed children recursion is consumed until we run out of children
-            if d is None:
-                # handle earlier reset of the same pre-dict by a nested getter
-                depth = min(depth, len(pre_dict.branch) - 1)
-                continue
-            return d
-        return None
-
-    def get_dicts(
-        self,
-        pre_dict: PreDict = None,
-        init_node: Node = None,
-        dropsufs: bool = False,
-        skipdups: bool = True,
-    ) -> dict[str, str] | None:
-        """
-        Get possibly joined dictionaries added using only filters.
-
-        :param pre_dict: pre-dictionary of parsed content
-        :param node: node to start from
-        :returns: generated params dictionary
-
-        Process 'join' entries and unpack join filters in the node.
-
-        Main rules for joining via filters:
-
-        1) join filter_1 filter_2 ....
-            multiplies all dictionaries as:
-                all_variants_match_filter_1 * all_variants_match_filter_2 * ....
-        2) join only_one_filter
-                == only only_one_filter
-        3) join filter_1 filter_1
-            also works and transforms to:
-                all_variants_match_filter_1 * all_variants_match_filter_1
-            Example:
-                join a
-                join a
-            Transforms into:
-                join a a
-        """
-        pre_dict = pre_dict or PreDict()
-        init_node = init_node or self.node
-        if init_node not in pre_dict.branch:
-            if pre_dict.branch and init_node not in pre_dict.branch[-1].get_children():
-                raise ValueError("Discontinuous pre-dict branch, cannot get dicts")
-            if not pre_dict.update_from_node(init_node):
-                return None
-
-        # due to pre-dict cloning current pre-dict must only contain one join at the end
-        depth = len(pre_dict.branch) - 1
-        node = pre_dict.branch[depth]
-        joins = pre_dict.joins[depth]
-        if joins is None:
-
-            # Node is a current block. It has content, its contents: node.get_content()
-            # Content without joins
-            plain_content = []
-            # All joins in current node
-            joins = []
-            for t in node.get_content():
-                filename, linenum, obj = t
-                if not isinstance(obj, JoinFilter):
-                    plain_content.append(t)
-                    continue
-                # Accumulate all joins at one node
-                joins += [t]
-
-            # Rewrite all separate joins in one node as many `only'
-            onlys = []
-            for j in joins:
-                filename, linenum, obj = j
-                for word in obj.filter:
-                    f = OnlyFilter([word], str(word))
-                    onlys += [(filename, linenum, f)]
-
-            joins = onlys
-            if len(joins) > 0:
-                # register join recursion as leaf for current pre-dict and continue with copies
-                pre_dict.joins[-1] = joins
-                pre_dict.join_dicts[-1] = [None for _ in joins]
-                pre_dict.join_pre_dicts[-1] = [None for _ in joins]
-                # provide join-free content to processed node
-                node.swap_content(plain_content)
-
-        d = None
-        if joins:
-            d = self.get_dicts_joined(pre_dict)
-            if d is None:
-                pre_dict.route[-1] = len(node.get_children())
-        if d is None:
-            d = self.get_dicts_plain(pre_dict)
-        return drop_suffixes(d, skipdups=skipdups) if d and dropsufs else d
-
-    def get_dicts_joined(
-        self,
-        pre_dict: PreDict,
-    ) -> dict[str, str] | None:
-        """
-        Perform all joins as filters on added dictionaries.
-
-        :param pre_dict: pre-dictionary of parsed content
-        :returns: generated params dictionary
-
-        Each `join' is the same as an `only' filter.
-        """
-        if len(pre_dict.branch) == 0:
-            raise RuntimeError("Pre-dictionary needs at least one node")
-        depth = len(pre_dict.branch) - 1
-        node = pre_dict.branch[depth]
-        joins = pre_dict.joins[depth]
-        dicts = pre_dict.join_dicts[depth]
-        pre_dicts = pre_dict.join_pre_dicts[depth]
-
-        # join requires greedy dictionary expansion for variants of the same node
-        width = 0
-        while True:
-            if width < 0:
-                break
-            if width < len(dicts) - 1 and dicts[width + 1]:
-                width += 1
-                continue
-
-            # reset and update the pre-dict with differently filtered current node
-            if pre_dicts[width] is None:
-                # provide previous pre-dict clones to extend with a modified current node
-                sub_pre_dict = pre_dict.copy()
-                sub_pre_dict.reset_from_last_node()
-                pre_dicts[width] = sub_pre_dict.shallow_copy()
-            if node not in pre_dicts[width].branch:
-                content_orig = node.get_content()
-                # Current join/only
-                node.add_content(*joins[width])
-                if not pre_dicts[width].update_from_node(node):
-                    return None
-                node.swap_content(content_orig)
-
-            dicts[width] = self.get_dicts(pre_dicts[width], node)
-            if not dicts[width]:
-                # remove all previous grand children and their effects on current pre-dict clone
-                for _ in range(
-                    len(pre_dicts[width].route) - 1, len(pre_dicts[width].route)
-                ):
-                    pre_dicts[width].reset_from_last_node()
-                width -= 1
-                continue
-
-            # Current frame multiply by all variants from before
-            if width == len(dicts) - 1:
-                d = {}
-                name, shortname = "", ""
-                for di in dicts:
-                    name = Node.join_names(name, di["name"]) if name else di["name"]
-                    shortname = (
-                        Node.join_names(shortname, di["shortname"])
-                        if shortname
-                        else di["shortname"]
-                    )
-                    d.update(di)
-                d["name"], d["shortname"] = name, shortname
-                return d
-
-            width += 1
-
-        return None
