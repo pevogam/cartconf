@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cmp;
 use std::fmt;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -582,6 +583,100 @@ impl Tokens {
     }
 }
 
+fn convert_data_size(size: &str, default_suffix: &str) -> Result<i64, String> {
+    let orders: HashMap<&str, i64> = [
+        ("B", 1),
+        ("K", 1024),
+        ("M", 1024 * 1024),
+        ("G", 1024 * 1024 * 1024),
+        ("T", 1024 * 1024 * 1024 * 1024),
+    ]
+    .iter()
+    .cloned()
+    .collect();
+
+    let (number_part, suffix) = if let Some(last_char) = size.chars().last() {
+        if "BbKkMmGgTt".contains(last_char) {
+            (&size[..size.len() - 1], last_char.to_uppercase().to_string())
+        } else {
+            (size, default_suffix.to_string())
+        }
+    } else {
+        (size, default_suffix.to_string())
+    };
+
+    let number: f64 = number_part
+        .parse()
+        .map_err(|e: std::num::ParseFloatError| e.to_string())?;
+    let multiplier = orders.get(suffix.as_str()).copied().unwrap_or(1);
+
+    Ok((number * multiplier as f64) as i64)
+}
+
+fn compare_data_size(a: &str, b: &str) -> cmp::Ordering {
+    // Check if either string contains a size suffix
+    let has_suffix1 = a
+        .chars()
+        .last()
+        .is_some_and(|c| "BbKkMmGgTt".contains(c));
+    let has_suffix2 = b
+        .chars()
+        .last()
+        .is_some_and(|c| "BbKkMmGgTt".contains(c));
+
+    if has_suffix1 || has_suffix2 {
+        match (
+            convert_data_size(a, "M"),
+            convert_data_size(b, "M"),
+        ) {
+            (Ok(v1), Ok(v2)) => v1.cmp(&v2),
+            _ => a.cmp(b),
+        }
+    } else {
+        match (a.parse::<i64>(), b.parse::<i64>()) {
+            (Ok(v1), Ok(v2)) => v1.cmp(&v2),
+            _ => a.cmp(b),
+        }
+    }
+}
+
+pub fn apply_suffix_bounds(dict: &mut HashMap<ParamKey, ParamVal>) -> PyResult<()> {
+    for key in dict.keys().cloned().collect::<Vec<_>>() {
+        match key {
+            ParamKey::Tuple(_) => {
+                // Skip tuple keys as they are generated from suffixes and should not be processed for bounds
+            }
+            ParamKey::String(ref key_str) if key_str.ends_with("_max") => {
+                let tmp_key = key_str.trim_end_matches("_max").to_string();
+                if !dict.contains_key(&ParamKey::String(tmp_key.clone())) ||
+                    compare_data_size(
+                        &dict[&ParamKey::String(tmp_key.clone())].to_string(),
+                        &dict[&key].to_string()
+                    ) > cmp::Ordering::Equal {
+                    dict.insert(ParamKey::String(tmp_key), dict[&key].clone());
+                }
+            }
+            ParamKey::String(ref key_str) if key_str.ends_with("_min") => {
+                let tmp_key = key_str.trim_end_matches("_min").to_string();
+                if !dict.contains_key(&ParamKey::String(tmp_key.clone())) ||
+                    compare_data_size(
+                        &dict[&ParamKey::String(tmp_key.clone())].to_string(),
+                        &dict[&key].to_string()
+                    ) < cmp::Ordering::Equal {
+                    dict.insert(ParamKey::String(tmp_key), dict[&key].clone());
+                }
+            }
+            ParamKey::String(ref key_str) if key_str.ends_with("_fixed") => {
+                let tmp_key = key_str.trim_end_matches("_fixed").to_string();
+                dict.insert(ParamKey::String(tmp_key), dict[&key].clone());
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
 pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyResult<HashMap<ParamKey, ParamVal>> {
     let d_flat: HashMap<ParamKey, ParamVal> = dict
         .iter()
@@ -702,6 +797,55 @@ mod tests {
         // inequality
         assert!(t1 != t3);
         assert!(t2 != t3);
+    }
+
+    #[test]
+    fn test_convert_data_size() {
+        assert_eq!(convert_data_size("1B", "B"), Ok(1));
+        assert_eq!(convert_data_size("1K", "B"), Ok(1024));
+        assert_eq!(convert_data_size("1M", "B"), Ok(1024 * 1024));
+        assert_eq!(convert_data_size("1G", "B"), Ok(1024 * 1024 * 1024));
+        assert_eq!(convert_data_size("1T", "B"), Ok(1024 * 1024 * 1024 * 1024));
+        assert_eq!(convert_data_size("1", "B"), Ok(1));
+        assert_eq!(convert_data_size("1", "K"), Ok(1024));
+    }
+
+    #[test]
+    fn test_compare_data_size() {
+        assert_eq!(compare_data_size("1B", "1B"), cmp::Ordering::Equal);
+        assert_eq!(compare_data_size("1K", "1B"), cmp::Ordering::Greater);
+        assert_eq!(compare_data_size("1B", "1K"), cmp::Ordering::Less);
+        assert_eq!(compare_data_size("1M", "1024K"), cmp::Ordering::Equal);
+        assert_eq!(compare_data_size("1G", "1024M"), cmp::Ordering::Equal);
+        assert_eq!(compare_data_size("1T", "1024G"), cmp::Ordering::Equal);
+        assert_eq!(compare_data_size("1", "1"), cmp::Ordering::Equal);
+        assert_eq!(compare_data_size("2", "1"), cmp::Ordering::Greater);
+        assert_eq!(compare_data_size("1", "2"), cmp::Ordering::Less);
+        assert_eq!(compare_data_size("1.5G", "1.5G"), cmp::Ordering::Equal);
+        assert_eq!(compare_data_size("2G", "1.5G"), cmp::Ordering::Greater);
+        assert_eq!(compare_data_size("1.5G", "2G"), cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn test_apply_suffix_bounds() {
+        let mut d: HashMap<ParamKey, ParamVal> = [
+            (ParamKey::String("size_max".to_string()), ParamVal::String("2G".to_string())),
+            (ParamKey::String("size_min".to_string()), ParamVal::String("1G".to_string())),
+            (ParamKey::String("size".to_string()), ParamVal::String("2.5G".to_string())),
+            (ParamKey::String("speed_fixed".to_string()), ParamVal::String("100M".to_string())),
+            (ParamKey::String("speed".to_string()), ParamVal::String("50M".to_string())),
+        ].iter().cloned().collect();
+        apply_suffix_bounds(&mut d).unwrap();
+        assert_eq!(d.get(&ParamKey::String("size".to_string())), Some(&ParamVal::String("2G".to_string())));
+        assert_eq!(d.get(&ParamKey::String("speed".to_string())), Some(&ParamVal::String("100M".to_string())));
+
+        d.insert(ParamKey::String("size".to_string()), ParamVal::String("0.5G".to_string()));
+        apply_suffix_bounds(&mut d).unwrap();
+        assert_eq!(d.get(&ParamKey::String("size".to_string())), Some(&ParamVal::String("1G".to_string())));
+
+        d.insert(ParamKey::String("size".to_string()), ParamVal::String("1.5G".to_string()));
+        apply_suffix_bounds(&mut d).unwrap();
+        assert_eq!(d.get(&ParamKey::String("size".to_string())), Some(&ParamVal::String("1.5G".to_string())));
     }
 
     #[test]

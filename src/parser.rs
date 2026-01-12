@@ -12,7 +12,7 @@ use pyo3::types::{PyAny};
 
 use crate::tokens::{ParamKey, ParamVal};
 use crate::tokens::Tokens;
-use crate::tokens::drop_suffixes;
+use crate::tokens::{drop_suffixes, apply_suffix_bounds};
 use crate::filters::Filters;
 use crate::lexer::Lexer;
 use crate::lexer::LexerError;
@@ -1800,8 +1800,8 @@ impl PreDict {
                     /* TODO: add optional logging
                     self._debug("    reached leaf, returning it")
                     */
-                    let d = self.get_dict()?;
-                    // TODO: apply suffix bounds as apply_suffix_bounds(d)
+                    let mut d = self.get_dict()?;
+                    apply_suffix_bounds(&mut d)?;
                     return Ok(Some(d));
                 }
             // one for leaf down from final index

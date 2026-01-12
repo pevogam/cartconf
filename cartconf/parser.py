@@ -6,7 +6,6 @@ import logging
 from typing import Generator
 
 from .exceptions import *
-from .utils import apply_suffix_bounds
 from .filters import *
 from .tokens import *
 from .cartconf import lexer
@@ -145,5 +144,4 @@ class Parser(object):
             d = pre_dict.get_dicts(dropsufs=True, skipdups=skipdups)
             if d is None:
                 break
-            apply_suffix_bounds(d)
             yield d
