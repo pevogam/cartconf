@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7,11 +8,12 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use pyo3::prelude::*;
-use pyo3::exceptions::{PyException, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyException, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::types::{PyAny};
 
 use crate::tokens::{ParamKey, ParamVal};
 use crate::tokens::Tokens;
+use crate::tokens::drop_suffixes;
 use crate::filters::Filters;
 use crate::lexer::Lexer;
 use crate::lexer::LexerError;
@@ -1489,6 +1491,562 @@ pub fn parse_file(
 ) -> PyResult<Node> {
     let mut new_lexer = Lexer::new(None, Some(&cfgfile))?;
     parse(&mut new_lexer, node, prev_indent, defaults, expand_defaults)
+}
+
+#[pyclass(unsendable)]
+#[derive(Debug, Clone)]
+pub struct PreDict {
+    pub _ctx: Vec<Vec<Label>>,
+    pub _shortname: Vec<Vec<Label>>,
+
+    pub _content: Vec<Vec<ContentStep>>,
+    pub _ctx_content: Vec<Vec<ContentStep>>,
+
+    pub _dep: Vec<Vec<String>>,
+
+    // traversal state
+    #[pyo3(get, set)]
+    pub branch: Vec<Node>,
+    #[pyo3(get, set)]
+    pub route: Vec<Option<usize>>,
+    #[pyo3(get, set)]
+    pub joins: Vec<Option<Vec<ContentStep>>>,
+    // TODO: refactor as we expanded to double option to complete the migration more easily
+    #[allow(clippy::type_complexity)]
+    #[pyo3(get, set)]
+    pub join_dicts: Vec<Option<Vec<Option<HashMap<ParamKey, ParamVal>>>>>,
+    #[pyo3(get, set)]
+    pub join_pre_dicts: Vec<Option<Vec<Option<PreDict>>>>,
+
+    // whether to use default variants
+    #[pyo3(get, set)]
+    pub defaults: bool,
+    // list of default variants to expand
+    #[pyo3(get, set)]
+    pub expand_defaults: Vec<String>,
+    // supported number of failed filters for a node
+    #[pyo3(get)]
+    pub num_failed_cases: usize,
+}
+
+#[pymethods]
+impl PreDict {
+    #[getter]
+    fn ctx(&self) -> PyResult<Vec<Label>> {
+        Ok(self._ctx.iter().flatten().cloned().collect())
+    }
+
+    #[getter]
+    fn shortname(&self) -> PyResult<Vec<Label>> {
+        Ok(self._shortname.iter().flatten().cloned().collect())
+    }
+
+    #[getter]
+    fn content(&self) -> PyResult<Vec<ContentStep>> {
+        Ok(self._content.iter().flatten().cloned().collect())
+    }
+
+    #[getter]
+    fn final_content(&self) -> PyResult<Vec<ContentStep>> {
+        let mut res: Vec<ContentStep> = Vec::new();
+        if let Some(last) = self._content.last() {
+            res.extend(last.clone());
+        }
+        if let Some(last) = self._ctx_content.last() {
+            res.extend(last.clone());
+        }
+        Ok(res)
+    }
+
+    #[getter]
+    fn dep(&self) -> PyResult<Vec<String>> {
+        Ok(self._dep.iter().flatten().cloned().collect())
+    }
+
+    #[new]
+    #[pyo3(signature = (ctx=None, content=None, shortname=None, dep=None, defaults=None, expand_defaults=None))]
+    fn new(
+        ctx: Option<Vec<Label>>,
+        content: Option<Vec<ContentStep>>,
+        shortname: Option<Vec<Label>>,
+        dep: Option<Vec<String>>,
+        defaults: Option<bool>,
+        expand_defaults: Option<Vec<String>>,
+    ) -> Self {
+        let _ctx = vec![ctx.unwrap_or_default()];
+        let _content = vec![content.unwrap_or_default()];
+        let _ctx_content = vec![Vec::new()];
+        let _shortname = vec![shortname.unwrap_or_default()];
+        let _dep = vec![dep.unwrap_or_default()];
+
+        PreDict {
+            num_failed_cases: 5,
+            _ctx,
+            _shortname,
+            _content,
+            _ctx_content,
+            _dep,
+            branch: Vec::new(),
+            route: Vec::new(),
+            joins: Vec::new(),
+            join_dicts: Vec::new(),
+            join_pre_dicts: Vec::new(),
+            defaults: defaults.unwrap_or(false),
+            expand_defaults: expand_defaults.unwrap_or_default(),
+        }
+    }
+
+    fn __str__(&self) -> PyResult<String> {
+        let ctx = self.ctx()?;
+        let content = self.content()?;
+        let shortname = self.shortname()?;
+        let dep = self.dep()?;
+        Ok(format!(
+            "PreDict(ctx={:?}, content={:?}, shortname={:?}, dep={:?})",
+            ctx, content, shortname, dep
+        ))
+    }
+
+    fn __copy__(&self) -> PyResult<PreDict> {
+        Ok(self.clone())
+    }
+
+    fn shallow_copy(&self) -> PyResult<PreDict> {
+        let ctx = self.ctx()?;
+        let content = self._content.last().cloned().unwrap_or_default();
+        let ctx_content = self._ctx_content.last().cloned().unwrap_or_default();
+        let shortname = self.shortname()?;
+        let dep = self.dep()?;
+        let mut new = PreDict::new(
+            Some(ctx),
+            Some(content),
+            Some(shortname),
+            Some(dep),
+            Some(self.defaults),
+            Some(self.expand_defaults.clone()),
+        );
+        new._ctx_content[0] = ctx_content;
+        Ok(new)
+    }
+
+    #[pyo3(signature = (node))]
+    fn update_from_node(&mut self, mut node: Node) -> PyResult<bool> {
+        /* TODO: add optional logging
+        if self.debug:    #Print dict on which is working now.
+            print(node.dump(0))
+        */
+
+        let ctx = node.name.clone();
+        let labels = node.labels.clone();
+        let shortname = if node.append_to_shortname {
+            node.name.clone()
+        } else {
+            Vec::new()
+        };
+
+        // build dep strings using current flattened ctx and node.dep
+        let ctx_flat: Vec<Label> = self.ctx()?;
+        let mut dep: Vec<String> = Vec::new();
+        for d in &node.dep {
+            for dd in d {
+                let mut parts: Vec<String> = Vec::new();
+                parts.extend(ctx_flat.iter().map(|label| label.to_string()));
+                parts.extend(dd.iter().map(|label| label.to_string()));
+                dep.push(parts.join("."));
+            }
+        }
+
+        /* TODO: add optional logging
+        if node.name:
+            self._debug("checking out %r", name)
+        */
+        
+        // check previously failed filters
+        for i in 0..node.failed_cases.len() {
+            let mut probe_ctx = ctx_flat.clone();
+            probe_ctx.extend(ctx.clone());
+            if !node.failed_case_might_pass(i, probe_ctx, labels.clone(), self.content()?)? {
+                /* TODO: add optional logging
+                self._debug(
+                    "\n*    this subtree has failed before %s\n"
+                    "         content: %s\n"
+                    "         failcase:%s\n",
+                    name,
+                    self.content + node.get_content(),
+                    failed_case,
+                )
+                */
+                node.prioritize_failed_case(i)?;
+                return Ok(false);
+            }
+        }
+
+        self._ctx.push(ctx);
+        self._shortname.push(shortname);
+        self._dep.push(dep);
+
+        // push state machine stacks
+        self.route.push(None);
+        self.joins.push(None);
+        self.join_dicts.push(None);
+        self.join_pre_dicts.push(None);
+
+        // recompute flattened ctx (includes the newly added ctx)
+        let ctx_flat = self.ctx()?;
+        // capture external content (final content) before node is pushed
+        let content = self.final_content()?;
+
+        // process internal content for the node
+        let (internal_content, mut failed_internal, mut failed_internal_cond) =
+            node.process_content(ctx_flat.clone(), labels.clone())?;
+        failed_internal.append(&mut failed_internal_cond);
+        self._content.push(internal_content);
+
+        // process external (previous) content against current context
+        let mut content_node = Node::new();
+        content_node.swap_content(content)?;
+        let (external_content, failed_external, mut failed_external_cond) =
+            content_node.process_content(ctx_flat.clone(), labels.clone())?;
+        // NOTE: the failed filters should go into the failed internal filters
+        // because we don't expect them to come from outside this node, even if
+        // the condition itself was external
+        failed_internal.append(&mut failed_external_cond);
+        self._ctx_content.push(external_content);
+
+        // register failed case and return false if failed filters
+        if !failed_internal.is_empty() || !failed_external.is_empty() {
+            node.add_failed_case(ctx_flat.clone(), failed_external, failed_internal, self.num_failed_cases)?;
+            /* TODO: add optional logging
+            self._debug("Failed_cases %s", node.failed_cases)
+            */
+            self.branch.push(node.clone());
+            return Ok(false);
+        }
+
+        self.branch.push(node.clone());
+        Ok(true)
+    }
+
+    fn reset_from_last_node(&mut self) -> PyResult<()> {
+        self.branch.pop();
+        self.route.pop();
+        self.joins.pop();
+        self.join_dicts.pop();
+        self.join_pre_dicts.pop();
+
+        self._ctx.pop();
+        self._ctx_content.pop();
+        self._content.pop();
+        self._shortname.pop();
+        self._dep.pop();
+
+        Ok(())
+    }
+
+    pub fn get_dict(&self) -> PyResult<HashMap<ParamKey, ParamVal>> {
+        let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
+
+        let name = self.ctx()?.iter().map(|l| l.long_name.clone()).collect::<Vec<_>>().join(".");
+        let shortname = self.shortname()?.iter().map(|l| l.name.clone()).collect::<Vec<_>>().join(".");
+        let dep = self.dep()?;
+
+        dict.insert("name".to_string().into(), name.into());
+        dict.insert("shortname".to_string().into(), shortname.into());
+        dict.insert("dep".to_string().into(), ParamVal::List(dep));
+
+        for step in self.final_content()? {
+            match step.content_type {
+                ContentType::Tokens(t) => {
+                    // ignore inapplicable token types by ignoring the status
+                    let _ = t.apply_to_predict(&mut dict);
+                }
+                _ => {
+                    return Err(PyErr::new::<PyRuntimeError, _>("Unexpected content type"));
+                }
+            }
+        }
+        Ok(dict)
+    }
+
+    /*
+    Generate dictionaries from the pre-dict parsed so far.
+
+    This should be called after parsing something or seeding the
+    pre-dict with an initial node.
+    */
+    pub fn get_dicts_plain(&mut self) -> PyResult<Option<HashMap<ParamKey, ParamVal>>> {
+        if self.branch.is_empty() {
+            return Err(PyErr::new::<PyRuntimeError, _>("Pre-dictionary needs at least one node"));
+        }
+        let mut depth = (self.branch.len() - 1) as isize;
+
+        // recurse into children
+        loop {
+            if depth < 0 {
+                break;
+            }
+            let i = depth as usize;
+
+            if self.route[i].is_none() {
+                // start with 0th child
+                self.route[i] = Some(0);
+
+                // reached leaf
+                if self.branch[i].children.is_empty() {
+                    /* TODO: add optional logging
+                    self._debug("    reached leaf, returning it")
+                    */
+                    let d = self.get_dict()?;
+                    // TODO: apply suffix bounds as apply_suffix_bounds(d)
+                    return Ok(Some(d));
+                }
+            // one for leaf down from final index
+            } else if i + 1 == self.route.len().saturating_sub(1) {
+                // move to next child
+                if let Some(ref mut r) = self.route[i] {
+                    *r += 1;
+                }
+                // remove all previous grand children and their effects on pre-dict
+                for _ in i + 1..self.route.len() {
+                    self.reset_from_last_node()?;
+                }
+            }
+
+            // if children pool exhausted or still no route
+            let route_idx = match self.route[i] {
+                Some(i) => i,
+                None => {
+                    depth -= 1;
+                    continue;
+                }
+            };
+            if route_idx + 1 > self.branch[i].children.len() {
+                depth -= 1;
+                continue;
+            }
+
+            let child = self.branch[i].children[route_idx].borrow().clone();
+            if !self.update_from_node(child)? {
+                continue;
+            }
+            let parent = &mut self.branch[i];
+            if self.defaults {
+                let var_name_str = parent.var_name.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(".");
+                if !self.expand_defaults.contains(&var_name_str)
+                    && parent.children.iter().any(|c| c.borrow().default)
+                    && !parent.children[route_idx].borrow().default {
+                        return Ok(None);
+                    }
+            }
+            let d = self.get_dicts(false, true)?;
+            // completed children recursion is consumed until we run out of children
+            if d.is_none() {
+                // handle earlier reset of the same pre-dict by a nested getter
+                depth = min(depth, (self.branch.len() - 1) as isize);
+                continue;
+            }
+            return Ok(d);
+        }
+        Ok(None)
+    }
+
+    /*
+    Perform all joins as filters on added dictionaries.
+
+    Each `join' is the same as an `only' filter.
+    */
+    pub fn get_dicts_joined(&mut self) -> PyResult<Option<HashMap<ParamKey, ParamVal>>> {
+        if self.branch.is_empty() {
+            return Err(PyErr::new::<PyRuntimeError, _>("Pre-dictionary needs at least one node"));
+        }
+        let depth = self.branch.len() - 1;
+        let mut sub_pre_dict = self.clone();
+        sub_pre_dict.reset_from_last_node()?;
+
+        // TODO: this doesn't panic on out of bounds or uninitialized joins but is bulky to use
+        // also in all other vector depth or width access cases - use anyhow or find a better way 
+        let joins = self.joins
+            .get_mut(depth)
+            .ok_or_else(|| PyErr::new::<PyValueError, _>(format!("Joins index out of bounds: {depth}")))?
+            .as_mut()
+            .ok_or_else(|| PyErr::new::<PyValueError, _>(format!("Joins not initialized at depth {depth}")))?;
+        let dicts = self.join_dicts
+            .get_mut(depth)
+            .ok_or_else(|| PyErr::new::<PyValueError, _>(format!("Join dicts index out of bounds: {depth}")))?
+            .as_mut()
+            .ok_or_else(|| PyErr::new::<PyValueError, _>(format!("Join dicts not initialized at depth {depth}")))?;
+        let pre_dicts = self.join_pre_dicts
+            .get_mut(depth)
+            .ok_or_else(|| PyErr::new::<PyValueError, _>(format!("Join pre-dicts index out of bounds: {depth}")))?
+            .as_mut()
+            .ok_or_else(|| PyErr::new::<PyValueError, _>(format!("Join pre-dicts not initialized at depth {depth}")))?;
+
+        // join requires greedy dictionary expansion for variants of the same node
+        let mut width: isize = 0;
+        loop {
+            if width < 0 {
+                break;
+            }
+            let j = width as usize;
+            if j < dicts.len().saturating_sub(1) && let Some(_) = &dicts[j + 1] {
+                width += 1;
+                continue;
+            }
+
+            // initialize join pre-dict with a shallow copy of a node-reset pre-dict clone
+            if pre_dicts[j].is_none() {
+                pre_dicts[j] = Some(sub_pre_dict.shallow_copy()?);
+            }
+            // update the pre-dict with differently filtered current node
+            if let Some(ref mut pre_dict) = pre_dicts[j] {
+                let node = &mut self.branch[depth];
+                if !pre_dict.branch.contains(node) {
+                    let content_orig = node.get_content()?;
+                    // current join/only
+                    let step = &joins[j];
+                    node.add_content(step.filename.clone(), step.linenum, step.content_type.clone())?;
+                    if !pre_dict.update_from_node(node.clone())? {
+                        return Ok(None);
+                    }
+                    node.swap_content(content_orig)?;
+                }
+                // compute dict for this width
+                let d = pre_dict.get_dicts(false, true)?;
+                dicts[j] = d;
+            }
+
+            if dicts[j].is_none() {
+                // remove all previous grand children and their effects on current pre-dict clone
+                if let Some(ref mut pre_dict) = pre_dicts[j] {
+                    for _ in (pre_dict.route.len().saturating_sub(1))..pre_dict.route.len() {
+                        pre_dict.reset_from_last_node()?;
+                    }
+                }
+                width -= 1;
+                continue;
+            }
+
+            // multiply current frame dict by all variants from before
+            if j == dicts.len() - 1 {
+                let mut d: HashMap<ParamKey, ParamVal> = HashMap::new();
+                let mut name = String::new();
+                let mut shortname = String::new();
+                for di in dicts.iter().flatten() {
+                    if name.is_empty() {
+                        name = di.get(&"name".to_string().into()).map(|v| v.clone().into()).unwrap_or_default();
+                        shortname = di.get(&"shortname".to_string().into()).map(|v| v.clone().into()).unwrap_or_default();
+                    } else {
+                        let other_name = di.get(&"name".to_string().into()).map(|v| Into::<String>::into(v.clone())).unwrap_or_default();
+                        let other_short = di.get(&"shortname".to_string().into()).map(|v| Into::<String>::into(v.clone())).unwrap_or_default();
+                        name = Node::join_names(&name, &other_name);
+                        shortname = Node::join_names(&shortname, &other_short);
+                    }
+                    // update combined map d with di entries
+                    for (k, v) in di {
+                        d.insert(k.clone(), v.clone());
+                    }
+                }
+                d.insert("name".to_string().into(), name.into());
+                d.insert("shortname".to_string().into(), shortname.into());
+                return Ok(Some(d));
+            }
+
+            width += 1;
+        }
+
+        Ok(None)
+    }
+
+    /*
+    Get possibly joined dictionaries added using only filters.
+
+    Process 'join' entries and unpack join filters in the node.
+
+    Main rules for joining via filters:
+
+    1) join filter_1 filter_2 ....
+        multiplies all dictionaries as:
+            all_variants_match_filter_1 * all_variants_match_filter_2 * ....
+    2) join only_one_filter
+            == only only_one_filter
+    3) join filter_1 filter_1
+        also works and transforms to:
+            all_variants_match_filter_1 * all_variants_match_filter_1
+        Example:
+            join a
+            join a
+        Transforms into:
+            join a a
+    */
+    #[pyo3(signature = (dropsufs=false, skipdups=true))]
+    pub fn get_dicts(&mut self, dropsufs: bool, skipdups: bool) -> PyResult<Option<HashMap<ParamKey, ParamVal>>> {
+        if self.branch.is_empty() {
+            return Err(PyErr::new::<PyRuntimeError, _>("Pre-dictionary needs at least one node"));
+        }
+        let depth = self.branch.len() - 1;
+        let mut joins = &mut self.joins[depth];
+        // due to pre-dict cloning current pre-dict must only contain one join at the end
+        if joins.is_none() {
+            let node = &mut self.branch[depth];
+
+            // find joins from node content and prepare only-filters
+            let mut plain_content: Vec<ContentStep> = Vec::new();
+            let mut new_joins: Vec<ContentStep> = Vec::new();
+            for t in node.get_content()? {
+                match t.content_type {
+                    ContentType::Filters(Filters::JoinFilter {filter, line }) => {
+                        // accumulate join steps
+                        new_joins.push(ContentStep {
+                            filename: t.filename.clone(),
+                            linenum: t.linenum,
+                            content_type: ContentType::Filters(
+                                Filters::JoinFilter { filter, line }
+                            )
+                        });
+                    }
+                    _ => plain_content.push(t),
+                }
+            }
+
+            // rewrite joins from the node into many 'only' filters
+            let mut onlys: Vec<ContentStep> = Vec::new();
+            for j in &new_joins {
+                if let ContentType::Filters(Filters::JoinFilter { filter, line }) = j.content_type.clone() {
+                    for word in filter {
+                        let f = Filters::OnlyFilter { filter: vec![word], line: line.clone() };
+                        onlys.push(ContentStep { filename: j.filename.clone(), linenum: j.linenum, content_type: ContentType::Filters(f) });
+                    }
+                }
+            }
+
+            if !new_joins.is_empty() {
+                // register join recursion as leaf for current pre-dict and continue with copies
+                self.joins[depth] = Some(onlys.clone());
+                self.join_dicts[depth] = Some(vec![None; onlys.len()]);
+                self.join_pre_dicts[depth] = Some(vec![None; onlys.len()]);
+                // provide join-free content to processed node
+                node.swap_content(plain_content)?;
+                joins = &mut self.joins[depth];
+            }
+        }
+
+        let mut dn: Option<HashMap<ParamKey, ParamVal>> = None;
+        if joins.is_some() {
+            dn = self.get_dicts_joined()?;
+            if dn.is_none() {
+                // consume all children for this node
+                self.route[depth] = Some(self.branch[depth].children.len());
+            }
+        }
+        if dn.is_none() {
+            dn = self.get_dicts_plain()?;
+        }
+        if dropsufs && let Some(d) = dn {
+            return Ok(Some(drop_suffixes(&d, skipdups)?));
+        }
+        Ok(dn)
+    }
+
 }
 
 #[cfg(test)]

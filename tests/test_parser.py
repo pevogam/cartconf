@@ -649,9 +649,10 @@ class PreDictTest(unittest.TestCase):
             self.pre_dict.get_dicts_joined()
 
         pre_dict.update_from_node(self.parser.node)
-        pre_dict.joins[-1] = joins
-        pre_dict.join_dicts[-1] = [None for _ in joins]
-        pre_dict.join_pre_dicts[-1] = [None for _ in joins]
+        # the python-rust barrier requires copying or working on copies so replace entirely
+        pre_dict.joins = [joins]
+        pre_dict.join_dicts = [[None for _ in joins]]
+        pre_dict.join_pre_dicts = [[None for _ in joins]]
 
         d = pre_dict.get_dicts_joined()
         self.assertEqual(d["name"], "test1.test2")
@@ -692,9 +693,10 @@ class PreDictTest(unittest.TestCase):
                  (self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("b")]]], "test2"))]
         pre_dict = parser.PreDict()
         pre_dict.update_from_node(self.parser.node)
-        pre_dict.joins[-1] = joins
-        pre_dict.join_dicts[-1] = [None for _ in joins]
-        pre_dict.join_pre_dicts[-1] = [None for _ in joins]
+        # the python-rust barrier requires copying or working on copies so replace entirely
+        pre_dict.joins = [joins]
+        pre_dict.join_dicts = [[None for _ in joins]]
+        pre_dict.join_pre_dicts = [[None for _ in joins]]
 
         d = pre_dict.get_dicts_joined()
         self.assertEqual(d["name"], "a.test1.b.test1")
@@ -1238,8 +1240,10 @@ class ParserTest(unittest.TestCase):
         """Failed filters return empty dictionary with partial pre-dict."""
         self.parser.parse_string("variants:\n  - test1:\n    key1 = value1\nonly test2\n")
         filter = parser.OnlyFilter([[[parser.Label("test2")]]], "test2")
+        node = self.parser.node
         with self.assertRaises(StopIteration):
             next(self.parser.get_dicts_gen())
+        self.assertEqual(self.parser.node.id, node.id)
         self.assertEqual(
             self.parser.node.get_failed_cases(),
             [([], [], [("<string>", 4 , filter)])],
