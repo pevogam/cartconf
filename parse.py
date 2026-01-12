@@ -16,16 +16,16 @@ options = None
 
 def print_dicts_default(options, dicts):
     """Print dictionaries in the default mode"""
-    for count, dic in enumerate(dicts):
+    for count, d in enumerate(dicts):
         if options.fullname:
-            print("dict %4d:  %s" % (count + 1, dic["name"]))
+            print("dict %4d:  %s" % (count + 1, d["name"]))
         else:
-            print("dict %4d:  %s" % (count + 1, dic["shortname"]))
+            print("dict %4d:  %s" % (count + 1, d["shortname"]))
         if options.contents:
-            keys = list(dic.keys())
+            keys = list(d.keys())
             keys.sort()
             for key in keys:
-                print("    %s = %s" % (key, dic[key]))
+                print("    %s = %s" % (key, d[key]))
 
 
 # pylint: disable=W0613
@@ -33,8 +33,8 @@ def print_dicts_repr(options, dicts):
     import pprint
 
     print("[")
-    for dic in dicts:
-        print("%s," % (pprint.pformat(dic)))
+    for d in dicts:
+        print("%s," % (pprint.pformat(d)))
     print("]")
 
 
@@ -127,5 +127,5 @@ if __name__ == "__main__":
     if options.debug:
         print(c.node.dump(0, True))
 
-    dicts = c.get_dicts(skipdups=options.skipdups)
+    dicts = c.get_dicts_gen(skipdups=options.skipdups)
     print_dicts(options, dicts)
