@@ -673,29 +673,28 @@ static MATCH_SUBSTITUTE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 pub fn substitution(value: &str, dict: &HashMap<ParamKey, ParamVal>) -> PyResult<String> {
-    if value.contains('$') {
-        let mut start = 0;
-        let mut result = String::new();
+    if !value.contains('$') {
+        return Ok(value.to_string());
+    }
+    let mut start = 0;
+    let mut result = String::with_capacity(value.len());
 
-        let d = drop_suffixes(dict, true)?;
+    let d = drop_suffixes(dict, true)?;
 
-        while let Some(captures) = MATCH_SUBSTITUTE.captures(&value[start..]) {
-            if let Some(matched) = captures.get(0) {
-                let key = captures.get(1).map_or("", |m| m.as_str());
-                if let Some(val) = d.get(&key.to_string().into()) {
-                    result.push_str(&value[start..start + matched.start()]);
-                    result.push_str(String::from(val.clone()).as_str());
-                    start += matched.end();
-                } else {
-                    break;
-                }
+    while let Some(captures) = MATCH_SUBSTITUTE.captures(&value[start..]) {
+        if let Some(matched) = captures.get(0) {
+            let key = captures.get(1).map_or("", |m| m.as_str());
+            if let Some(val) = d.get(&key.to_string().into()) {
+                result.push_str(&value[start..start + matched.start()]);
+                result.push_str(&val.to_string());
+                start += matched.end();
+            } else {
+                break;
             }
         }
-        result.push_str(&value[start..]);
-        Ok(result)
-    } else {
-        Ok(value.to_string())
     }
+    result.push_str(&value[start..]);
+    Ok(result)
 }
 
 #[cfg(test)]
