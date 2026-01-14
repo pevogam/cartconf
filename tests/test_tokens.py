@@ -7,7 +7,7 @@ basedir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if os.path.isdir(os.path.join(basedir, 'cartconf')):
     sys.path.append(basedir)
 
-from cartconf.tokens import LIndent, LEndL, LEndBlock, LIdentifier, LWhite, LString, LColon, LVariants, LDot, LVariant, LDefault, LOnly, LSuffix, LJoin, LNo, LCond, LNotCond, LOr, LAnd, LCoc, LComa, LLBracket, LRBracket, LLRBracket, LRRBracket, LRegExpStart, LRegExpStop, LInclude, LSet, LAppend, LPrepend, LLazySet, LRegExpSet, LRegExpAppend, LRegExpPrepend, LDel, LApplyPreDict, LUpdateFileMap, Suffix
+from cartconf.tokens import LIndent, LEndL, LEndBlock, LIdentifier, LWhite, LString, LColon, LVariants, LDot, LVariant, LDefault, LOnly, LSuffix, LJoin, LNo, LCond, LNotCond, LOr, LAnd, LCoc, LComa, LLBracket, LRBracket, LLRBracket, LRRBracket, LRegExpStart, LRegExpStop, LInclude, LSet, LAppend, LPrepend, LLazySet, LRegExpSet, LRegExpAppend, LRegExpPrepend, LDel, LApplyDict, LUpdateFileMap, Suffix
 
 
 class TestTokens(unittest.TestCase):
@@ -354,15 +354,15 @@ class TestTokens(unittest.TestCase):
         LDel("shortname", "overwritten").apply_to_dict(d)
         self.assertEqual(d["shortname"], "is reserved")
 
-    def test_lapply_pre_dict(self):
-        t = LApplyPreDict("name", {"key": "value"})
+    def test_lapply_dict(self):
+        t = LApplyDict("name", {"key": "value"})
         self.assertEqual(t.identifier, str(t))
-        self.assertEqual(str(t), "apply_pre_dict {key: value}")
-        self.assertEqual(repr(t), "'apply_pre_dict {key: value}'")
+        self.assertEqual(str(t), "apply_dict {key: value}")
+        self.assertEqual(repr(t), "'apply_dict {key: value}'")
         self.assertEqual(t.name, "name")
 
-    def test_lapply_pre_dict_apply(self):
-        t = LApplyPreDict("name", {"key_1": "v1", "key_2": "v2"})
+    def test_lapply_dict_apply(self):
+        t = LApplyDict("name", {"key_1": "v1", "key_2": "v2"})
         d = {}
         t.apply_to_dict(d)
         self.assertEqual(d, {"key_1": "v1", "key_2": "v2"})
@@ -371,7 +371,7 @@ class TestTokens(unittest.TestCase):
         self.assertEqual(d, {"key_1": "v1", "key_2": "v2", "key_3": "v3"})
         d = {"shortname": "is reserved"}
         # this is supposed to be safe for overwriting at the times it is invoked
-        LApplyPreDict("some", {"shortname": "overwritten"}).apply_to_dict(d)
+        LApplyDict("some", {"shortname": "overwritten"}).apply_to_dict(d)
         self.assertEqual(d["shortname"], "overwritten")
 
     def test_lupdate_file_map(self):

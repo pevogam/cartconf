@@ -201,7 +201,7 @@ pub enum Tokens {
     LRegExpAppend(String, String),
     LRegExpPrepend(String, String),
     LDel(String, String),
-    LApplyPreDict(String, HashMap<ParamKey, ParamVal>),
+    LApplyDict(String, HashMap<ParamKey, ParamVal>),
     LUpdateFileMap(String, String, String),
     Suffix(String, String),
 }
@@ -245,7 +245,7 @@ impl fmt::Display for Tokens {
             Tokens::LRegExpAppend(_name, _value) => write!(f, "?+="),
             Tokens::LRegExpPrepend(_name, _value) => write!(f, "?<="),
             Tokens::LDel(_name, _value) => write!(f, "del"),
-            Tokens::LApplyPreDict(_name, value) => write!(f, "apply_pre_dict {value:?}"),
+            Tokens::LApplyDict(_name, value) => write!(f, "apply_dict {value:?}"),
             Tokens::LUpdateFileMap(_filename, _name, _value) => write!(f, "update_file_map"),
             Tokens::Suffix(_name, value) => write!(f, "suffix {value}"),
         }
@@ -313,8 +313,8 @@ impl Tokens {
                 if id.starts_with("Identifier") { return Tokens::LIdentifier(String::new()); }
                 if id.starts_with("WhiteSpace") { return Tokens::LWhite(String::new()); }
                 if id.starts_with("String") { return Tokens::LString(String::new()); }
-                if id.starts_with("apply_pre_dict") {
-                    return Tokens::LApplyPreDict(String::new(), HashMap::new());
+                if id.starts_with("apply_dict") {
+                    return Tokens::LApplyDict(String::new(), HashMap::new());
                 }
                 if id.starts_with("suffix") { return Tokens::Suffix(String::new(), String::new()); }
                 // fallback: return as identifier token
@@ -367,7 +367,7 @@ impl Tokens {
             Tokens::LRegExpAppend(name, _value) => Ok(name.to_string()),
             Tokens::LRegExpPrepend(name, _value) => Ok(name.to_string()),
             Tokens::LDel(name, _value) => Ok(name.to_string()),
-            Tokens::LApplyPreDict(name, _value) => Ok(name.to_string()),
+            Tokens::LApplyDict(name, _value) => Ok(name.to_string()),
             Tokens::LUpdateFileMap(_filename, name, _value) => Ok(name.to_string()),
             Tokens::Suffix(name, _value) => Ok(name.to_string()),
             _ => Err(PyAttributeError::new_err("name is not a valid attribute for this token")),
@@ -399,12 +399,13 @@ impl Tokens {
         }
     }
 
-    fn apply_to_dict(&self, py_dict: &Bound<'_, PyDict>) -> PyResult<()> {
-        let mut pre_dict = py_dict.extract::<HashMap<ParamKey, ParamVal>>()?;
-        self.apply_to_predict(&mut pre_dict)?;
+    #[pyo3(name = "apply_to_dict")]
+    fn apply_to_pydict(&self, py_dict: &Bound<'_, PyDict>) -> PyResult<()> {
+        let mut dict = py_dict.extract::<HashMap<ParamKey, ParamVal>>()?;
+        self.apply_to_dict(&mut dict)?;
 
         py_dict.clear();
-        for (key, value) in pre_dict.iter() {
+        for (key, value) in dict.iter() {
             py_dict.set_item(key.clone(), value.clone())?;
         }
 
@@ -412,27 +413,27 @@ impl Tokens {
     }
 }
 impl Tokens {
-    pub fn apply_to_predict(&self, pre_dict: &mut HashMap<ParamKey, ParamVal>) -> PyResult<()> {
+    pub fn apply_to_dict(&self, dict: &mut HashMap<ParamKey, ParamVal>) -> PyResult<()> {
         match self {
             Tokens::LSet(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) {
                     let current_key = ParamKey::from(name.clone());
-                    let substituted = substitution(value, pre_dict)?;
+                    let substituted = substitution(value, dict)?;
                     let substituted_val = ParamVal::from(substituted);
-                    pre_dict.insert(current_key, substituted_val);
+                    dict.insert(current_key, substituted_val);
                 }
                 Ok(())
             }
             Tokens::LAppend(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) {
                     let current_key = ParamKey::from(name.clone());
-                    let substituted = substitution(value, pre_dict)?;
-                    if let Entry::Occupied(mut e) = pre_dict.entry(current_key.clone()) {
+                    let substituted = substitution(value, dict)?;
+                    if let Entry::Occupied(mut e) = dict.entry(current_key.clone()) {
                         let previous = String::from(e.get().clone());
                         e.insert(format!("{}{}", previous, substituted).into());
                     } else {
                         let substituted_val = ParamVal::from(substituted);
-                        pre_dict.insert(current_key, substituted_val);
+                        dict.insert(current_key, substituted_val);
                     }
                 }
                 Ok(())
@@ -440,13 +441,13 @@ impl Tokens {
             Tokens::LPrepend(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) {
                     let current_key = ParamKey::from(name.clone());
-                    let substituted = substitution(value, pre_dict)?;
-                    if let Entry::Occupied(mut e) = pre_dict.entry(current_key.clone()) {
+                    let substituted = substitution(value, dict)?;
+                    if let Entry::Occupied(mut e) = dict.entry(current_key.clone()) {
                         let previous = String::from(e.get().clone());
                         e.insert(format!("{}{}", substituted, previous).into());
                     } else {
                         let substituted_val = ParamVal::from(substituted);
-                        pre_dict.insert(current_key, substituted_val);
+                        dict.insert(current_key, substituted_val);
                     }
                 }
                 Ok(())
@@ -454,10 +455,10 @@ impl Tokens {
             Tokens::LLazySet(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) {
                     let current_key = ParamKey::from(name.clone());
-                    if !pre_dict.contains_key(&current_key) {
-                        let substituted = substitution(value, pre_dict)?;
+                    if !dict.contains_key(&current_key) {
+                        let substituted = substitution(value, dict)?;
                         let substituted_val = ParamVal::from(substituted);
-                        pre_dict.insert(current_key, substituted_val);
+                        dict.insert(current_key, substituted_val);
                     }
                 }
                 Ok(())
@@ -465,9 +466,9 @@ impl Tokens {
             Tokens::LRegExpSet(name, value) => {
                 let exp = Regex::new(&format!(r"^{name}$"))
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-                let substituted = substitution(value, pre_dict)?;
+                let substituted = substitution(value, dict)?;
                 let substituted_val = ParamVal::from(substituted);
-                let keys_to_update: Vec<ParamKey> = pre_dict.iter()
+                let keys_to_update: Vec<ParamKey> = dict.iter()
                     .filter_map(|(k, _v)| {
                         let key_str = String::from(k.clone());
                         if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
@@ -478,15 +479,15 @@ impl Tokens {
                     })
                     .collect();
                 for k in keys_to_update {
-                    pre_dict.insert(k, substituted_val.clone());
+                    dict.insert(k, substituted_val.clone());
                 }
                 Ok(())
             }
             Tokens::LRegExpAppend(name, value) => {
                 let exp = Regex::new(&format!(r"^{name}$"))
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-                let substituted = substitution(value, pre_dict)?;
-                let keys_to_update: Vec<ParamKey> = pre_dict.iter()
+                let substituted = substitution(value, dict)?;
+                let keys_to_update: Vec<ParamKey> = dict.iter()
                     .filter_map(|(k, v)| {
                         let key_str = String::from(k.clone());
                         if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
@@ -498,16 +499,16 @@ impl Tokens {
                     .map(|(k, _)| k)
                     .collect();
                 for k in keys_to_update {
-                    let current: String = pre_dict.get(&k).map(|v| v.clone().into()).unwrap_or_default();
-                    pre_dict.insert(k, format!("{current}{substituted}").into());
+                    let current: String = dict.get(&k).map(|v| v.clone().into()).unwrap_or_default();
+                    dict.insert(k, format!("{current}{substituted}").into());
                 }
                 Ok(())
             }
             Tokens::LRegExpPrepend(name, value) => {
                 let exp = Regex::new(&format!(r"^{name}$"))
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-                let substituted = substitution(value, pre_dict)?;
-                let keys_to_update: Vec<ParamKey> = pre_dict.iter()
+                let substituted = substitution(value, dict)?;
+                let keys_to_update: Vec<ParamKey> = dict.iter()
                     .filter_map(|(k, _)| {
                         let key_str = String::from(k.clone());
                         if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
@@ -518,15 +519,15 @@ impl Tokens {
                     })
                     .collect();
                 for k in keys_to_update {
-                    let current: String = pre_dict.get(&k).map(|v| v.clone().into()).unwrap_or_default();
-                    pre_dict.insert(k, format!("{substituted}{current}").into());
+                    let current: String = dict.get(&k).map(|v| v.clone().into()).unwrap_or_default();
+                    dict.insert(k, format!("{substituted}{current}").into());
                 }
                 Ok(())
             }
             Tokens::LDel(name, _val) => {
                 let exp = Regex::new(&format!(r"^{name}$"))
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-                let keys_to_delete: Vec<ParamKey> = pre_dict.iter()
+                let keys_to_delete: Vec<ParamKey> = dict.iter()
                     .filter_map(|(k, _v)| {
                         let key_str = String::from(k.clone());
                         if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
@@ -537,12 +538,12 @@ impl Tokens {
                     })
                     .collect();
                 for k in keys_to_delete {
-                    pre_dict.remove(&k);
+                    dict.remove(&k);
                 }
                 Ok(())
             }
-            Tokens::LApplyPreDict(_, value_map) => {
-                pre_dict.extend(value_map.clone());
+            Tokens::LApplyDict(_, value_map) => {
+                dict.extend(value_map.clone());
                 Ok(())
             }
             Tokens::LUpdateFileMap(filename, name, value) => {
@@ -560,31 +561,31 @@ impl Tokens {
                 let dest_key = ParamKey::from(dest.clone());
 
                 // Ensure destination key exists as a dict
-                if !pre_dict.contains_key(&dest_key) {
-                    pre_dict.insert(dest_key.clone(), ParamVal::Dict(HashMap::new()));
+                if !dict.contains_key(&dest_key) {
+                    dict.insert(dest_key.clone(), ParamVal::Dict(HashMap::new()));
                 }
 
                 // Get or create the inner dict
-                if let Some(ParamVal::Dict(mut inner_dict)) = pre_dict.remove(&dest_key) {
+                if let Some(ParamVal::Dict(mut inner_dict)) = dict.remove(&dest_key) {
                     if let Some(old_name) = inner_dict.get(&shortname) {
                         let new_name = format!("{name}.{old_name}");
                         inner_dict.insert(shortname, new_name);
                     } else {
                         inner_dict.insert(shortname, name.clone());
                     }
-                    pre_dict.insert(dest_key, ParamVal::Dict(inner_dict));
+                    dict.insert(dest_key, ParamVal::Dict(inner_dict));
                 } else {
                     // Create new dict if key exists but is not a dict
                     let mut new_dict = HashMap::new();
                     new_dict.insert(shortname, name.clone());
-                    pre_dict.insert(dest_key, ParamVal::Dict(new_dict));
+                    dict.insert(dest_key, ParamVal::Dict(new_dict));
                 }
                 Ok(())
             }
             Tokens::Suffix(_, value) => {
                 // Create suffixed mapping: turn string keys into tuple keys where possible
                 let mut new_map: HashMap<ParamKey, ParamVal> = HashMap::new();
-                for (k, v) in pre_dict.iter() {
+                for (k, v) in dict.iter() {
                     match k {
                         ParamKey::String(s) => {
                             if RESERVED_KEYS.contains(&s.as_str()) {
@@ -600,7 +601,7 @@ impl Tokens {
                         }
                     }
                 }
-                let _ = mem::replace(pre_dict, new_map);
+                let _ = mem::replace(dict, new_map);
                 Ok(())
             }
             _ => Err(PyAttributeError::new_err("apply_to_dict is not a valid attribute for this token")),

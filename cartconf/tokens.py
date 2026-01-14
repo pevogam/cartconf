@@ -60,7 +60,7 @@ LRegExpSet = Tokens.LRegExpSet
 LRegExpAppend = Tokens.LRegExpAppend
 LRegExpPrepend = Tokens.LRegExpPrepend
 LDel = Tokens.LDel
-LApplyPreDict = Tokens.LApplyPreDict
+LApplyDict = Tokens.LApplyDict
 LUpdateFileMap = Tokens.LUpdateFileMap
 Suffix = Tokens.Suffix
 tokens_oper = {
@@ -72,7 +72,7 @@ tokens_oper = {
     "?+": LRegExpAppend,
     "?<": LRegExpPrepend,
     "del": LDel,
-    "apply_pre_dict": LApplyPreDict,
+    "apply_dict": LApplyDict,
     "update_file_map": LUpdateFileMap,
     "suffix": Suffix,
 }
