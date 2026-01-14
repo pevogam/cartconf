@@ -1501,18 +1501,18 @@ pub fn parse_file(
 #[pyclass(unsendable)]
 #[derive(Debug, Clone)]
 pub struct PreDict {
-    pub _ctx: Vec<Vec<Label>>,
-    pub _shortname: Vec<Vec<Label>>,
+    _ctx: Vec<Vec<Label>>,
+    _shortname: Vec<Vec<Label>>,
 
-    pub _content: Vec<Vec<ContentStep>>,
-    pub _ctx_content: Vec<Vec<ContentStep>>,
+    _content: Vec<Vec<ContentStep>>,
+    _ctx_content: Vec<Vec<ContentStep>>,
 
-    pub _dep: Vec<Vec<String>>,
+    _dep: Vec<Vec<String>>,
 
     // traversal state
-    #[pyo3(get, set)]
+    #[pyo3(get)]
     pub branch: Vec<Node>,
-    #[pyo3(get, set)]
+    #[pyo3(get)]
     pub route: Vec<Option<usize>>,
     #[pyo3(get, set)]
     pub joins: Vec<Option<Vec<ContentStep>>>,
@@ -1724,11 +1724,11 @@ impl PreDict {
             /* TODO: add optional logging
             self._debug("Failed_cases %s", node.failed_cases)
             */
-            self.branch.push(node.clone());
+            self.branch.push(node);
             return Ok(false);
         }
 
-        self.branch.push(node.clone());
+        self.branch.push(node);
         Ok(true)
     }
 
@@ -1830,6 +1830,8 @@ impl PreDict {
                 continue;
             }
 
+            // the original parsed node is preserved as the pre-dict modifies a clone
+            // for the purpose of traversal and dictionary getters
             let child = self.branch[i].children[route_idx].borrow().clone();
             if !self.update_from_node(child)? {
                 continue;
@@ -1904,16 +1906,15 @@ impl PreDict {
             }
             // update the pre-dict with differently filtered current node
             if let Some(ref mut pre_dict) = pre_dicts[j] {
-                let node = &mut self.branch[depth];
+                let node = &self.branch[depth];
                 if !pre_dict.branch.contains(node) {
-                    let content_orig = node.get_content()?;
                     // current join/only
                     let step = &joins[j];
+                    let mut node = self.branch[depth].clone();
                     node.add_content(step.filename.clone(), step.linenum, step.content_type.clone())?;
-                    if !pre_dict.update_from_node(node.clone())? {
+                    if !pre_dict.update_from_node(node)? {
                         return Ok(None);
                     }
-                    node.swap_content(content_orig)?;
                 }
                 // compute dict for this width
                 let d = pre_dict.get_dicts(false, true)?;
