@@ -978,7 +978,6 @@ class Parser(object):
                 lexer.linenum,
             )
 
-        lexer.set_strict()
         tokens = lexer.get_until_no_white([LLBracket, LColon, LIdentifier, LEndL])
         vtypet = type(tokens[-1])
         variant_name = ""
@@ -1208,7 +1207,6 @@ class Parser(object):
         # pre_dict contains block of operation without collision with
         # others block or operation. Increase speed almost twice.
         pre_dict = {}
-        lexer.set_fast()
 
         # Suffix should be applied as the last operator in the dictionary
         # Reasons:
