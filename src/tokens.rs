@@ -1,8 +1,8 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::LazyLock;
-use std::mem;
 use regex::Regex;
 
 use pyo3::prelude::*;
@@ -402,7 +402,7 @@ impl Tokens {
     #[pyo3(name = "apply_to_dict")]
     fn apply_to_pydict(&self, py_dict: &Bound<'_, PyDict>) -> PyResult<()> {
         let mut dict = py_dict.extract::<HashMap<ParamKey, ParamVal>>()?;
-        self.apply_to_dict(&mut dict)?;
+        self.clone().apply_to_dict(&mut dict)?;
 
         py_dict.clear();
         for (key, value) in dict.iter() {
@@ -413,52 +413,46 @@ impl Tokens {
     }
 }
 impl Tokens {
-    pub fn apply_to_dict(&self, dict: &mut HashMap<ParamKey, ParamVal>) -> PyResult<()> {
+    pub fn apply_to_dict(self, dict: &mut HashMap<ParamKey, ParamVal>) -> PyResult<()> {
         match self {
             Tokens::LSet(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) {
-                    let current_key = ParamKey::from(name.clone());
+                    let current_key = ParamKey::from(name);
                     let substituted = substitution(value, dict)?;
-                    let substituted_val = ParamVal::from(substituted);
-                    dict.insert(current_key, substituted_val);
+                    dict.insert(current_key, substituted.into());
                 }
                 Ok(())
             }
             Tokens::LAppend(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) {
-                    let current_key = ParamKey::from(name.clone());
+                    let current_key = ParamKey::from(name);
                     let substituted = substitution(value, dict)?;
-                    if let Entry::Occupied(mut e) = dict.entry(current_key.clone()) {
-                        let previous = String::from(e.get().clone());
-                        e.insert(format!("{}{}", previous, substituted).into());
-                    } else {
-                        let substituted_val = ParamVal::from(substituted);
-                        dict.insert(current_key, substituted_val);
-                    }
+                    dict.entry(current_key)
+                        .and_modify(|existing| {
+                            *existing = format!("{existing}{substituted}").into();
+                        })
+                        .or_insert_with(|| substituted.into());
                 }
                 Ok(())
             }
             Tokens::LPrepend(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) {
-                    let current_key = ParamKey::from(name.clone());
+                    let current_key = ParamKey::from(name);
                     let substituted = substitution(value, dict)?;
-                    if let Entry::Occupied(mut e) = dict.entry(current_key.clone()) {
-                        let previous = String::from(e.get().clone());
-                        e.insert(format!("{}{}", substituted, previous).into());
-                    } else {
-                        let substituted_val = ParamVal::from(substituted);
-                        dict.insert(current_key, substituted_val);
-                    }
+                    dict.entry(current_key)
+                        .and_modify(|existing| {
+                            *existing = format!("{substituted}{existing}").into();
+                        })
+                        .or_insert_with(|| substituted.into());
                 }
                 Ok(())
             }
             Tokens::LLazySet(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) {
-                    let current_key = ParamKey::from(name.clone());
+                    let current_key = ParamKey::from(name);
                     if !dict.contains_key(&current_key) {
                         let substituted = substitution(value, dict)?;
-                        let substituted_val = ParamVal::from(substituted);
-                        dict.insert(current_key, substituted_val);
+                        dict.insert(current_key, substituted.into());
                     }
                 }
                 Ok(())
@@ -468,18 +462,11 @@ impl Tokens {
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
                 let substituted = substitution(value, dict)?;
                 let substituted_val = ParamVal::from(substituted);
-                let keys_to_update: Vec<ParamKey> = dict.iter()
-                    .filter_map(|(k, _v)| {
-                        let key_str = String::from(k.clone());
-                        if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
-                            Some(k.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                for k in keys_to_update {
-                    dict.insert(k, substituted_val.clone());
+                for (key, val) in dict.iter_mut() {
+                    let key_str = String::from(key.clone());
+                    if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
+                        *val = substituted_val.clone();
+                    }
                 }
                 Ok(())
             }
@@ -487,20 +474,11 @@ impl Tokens {
                 let exp = Regex::new(&format!(r"^{name}$"))
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
                 let substituted = substitution(value, dict)?;
-                let keys_to_update: Vec<ParamKey> = dict.iter()
-                    .filter_map(|(k, v)| {
-                        let key_str = String::from(k.clone());
-                        if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
-                            Some((k.clone(), v.clone()))
-                        } else {
-                            None
-                        }
-                    })
-                    .map(|(k, _)| k)
-                    .collect();
-                for k in keys_to_update {
-                    let current: String = dict.get(&k).map(|v| v.clone().into()).unwrap_or_default();
-                    dict.insert(k, format!("{current}{substituted}").into());
+                for (key, val) in dict.iter_mut() {
+                    let key_str = String::from(key.clone());
+                    if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
+                        *val = format!("{val}{substituted}").into();
+                    }
                 }
                 Ok(())
             }
@@ -508,100 +486,95 @@ impl Tokens {
                 let exp = Regex::new(&format!(r"^{name}$"))
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
                 let substituted = substitution(value, dict)?;
-                let keys_to_update: Vec<ParamKey> = dict.iter()
-                    .filter_map(|(k, _)| {
-                        let key_str = String::from(k.clone());
-                        if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
-                            Some(k.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                for k in keys_to_update {
-                    let current: String = dict.get(&k).map(|v| v.clone().into()).unwrap_or_default();
-                    dict.insert(k, format!("{substituted}{current}").into());
+                for (key, val) in dict.iter_mut() {
+                    let key_str: String = String::from(key.clone());
+                    if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
+                        *val = format!("{substituted}{val}").into();
+                    }
                 }
                 Ok(())
             }
             Tokens::LDel(name, _val) => {
                 let exp = Regex::new(&format!(r"^{name}$"))
-                   .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-                let keys_to_delete: Vec<ParamKey> = dict.iter()
-                    .filter_map(|(k, _v)| {
-                        let key_str = String::from(k.clone());
-                        if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
-                            Some(k.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                for k in keys_to_delete {
-                    dict.remove(&k);
-                }
+                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
+                dict.retain(|key, _value| {
+                    let key_str: String = String::from(key.clone());
+                    RESERVED_KEYS.contains(&key_str.as_str()) || !exp.is_match(&key_str)
+                });
                 Ok(())
             }
             Tokens::LApplyDict(_, value_map) => {
-                dict.extend(value_map.clone());
+                dict.extend(value_map);
                 Ok(())
             }
             Tokens::LUpdateFileMap(filename, name, value) => {
-                let dest = value;
                 let shortname = if filename == "<string>" {
-                    filename.clone()
+                    Cow::Owned(filename)
                 } else {
-                    std::path::Path::new(filename)
-                        .file_name()
-                        .and_then(|os_str| os_str.to_str())
-                        .unwrap_or(filename)
-                        .to_string()
+                    Cow::Borrowed(
+                        std::path::Path::new(&filename)
+                            .file_name()
+                            .and_then(|os_str| os_str.to_str())
+                            .unwrap_or(&filename)
+                    )
                 };
 
-                let dest_key = ParamKey::from(dest.clone());
+                let dest_key = ParamKey::from(value);
 
-                // Ensure destination key exists as a dict
-                if !dict.contains_key(&dest_key) {
-                    dict.insert(dest_key.clone(), ParamVal::Dict(HashMap::new()));
-                }
-
-                // Get or create the inner dict
-                if let Some(ParamVal::Dict(mut inner_dict)) = dict.remove(&dest_key) {
-                    if let Some(old_name) = inner_dict.get(&shortname) {
-                        let new_name = format!("{name}.{old_name}");
-                        inner_dict.insert(shortname, new_name);
-                    } else {
-                        inner_dict.insert(shortname, name.clone());
+                // Use entry API to handle the dest_key dict creation and access
+                match dict.entry(dest_key) {
+                    Entry::Occupied(mut entry) => {
+                        match entry.get_mut() {
+                            ParamVal::Dict(inner_dict) => {
+                                // Process the inner dict in place
+                                match inner_dict.entry(shortname.into_owned()) {
+                                    Entry::Occupied(mut inner_entry) => {
+                                        let old_name = inner_entry.get();
+                                        *inner_entry.get_mut() = format!("{name}.{old_name}");
+                                    }
+                                    Entry::Vacant(inner_vacant) => {
+                                        inner_vacant.insert(name);
+                                    }
+                                }
+                            }
+                            _ => {
+                                // Create new dict if key exists but is not a dict
+                                let mut new_dict = HashMap::new();
+                                new_dict.insert(shortname.into_owned(), name);
+                                *entry.get_mut() = ParamVal::Dict(new_dict);
+                            }
+                        }
                     }
-                    dict.insert(dest_key, ParamVal::Dict(inner_dict));
-                } else {
-                    // Create new dict if key exists but is not a dict
-                    let mut new_dict = HashMap::new();
-                    new_dict.insert(shortname, name.clone());
-                    dict.insert(dest_key, ParamVal::Dict(new_dict));
+                    Entry::Vacant(vacant) => {
+                        // Ensure destination key exists as a dict
+                        let mut new_dict = HashMap::new();
+                        new_dict.insert(shortname.into_owned(), name);
+                        vacant.insert(ParamVal::Dict(new_dict));
+                    }
                 }
+
                 Ok(())
             }
             Tokens::Suffix(_, value) => {
+                // Drain the entire map and rebuild with new keys
+                let old_entries: Vec<_> = dict.drain().collect();
+
                 // Create suffixed mapping: turn string keys into tuple keys where possible
-                let mut new_map: HashMap<ParamKey, ParamVal> = HashMap::new();
-                for (k, v) in dict.iter() {
+                for (k, v) in old_entries {
                     match k {
                         ParamKey::String(s) => {
                             if RESERVED_KEYS.contains(&s.as_str()) {
-                                new_map.insert(ParamKey::String(s.clone()), v.clone());
+                                dict.insert(ParamKey::String(s), v);
                             } else {
-                                new_map.insert(ParamKey::Tuple(vec![s.clone(), value.clone()]), v.clone());
+                                dict.insert(ParamKey::Tuple(vec![s, value.clone()]), v);
                             }
                         }
-                        ParamKey::Tuple(vec) => {
-                            let mut new_vec = vec.clone();
-                            new_vec.push(value.clone());
-                            new_map.insert(ParamKey::Tuple(new_vec), v.clone());
+                        ParamKey::Tuple(mut vec) => {
+                            vec.push(value.clone());
+                            dict.insert(ParamKey::Tuple(vec), v);
                         }
                     }
                 }
-                let _ = mem::replace(dict, new_map);
                 Ok(())
             }
             _ => Err(PyAttributeError::new_err("apply_to_dict is not a valid attribute for this token")),
@@ -672,9 +645,9 @@ static MATCH_SUBSTITUTE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("Invalid MATCH_SUBSTITUTE pattern")
 });
 
-pub fn substitution(value: &str, dict: &HashMap<ParamKey, ParamVal>) -> PyResult<String> {
+pub fn substitution(value: String, dict: &HashMap<ParamKey, ParamVal>) -> PyResult<String> {
     if !value.contains('$') {
-        return Ok(value.to_string());
+        return Ok(value);
     }
     let mut start = 0;
     let mut result = String::with_capacity(value.len());
@@ -737,7 +710,7 @@ mod tests {
             (ParamKey::String("key1".to_string()), ParamVal::String("value1".to_string())),
             (ParamKey::String("key2".to_string()), ParamVal::String("value2".to_string())),
         ].iter().cloned().collect();
-        let result = substitution("This is ${key1} and ${key2}.", &dict).unwrap();
+        let result = substitution("This is ${key1} and ${key2}.".to_string(), &dict).unwrap();
         assert_eq!(result, "This is value1 and value2.");
     }
 
@@ -746,7 +719,7 @@ mod tests {
         let dict: HashMap<ParamKey, ParamVal> = [
             (ParamKey::String("key1".to_string()), ParamVal::String("value1".to_string())),
         ].iter().cloned().collect();
-        let result = substitution("This is ${key1} and ${key2}.", &dict).unwrap();
+        let result = substitution("This is ${key1} and ${key2}.".to_string(), &dict).unwrap();
         assert_eq!(result, "This is value1 and ${key2}.");
     }
 
@@ -756,14 +729,14 @@ mod tests {
             (ParamKey::String("key1".to_string()), ParamVal::String("value1".to_string())),
             (ParamKey::String("key2".to_string()), ParamVal::String("value2".to_string())),
         ].iter().cloned().collect();
-        let result = substitution("no placeholders here", &dict).unwrap();
+        let result = substitution("no placeholders here".to_string(), &dict).unwrap();
         assert_eq!(result, "no placeholders here");
     }
 
     #[test]
     fn test_substitution_empty_dict() {
         let dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-        let result = substitution("This is ${key1}.", &dict).unwrap();
+        let result = substitution("This is ${key1}.".to_string(), &dict).unwrap();
         assert_eq!(result, "This is ${key1}.");
     }
 
@@ -772,7 +745,7 @@ mod tests {
         let dict: HashMap<ParamKey, ParamVal> = [
             (ParamKey::String("key1".to_string()), ParamVal::String("value1".to_string())),
         ].iter().cloned().collect();
-        let result = substitution("This costs $5.", &dict).unwrap();
+        let result = substitution("This costs $5.".to_string(), &dict).unwrap();
         assert_eq!(result, "This costs $5.");
     }
 
@@ -783,7 +756,7 @@ mod tests {
             (ParamKey::Tuple(vec!["key2".to_string(), "_s1".to_string()]), ParamVal::String("value2".to_string())),
             (ParamKey::Tuple(vec!["key2".to_string(), "_s2".to_string()]), ParamVal::String("value3".to_string())),
         ].iter().cloned().collect();
-        let result = substitution("This is ${key1} and ${key2_s1}.", &dict).unwrap();
+        let result = substitution("This is ${key1} and ${key2_s1}.".to_string(), &dict).unwrap();
         assert_eq!(result, "This is value1 and value2.");
     }
 
