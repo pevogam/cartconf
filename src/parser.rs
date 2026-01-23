@@ -3,7 +3,6 @@ use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::fmt::{Debug, Display};
-use std::mem;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -556,13 +555,10 @@ impl Node {
     pub fn apply_dict(
         &mut self,
         lexer: &Lexer,
-        dict: &mut HashMap<ParamKey, ParamVal>
+        dict: HashMap<ParamKey, ParamVal>
     ) -> PyResult<()> {
-        // Take ownership of the entire HashMap, leaving an empty cleared one behind
-        let map = mem::take(dict);
-
         // Build a LApplyDict from the Rust HashMap
-        let content_type = ContentType::Tokens(Tokens::LApplyDict(String::new(), map));
+        let content_type = ContentType::Tokens(Tokens::LApplyDict(String::new(), dict));
 
         // Add pre-dictionary content to this node
         self.add_content(
@@ -586,8 +582,8 @@ impl Node {
         identifier: Vec<Tokens>,
         token: Tokens,
         lexer: &mut Lexer,
-        dict: &mut HashMap<ParamKey, ParamVal>,
-    ) -> PyResult<()> {
+        mut dict: HashMap<ParamKey, ParamVal>,
+    ) -> PyResult<HashMap<ParamKey, ParamVal>> {
         // Build identifier_str
         let token_str = match token {
             Tokens::LIdentifier(s) => s.clone(),
@@ -638,7 +634,7 @@ impl Node {
         // If it's an LSet and value has no '$', apply directly to dict
         let d_nin_val = !value_str.contains('$');
         if matches!(op, Tokens::LSet(_,_)) && d_nin_val {
-            op_obj.apply_to_dict(dict)?;
+            op_obj.apply_to_dict(&mut dict)?;
         } else {
             // If dict has pending entries, either optimize or flush
             let pre_nonempty = !dict.is_empty();
@@ -647,12 +643,13 @@ impl Node {
                 let op_name = op_obj.name().unwrap_or_default();
                 if !op_name.is_empty() && d_nin_val && dict.contains_key(&op_name.into()) {
                     // apply and consume EOL
-                    op_obj.apply_to_dict(dict)?;
+                    op_obj.apply_to_dict(&mut dict)?;
                     lexer.get_next_token(Some(vec![lendl]), None)?;
-                    return Ok(());
+                    return Ok(dict);
                 } else {
                     // flush dict into node
                     self.apply_dict(lexer, dict)?;
+                    dict = HashMap::new();
                 }
             }
 
@@ -666,7 +663,7 @@ impl Node {
 
         // consume end-of-line
         lexer.get_next_token(Some(vec![lendl]), None)?;
-        Ok(())
+        Ok(dict)
     }
 
     /*
@@ -676,7 +673,7 @@ impl Node {
     pub fn apply_deletion(
         &mut self,
         lexer: &mut Lexer,
-        dict: &mut HashMap<ParamKey, ParamVal>,
+        dict: HashMap<ParamKey, ParamVal>,
     ) -> PyResult<()> {
         let lidentifier = Tokens::default("Identifier");
         let lendl = Tokens::default("endl");
@@ -703,7 +700,7 @@ impl Node {
     pub fn apply_include(
         &mut self,
         lexer: &mut Lexer,
-        dict: &mut HashMap<ParamKey, ParamVal>,
+        dict: HashMap<ParamKey, ParamVal>,
     ) -> PyResult<Node> {
         // Get path from rest of line
         let path = lexer.get_rest_line_as_string_token()?;
@@ -755,7 +752,7 @@ impl Node {
         identifier: Vec<Tokens>,
         token: Tokens,
         lexer: &mut Lexer,
-        dict: &mut HashMap<ParamKey, ParamVal>,
+        dict: HashMap<ParamKey, ParamVal>,
         indent: isize,
     ) -> PyResult<()> {
         // Build the full identifier list: [token] + identifier[:-1] + [LEndl]
@@ -804,7 +801,7 @@ impl Node {
     pub fn apply_notcondition(
         &mut self,
         lexer: &mut Lexer,
-        dict: &mut HashMap<ParamKey, ParamVal>,
+        dict: HashMap<ParamKey, ParamVal>,
         indent: isize,
     ) -> PyResult<()> {
         // Build the full token list
@@ -1015,7 +1012,7 @@ impl Node {
     pub fn apply_variant(
         &mut self,
         lexer: &mut Lexer,
-        dict: &mut HashMap<ParamKey, ParamVal>,
+        dict: HashMap<ParamKey, ParamVal>,
         indent: isize,
         variant_name: String,
         variant_indent: isize,
@@ -1280,16 +1277,16 @@ pub fn parse(
     let mut variant_indent = 0;
     let mut meta = HashMap::new();
 
-    // Dictionary contains block of operation without collision with
-    // other blocks or operations which increases speed almost twice.
-    let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-
     // Suffix operator state
     // NOTE: Suffix should be applied as the last operator in the dictionary
     // Reasons:
     // 1. Escapes multiplying suffix operators
     // 2. Affects all elements in current block
     let mut suffix: Option<(String, isize, Tokens)> = None;
+
+    // Dictionary contains block of operation without collision with
+    // other blocks or operations which increases speed almost twice.
+    let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
 
     loop {
         lexer.set_prev_indent(prev_indent);
@@ -1303,7 +1300,7 @@ pub fn parse(
         if matches!(token, Tokens::LEndBlock(_)) {
             if !dict.is_empty() {
                 // Flush dict to node content
-                node.apply_dict(lexer, &mut dict)?;
+                node.apply_dict(lexer, dict)?;
             }
             if let Some((filename, linenum, op)) = suffix {
                 // Node has suffix, apply it to all elements
@@ -1317,7 +1314,8 @@ pub fn parse(
 
         match token {
             Tokens::LInclude() => {
-                node = node.apply_include(lexer, &mut dict)?;
+                node = node.apply_include(lexer, dict)?;
+                dict = HashMap::new();
                 lexer.set_prev_indent(prev_indent);
             }
 
@@ -1343,19 +1341,20 @@ pub fn parse(
                         identifier,
                         token,
                         lexer,
-                        &mut dict,
+                        dict,
                         indent,
                     )?;
+                    dict = HashMap::new();
                 } else if matches!(&last_token,
                     Tokens::LSet(_, _) | Tokens::LLazySet(_, _) | Tokens::LAppend(_, _) | Tokens::LPrepend(_, _) |
                     Tokens::LRegExpSet(_, _) | Tokens::LRegExpAppend(_, _) | Tokens::LRegExpPrepend(_, _)
                 ) {
                     // Handle operator
-                    node.apply_operator(
+                    dict = node.apply_operator(
                         identifier,
                         token,
                         lexer,
-                        &mut dict,
+                        dict,
                     )?;
                 } else {
                     return Err(PyErr::new::<ParserError, _>((
@@ -1368,11 +1367,13 @@ pub fn parse(
             }
 
             Tokens::LDel(_, _) => {
-                node.apply_deletion(lexer, &mut dict)?;
+                node.apply_deletion(lexer, dict)?;
+                dict = HashMap::new();
             }
 
             Tokens::LNotCond() => {
-                node.apply_notcondition(lexer, &mut dict, indent)?;
+                node.apply_notcondition(lexer, dict, indent)?;
+                dict = HashMap::new();
                 lexer.set_prev_indent(prev_indent);
             }
 
@@ -1389,7 +1390,7 @@ pub fn parse(
             Tokens::LVariant() => {
                 node = node.apply_variant(
                     lexer,
-                    &mut dict,
+                    dict,
                     indent,
                     variant_name.clone(),
                     variant_indent,
@@ -1397,6 +1398,7 @@ pub fn parse(
                     defaults,
                     expand_defaults.clone().unwrap_or_default(),
                 )?;
+                dict = HashMap::new();
                 allowed = block_allowed.to_vec();
             }
 
@@ -1410,7 +1412,8 @@ pub fn parse(
                     lexer.filename.clone(),
                     lexer.linenum,
                 )?;
-                node.apply_dict(lexer, &mut dict)?;
+                node.apply_dict(lexer, dict)?;
+                dict = HashMap::new();
 
                 let content_type = match token {
                     Tokens::LOnly() => ContentType::Filters(Filters::OnlyFilter {
@@ -1437,8 +1440,9 @@ pub fn parse(
                 // Parse:
                 //    suffix SUFFIX
                 if !dict.is_empty() {
-                    node.apply_dict(lexer, &mut dict)?;
+                    node.apply_dict(lexer, dict)?;
                 }
+                dict = HashMap::new();
                 let token_val = lexer.get_next_token(
                     Some(vec![Tokens::default("Identifier")]),
                     None,
@@ -2063,8 +2067,7 @@ mod tests {
         dict.insert("key".to_string().into(), "value".to_string().into());
 
         // apply_dict should add an LApplyDict content step and clear dict
-        node.apply_dict(&lexer, &mut dict).expect("apply_dict failed");
-        assert!(dict.is_empty());
+        node.apply_dict(&lexer, dict).expect("apply_dict failed");
         let content = node.get_content().expect("get_content failed");
         assert_eq!(content.len(), 1);
 
@@ -2097,8 +2100,7 @@ mod tests {
         dict.insert("key1".to_string().into(), "value1".to_string().into());
 
         // apply_include should parse the included file and return a node with a child named "test"
-        let returned = node.apply_include(&mut lexer, &mut dict).expect("apply_include failed");
-        assert!(dict.is_empty());
+        let returned = node.apply_include(&mut lexer, dict).expect("apply_include failed");
         let children = returned.get_children().unwrap();
         assert_eq!(children.len(), 1);
         let child = &children[0];
@@ -2121,7 +2123,7 @@ mod tests {
         dict.insert("key1".to_string().into(), "value1".to_string().into());
 
         // apply_operator should add key2 to dict directly (optimized path)
-        node.apply_operator(identifier, token, &mut lexer, &mut dict).expect("apply_operator failed");
+        dict = node.apply_operator(identifier, token, &mut lexer, dict).expect("apply_operator failed");
         // dict now should contain both key1 and key2, and node content should be empty
         assert_eq!(dict.get(&"key1".to_string().into()), Some(&"value1".to_string().into()));
         assert_eq!(dict.get(&"key2".to_string().into()), Some(&"value2".to_string().into()));
@@ -2141,7 +2143,7 @@ mod tests {
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert("key1".to_string().into(), "value1".to_string().into());
 
-        node.apply_operator(identifier, token, &mut lexer, &mut dict).expect("apply_operator failed");
+        dict = node.apply_operator(identifier, token, &mut lexer, dict).expect("apply_operator failed");
 
         // dict should be updated
         assert_eq!(dict.get(&"key1".to_string().into()), Some(&"value1&value2".to_string().into()));
@@ -2162,10 +2164,8 @@ mod tests {
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert("key1".to_string().into(), "value1".to_string().into());
 
-        node.apply_operator(identifier, token, &mut lexer, &mut dict).expect("apply_operator failed");
+        node.apply_operator(identifier, token, &mut lexer, dict).expect("apply_operator failed");
 
-        // dict should be flushed (cleared)
-        assert!(dict.is_empty());
         // node content should be extended with append operation step
         let content = node.get_content().expect("get_content failed");
         assert_eq!(content.len(), 2);
@@ -2196,10 +2196,8 @@ mod tests {
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert("key1".to_string().into(), "value1".to_string().into());
 
-        node.apply_deletion(&mut lexer, &mut dict).expect("apply_deletion failed");
+        node.apply_deletion(&mut lexer, dict).expect("apply_deletion failed");
 
-        // dict should be flushed (cleared)
-        assert!(dict.is_empty());
         // node content should be extended with delete operation step
         let content = node.get_content().expect("get_content failed");
         assert_eq!(content.len(), 2);
@@ -2229,10 +2227,8 @@ mod tests {
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert("key1".to_string().into(), "value1".to_string().into());
 
-        node.apply_condition(identifier, token, &mut lexer, &mut dict, 0).expect("apply_condition failed");
+        node.apply_condition(identifier, token, &mut lexer, dict, 0).expect("apply_condition failed");
 
-        // dict should be flushed (cleared)
-        assert!(dict.is_empty());
         let content = node.get_content().expect("get_content failed");
         assert_eq!(content.len(), 2);
         // first should be LApplyDict, second a Node with a positive condition
@@ -2264,10 +2260,8 @@ mod tests {
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert("key1".to_string().into(), "value1".to_string().into());
 
-        node.apply_notcondition(&mut lexer, &mut dict, 0).expect("apply_notcondition failed");
+        node.apply_notcondition(&mut lexer, dict, 0).expect("apply_notcondition failed");
 
-        // dict should be flushed (cleared)
-        assert!(dict.is_empty());
         let content = node.get_content().expect("get_content failed");
         assert_eq!(content.len(), 2);
         // first should be LApplyDict, second a Node with a negative condition
@@ -2343,7 +2337,7 @@ mod tests {
 
         let grandparent_node = node.apply_variant(
             &mut lexer,
-            &mut dict,
+            dict,
             0,
             "test".to_string(),
             0,
@@ -2351,9 +2345,6 @@ mod tests {
             false,
             Vec::new(),
         ).expect("apply_variant failed");
-
-        // dict should be flushed (cleared)
-        assert!(dict.is_empty());
 
         // original node should receive the flushed dict content
         let content = node.get_content().expect("get_content");
