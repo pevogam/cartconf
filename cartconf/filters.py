@@ -7,7 +7,6 @@ Filters module.
 # from .cartconf.tokens import Tokens
 from .cartconf import filters
 
-
 #: list of all available manual steps or simply semi-automation tools
 __all__ = [
     "Filter",

@@ -6,7 +6,6 @@ Tokens module.
 # https://github.com/PyO3/pyo3/issues/759
 from .cartconf import tokens
 
-
 Tokens = tokens.Tokens
 
 

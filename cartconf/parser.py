@@ -11,7 +11,6 @@ from .tokens import *
 from .cartconf import lexer
 from .cartconf import parser
 
-
 LOG = logging.getLogger("avocado." + __name__)
 
 LexerError = lexer.LexerError
