@@ -1,4 +1,6 @@
+use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::fs;
 use std::io::{self};
 use std::mem::discriminant;
 use std::sync::LazyLock;
@@ -24,29 +26,44 @@ impl Reader {
     #[new]
     #[pyo3(signature = (content=None, filename=None))]
     pub fn new(content: Option<&str>, filename: Option<&str>) -> io::Result<Self> {
-        if filename.is_some() && content.is_some() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Only one of filename or content can be provided"));
-        }
-        let content = if let Some(content) = content {
-            Ok(content.to_string())
-        } else if let Some(filename) = filename {
-                Ok(std::fs::read_to_string(filename)?)
-        }
-        else {
-            Err(io::Error::new(io::ErrorKind::InvalidInput, "Either filename or content must be provided"))
-        }?;
-        let filename = if let Some(filename) = filename {
-            filename.to_string()
-        } else {
-            "<string>".to_string()
+        // Nice and tight closed block of code covering all cases instead of separate loosely
+        // connected `if` statements spread out.
+        let (filename, content) = match (filename, content) {
+            (Some(_filename), Some(_content)) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Only one of filename or content can be provided",
+                ));
+            }
+            (None, Some(content)) => ("<string>".to_string(), Cow::from(content)),
+            (Some(filename), None) => (
+                filename.to_string(),
+                Cow::from(fs::read_to_string(filename)?),
+            ),
+            (None, None) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Either filename or content must be provided",
+                ));
+            }
         };
 
-        let mut lines = Vec::new();
-        for (linenum, line) in content.lines().enumerate() {
+        // lines() works on &str purely so it is either a &str directly from the Cow or
+        // the held String's as_str() returned &str
+        let content_lines = content.lines();
+        // preallocate vector to guessed capacity so that no regrows needed in case of pushes
+        let mut lines = Vec::with_capacity(match content_lines.size_hint() {
+            (_lb, Some(ub)) => ub,
+            (lb, None) => lb,
+        });
+        for (linenum, line) in content_lines.enumerate() {
             let line = line.trim_end().replace('\t', "    ");
             let stripped_line = line.trim_start();
             let indent = line.len() - stripped_line.len();
-            if stripped_line.is_empty() || stripped_line.starts_with('#') || stripped_line.starts_with("//") {
+            if stripped_line.is_empty()
+                || stripped_line.starts_with('#')
+                || stripped_line.starts_with("//")
+            {
                 continue;
             }
             lines.push((stripped_line.to_string(), indent, linenum + 1));
