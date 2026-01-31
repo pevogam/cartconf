@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cmp::min;
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
@@ -1937,11 +1938,11 @@ impl PreDict {
                 let mut shortname = String::new();
                 for di in dicts.iter().flatten() {
                     if name.is_empty() {
-                        name = di.get(&"name".to_string().into()).map(|v| v.clone().into()).unwrap_or_default();
-                        shortname = di.get(&"shortname".to_string().into()).map(|v| v.clone().into()).unwrap_or_default();
+                        name = di.get(&"name".to_string().into()).map(|v| Cow::from(v).into()).unwrap_or_default();
+                        shortname = di.get(&"shortname".to_string().into()).map(|v| Cow::from(v).into()).unwrap_or_default();
                     } else {
-                        let other_name = di.get(&"name".to_string().into()).map(|v| Into::<String>::into(v.clone())).unwrap_or_default();
-                        let other_short = di.get(&"shortname".to_string().into()).map(|v| Into::<String>::into(v.clone())).unwrap_or_default();
+                        let other_name: String = di.get(&"name".to_string().into()).map(|v| Cow::from(v).into()).unwrap_or_default();
+                        let other_short: String = di.get(&"shortname".to_string().into()).map(|v| Cow::from(v).into()).unwrap_or_default();
                         name = Node::join_names(&name, &other_name);
                         shortname = Node::join_names(&shortname, &other_short);
                     }

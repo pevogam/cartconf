@@ -28,27 +28,28 @@ impl From<String> for ParamKey {
         ParamKey::String(s)
     }
 }
-impl From<ParamKey> for String {
-    fn from(p: ParamKey) -> Self {
+impl<'a> From<&'a ParamKey> for Cow<'a, str> {
+    fn from(p: &'a ParamKey) -> Self {
         match p {
-            ParamKey::String(s) => s,
+            ParamKey::String(s) => Cow::Borrowed(s.as_str()),
             ParamKey::Tuple(v) => {
-                v.iter().fold(String::new(), |mut acc, item| {
+                let concatenated = v.iter().fold(String::new(), |mut acc, item| {
                     acc.push_str(item);
                     acc
-                })
+                });
+                Cow::Owned(concatenated)
             }
         }
     }
 }
 impl fmt::Display for ParamKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", String::from(self.clone()))
+        write!(f, "{}", Cow::from(self))
     }
 }
 impl fmt::Debug for ParamKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", String::from(self.clone()))
+        write!(f, "{}", Cow::from(self))
     }
 }
 impl<'py> IntoPyObject<'py> for ParamKey {
@@ -96,36 +97,38 @@ impl From<String> for ParamVal {
         ParamVal::String(s)
     }
 }
-impl From<ParamVal> for String {
-    fn from(p: ParamVal) -> Self {
+impl<'a> From<&'a ParamVal> for Cow<'a, str> {
+    fn from(p: &'a ParamVal) -> Self {
         match p {
-            ParamVal::String(s) => s,
+            ParamVal::String(s) => Cow::Borrowed(s.as_str()),
             ParamVal::List(v) => {
-                v.iter().fold(String::new(), |mut acc, item| {
+                let concatenated = v.iter().fold(String::new(), |mut acc, item| {
                     acc.push_str(item);
                     acc
-                })
+                });
+                Cow::Owned(concatenated)
             }
             ParamVal::Dict(h) => {
-                h.iter().fold(String::new(), |mut acc, item| {
+                let concatenated = h.iter().fold(String::new(), |mut acc, item| {
                     acc.push_str(item.0);
                     acc.push('=');
                     acc.push_str(item.1);
                     acc.push(';');
                     acc
-                })
+                });
+                Cow::Owned(concatenated)
             }
         }
     }
 }
 impl fmt::Display for ParamVal {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", String::from(self.clone()))
+        write!(f, "{}", Cow::from(self))
     }
 }
 impl fmt::Debug for ParamVal {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", String::from(self.clone()))
+        write!(f, "{}", Cow::from(self))
     }
 }
 impl<'py> IntoPyObject<'py> for ParamVal {
@@ -464,8 +467,8 @@ impl Tokens {
                 let substituted = substitution(value, dict)?;
                 let substituted_val = ParamVal::from(substituted);
                 for (key, val) in dict.iter_mut() {
-                    let key_str = String::from(key.clone());
-                    if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
+                    let key_str = Cow::from(key);
+                    if !RESERVED_KEYS.contains(&key_str.as_ref()) && exp.is_match(&key_str) {
                         *val = substituted_val.clone();
                     }
                 }
@@ -476,8 +479,8 @@ impl Tokens {
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
                 let substituted = substitution(value, dict)?;
                 for (key, val) in dict.iter_mut() {
-                    let key_str = String::from(key.clone());
-                    if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
+                    let key_str = Cow::from(key);
+                    if !RESERVED_KEYS.contains(&key_str.as_ref()) && exp.is_match(&key_str) {
                         *val = format!("{val}{substituted}").into();
                     }
                 }
@@ -488,8 +491,8 @@ impl Tokens {
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
                 let substituted = substitution(value, dict)?;
                 for (key, val) in dict.iter_mut() {
-                    let key_str: String = String::from(key.clone());
-                    if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
+                    let key_str = Cow::from(key);
+                    if !RESERVED_KEYS.contains(&key_str.as_ref()) && exp.is_match(&key_str) {
                         *val = format!("{substituted}{val}").into();
                     }
                 }
@@ -499,8 +502,8 @@ impl Tokens {
                 let exp = Regex::new(&format!(r"^{name}$"))
                     .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
                 dict.retain(|key, _value| {
-                    let key_str: String = String::from(key.clone());
-                    RESERVED_KEYS.contains(&key_str.as_str()) || !exp.is_match(&key_str)
+                    let key_str = Cow::from(key);
+                    RESERVED_KEYS.contains(&key_str.as_ref()) || !exp.is_match(&key_str)
                 });
                 Ok(())
             }
@@ -691,9 +694,9 @@ pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyRe
                     let mut can_drop_all_suffixes = true;
 
                     if skipdups {
-                        let value_str = String::from(value.clone());
+                        let value_str = Cow::from(value);
                         if let Some(gen_value) = dict.get(&gen_key) {
-                            let gen_value_str = String::from(gen_value.clone());
+                            let gen_value_str = Cow::from(gen_value);
                             if gen_value_str == value_str {
                                 return None; // Skip duplicate suffixes
                             } else {
@@ -709,7 +712,7 @@ pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyRe
                                         ParamKey::Tuple(other_vec) => {
                                             other_vec.first()
                                                 .filter(|k| *k == &gen_key_str)
-                                                .map(|_| String::from(other_value.clone()))
+                                                .map(|_| Cow::from(other_value))
                                         }
                                         _ => None,
                                     }
