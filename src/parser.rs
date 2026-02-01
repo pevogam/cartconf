@@ -287,10 +287,32 @@ impl Node {
         }
     }
 
+    #[staticmethod]
+    pub fn join_names(n1: &str, n2: &str) -> String {
+        // find the common prefix between the two names
+        let common_prefix_len = n1
+            .chars()
+            .zip(n2.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let common_prefix = &n1[..common_prefix_len];
+
+        // strip the last dot-separated component from the common prefix
+        let p = common_prefix.rsplit_once('.').map_or("", |(before, _)| before);
+        if p.is_empty() {
+            format!("{}.{}", n1, n2)
+        } else {
+            // remove the common prefix part from both names
+            let p1 = &n1[p.len()..];
+            let p2 = &n2[p.len()..];
+            format!("{}{}{}", p, p1, p2)
+        }
+    }
+
     pub fn update_labels(&mut self, new_labels: Vec<Label>) -> PyResult<()> {
-        for label in &new_labels {
-            if !self.labels.contains(label) {
-                self.labels.push(label.clone());
+        for label in new_labels {
+            if !self.labels.contains(&label) {
+                self.labels.push(label);
             }
         }
         Ok(())
@@ -324,112 +346,13 @@ impl Node {
         Ok(())
     }
 
-    /*
-    Process content with respect to the current context returning new
-    processed content with failed regular and conditional filters.
-
-    More details on how this works:
-    1. Check that the filters in content are OK with the current
-        context (ctx).
-    2. Move the parts of content that are still relevant into
-        new_content and unpack conditional blocks if appropriate.
-        For example, if an 'only' statement fully matches ctx, it
-        becomes irrelevant and is not appended to new_content.
-        If a conditional block fully matches, its contents are
-        unpacked into new_content.
-    3. Move failed filters into failed_filters, so that next time we
-        reach this node or one of its ancestors, we'll check those
-        filters first.
-    4. Optionally also return conditional failed filters if present.
-    */
-    pub fn process_content(
+    #[pyo3(name = "process_content")]
+    pub fn process_content_py(
         &mut self,
         ctx: Vec<Label>,
         labels: Vec<Label>
     ) -> PyResult<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
-        let mut new_content: Vec<ContentStep> = Vec::new();
-        let mut failed_filters: Vec<ContentStep> = Vec::new();
-
-        for step in &self.content {
-            match &step.content_type {
-                // operator tokens are passed through unchanged
-                ContentType::Tokens(_) | ContentType::String(_) => {
-                    new_content.push(step.clone());
-                }
-
-                _ => {
-                    // step is an OnlyFilter/NoFilter/Condition/NegativeCondition
-                    let filter = match &step.content_type {
-                        ContentType::Filters(f) => f,
-                        ContentType::Node(n) => {
-                            match n.condition {
-                                Some(ref f) => f,
-                                None => return Err(PyTypeError::new_err(
-                                    format!("Empty conditional node in {:?}", step)
-                                ))
-                            }
-                        },
-                        _ => return Err(PyTypeError::new_err(
-                            format!("Unexpected content type for {:?}", step.content_type)
-                        )),
-                    };
-                    if filter.requires_action(&ctx, &labels) {
-                        // this filter requires action now
-                        match &step.content_type {
-                            // node represents conditional block with its own content
-                            ContentType::Node(n) => {
-                                /* TODO: add optional logging
-                                self._debug(
-                                    "    conditional block matches:" " %r (%s:%s)",
-                                    filter.line,
-                                    filename,
-                                    linenum,
-                                )
-                                */
-                                let mut cond_node = n.clone();
-                                // check and unpack the content inside this conditional node
-                                let (cond_content,
-                                    mut failed_cond_filters,
-                                    deeper_failed_filters) = cond_node
-                                        .process_content(ctx.clone(), labels.clone())?;
-                                new_content.extend(cond_content);
-                                if !failed_cond_filters.is_empty() {
-                                    // record the entire conditional step as a failing filter
-                                    failed_filters.push(step.clone());
-                                    failed_cond_filters.extend(deeper_failed_filters.into_iter());
-                                    return Ok((new_content, failed_filters, failed_cond_filters));
-                                }
-                                // conditional block unpacked successfully
-                                continue;
-                            }
-                            // plain filters (only/no) fail to apply
-                            _ => {
-                                /* TODO: add optional logging
-                                self._debug(
-                                    "    filter did not pass: %r (%s:%s)",
-                                    filter.line,
-                                    filename,
-                                    linenum,
-                                )
-                                */
-                                failed_filters.push(step.clone());
-                                return Ok((new_content, failed_filters, Vec::new()));
-                            }
-                        }
-                    }
-                    else if filter.is_irrelevant(&ctx, &labels) {
-                        // this filter is no longer relevant and can be removed
-                        continue
-                    }
-                    else {
-                        // keep the filter and check it again later
-                        new_content.push(step.clone());
-                    }
-                }
-            }
-        }
-
-        Ok((new_content, failed_filters, Vec::new()))
+        self.process_content(&ctx, &labels)
     }
 
     #[allow(clippy::type_complexity)]
@@ -464,15 +387,152 @@ impl Node {
         Ok(())
     }
 
-    pub fn failed_case_might_pass(
+    #[pyo3(name = "failed_case_might_pass")]
+    pub fn failed_case_might_pass_py(
         &self,
         idx: usize,
         ctx: Vec<Label>,
         labels: Vec<Label>,
         content: Vec<ContentStep>
     ) -> PyResult<bool> {
-        let node_content = self.get_content()?;
-        let all_content: Vec<&ContentStep> = content.iter().chain(&node_content).collect();
+        self.failed_case_might_pass(idx, ctx, &labels, &content)
+    }
+
+    #[pyo3(signature = (indent, recurse=false))]
+    pub fn dump(&self, indent: usize, recurse: bool) -> PyResult<String> {
+        let mut dump_lines = vec![
+            format!("{:indent$}name: {:?}", "", self.name, indent = indent),
+            format!("{:indent$}variable name: {:?}", "", self.var_name, indent = indent),
+            format!("{:indent$}content: {:?}", "", self.content, indent = indent),
+            format!("{:indent$}failed cases: {:?}", "", self.failed_cases, indent = indent),
+        ];
+        if recurse {
+            for child in &self.children {
+                dump_lines.push(child.borrow().dump(indent + 3, recurse)?);
+            }
+        }
+        Ok(dump_lines.join("\n"))
+    }
+}
+impl Node {
+
+    /*
+    Process content with respect to the current context returning new
+    processed content with failed regular and conditional filters.
+
+    More details on how this works:
+    1. Check that the filters in content are OK with the current
+        context (ctx).
+    2. Move the parts of content that are still relevant into
+        new_content and unpack conditional blocks if appropriate.
+        For example, if an 'only' statement fully matches ctx, it
+        becomes irrelevant and is not appended to new_content.
+        If a conditional block fully matches, its contents are
+        unpacked into new_content.
+    3. Move failed filters into failed_filters, so that next time we
+        reach this node or one of its ancestors, we'll check those
+        filters first.
+    4. Optionally also return conditional failed filters if present.
+    */
+    pub fn process_content(
+        &mut self,
+        ctx: &Vec<Label>,
+        labels: &Vec<Label>
+    ) -> PyResult<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
+        let mut new_content: Vec<ContentStep> = Vec::new();
+        let mut failed_filters: Vec<ContentStep> = Vec::new();
+
+        for step in &self.content {
+            match &step.content_type {
+                // operator tokens are passed through unchanged
+                ContentType::Tokens(_) | ContentType::String(_) => {
+                    new_content.push(step.clone());
+                }
+
+                _ => {
+                    // step is an OnlyFilter/NoFilter/Condition/NegativeCondition
+                    let filter = match &step.content_type {
+                        ContentType::Filters(f) => f,
+                        ContentType::Node(n) => {
+                            match n.condition {
+                                Some(ref f) => f,
+                                None => return Err(PyTypeError::new_err(
+                                    format!("Empty conditional node in {:?}", step)
+                                ))
+                            }
+                        },
+                        _ => return Err(PyTypeError::new_err(
+                            format!("Unexpected content type for {:?}", step.content_type)
+                        )),
+                    };
+                    if filter.requires_action(ctx, labels) {
+                        // this filter requires action now
+                        match &step.content_type {
+                            // node represents conditional block with its own content
+                            ContentType::Node(n) => {
+                                /* TODO: add optional logging
+                                self._debug(
+                                    "    conditional block matches:" " %r (%s:%s)",
+                                    filter.line,
+                                    filename,
+                                    linenum,
+                                )
+                                */
+                                let mut cond_node = n.clone();
+                                // check and unpack the content inside this conditional node
+                                let (cond_content,
+                                    mut failed_cond_filters,
+                                    deeper_failed_filters) = cond_node
+                                        .process_content(ctx, labels)?;
+                                new_content.extend(cond_content);
+                                if !failed_cond_filters.is_empty() {
+                                    // record the entire conditional step as a failing filter
+                                    failed_filters.push(step.clone());
+                                    failed_cond_filters.extend(deeper_failed_filters.into_iter());
+                                    return Ok((new_content, failed_filters, failed_cond_filters));
+                                }
+                                // conditional block unpacked successfully
+                                continue;
+                            }
+                            // plain filters (only/no) fail to apply
+                            _ => {
+                                /* TODO: add optional logging
+                                self._debug(
+                                    "    filter did not pass: %r (%s:%s)",
+                                    filter.line,
+                                    filename,
+                                    linenum,
+                                )
+                                */
+                                failed_filters.push(step.clone());
+                                return Ok((new_content, failed_filters, Vec::new()));
+                            }
+                        }
+                    }
+                    else if filter.is_irrelevant(ctx, labels) {
+                        // this filter is no longer relevant and can be removed
+                        continue
+                    }
+                    else {
+                        // keep the filter and check it again later
+                        new_content.push(step.clone());
+                    }
+                }
+            }
+        }
+
+        Ok((new_content, failed_filters, Vec::new()))
+    }
+
+    pub fn failed_case_might_pass(
+        &self,
+        idx: usize,
+        ctx: Vec<Label>,
+        labels: &[Label],
+        content: &[ContentStep]
+    ) -> PyResult<bool> {
+        let node_content = &self.content;
+        let all_content: Vec<&ContentStep> = content.iter().chain(node_content).collect();
         let failed_case = match self.failed_cases.get(idx) {
             Some(f) => f,
             None => { return Ok(false); }
@@ -490,7 +550,7 @@ impl Node {
         // cannot pass if at least one external filter cannot pass
         for ContentStep {content_type, ..} in failed_external_filters {
             if let ContentType::Filters(external_filter) = content_type
-                && !external_filter.might_pass(failed_ctx, &ctx, &labels) {
+                && !external_filter.might_pass(failed_ctx, &ctx, labels) {
                     return Ok(false);
                 }
         }
@@ -506,50 +566,12 @@ impl Node {
         // cannot pass if at least one internal filter cannot pass
         for ContentStep {content_type, ..} in failed_internal_filters {
             if let ContentType::Filters(internal_filter) = content_type
-                && !internal_filter.might_pass(failed_ctx, &ctx, &labels) {
+                && !internal_filter.might_pass(failed_ctx, &ctx, labels) {
                     return Ok(false);
                 }
         }
 
         Ok(true)
-    }
-
-    #[staticmethod]
-    pub fn join_names(n1: &str, n2: &str) -> String {
-        // find the common prefix between the two names
-        let common_prefix_len = n1
-            .chars()
-            .zip(n2.chars())
-            .take_while(|(a, b)| a == b)
-            .count();
-        let common_prefix = &n1[..common_prefix_len];
-
-        // strip the last dot-separated component from the common prefix
-        let p = common_prefix.rsplit_once('.').map_or("", |(before, _)| before);
-        if p.is_empty() {
-            format!("{}.{}", n1, n2)
-        } else {
-            // remove the common prefix part from both names
-            let p1 = &n1[p.len()..];
-            let p2 = &n2[p.len()..];
-            format!("{}{}{}", p, p1, p2)
-        }
-    }
-
-    #[pyo3(signature = (indent, recurse=false))]
-    pub fn dump(&self, indent: usize, recurse: bool) -> PyResult<String> {
-        let mut dump_lines = vec![
-            format!("{:indent$}name: {:?}", "", self.name, indent = indent),
-            format!("{:indent$}variable name: {:?}", "", self.var_name, indent = indent),
-            format!("{:indent$}content: {:?}", "", self.content, indent = indent),
-            format!("{:indent$}failed cases: {:?}", "", self.failed_cases, indent = indent),
-        ];
-        if recurse {
-            for child in &self.children {
-                dump_lines.push(child.borrow().dump(indent + 3, recurse)?);
-            }
-        }
-        Ok(dump_lines.join("\n"))
     }
 }
 impl Node {
@@ -1209,16 +1231,16 @@ impl Node {
                 ),
             )?;
 
+            // Update labels (move out fields since we appended clones)
+            node4.update_labels(node3.labels.clone())?;
+            node4.update_labels(node3.name.clone())?;
+
             // Add node to children
             if node3.default && defaults {
-                node4.prepend_child(node3.clone())?;
+                node4.prepend_child(node3)?;
             } else {
-                node4.append_child(node3.clone())?;
+                node4.append_child(node3)?;
             }
-
-            // Update labels (move out fields since we appended clones)
-            node4.update_labels(node3.labels)?;
-            node4.update_labels(node3.name)?;
         }
 
         // Check if all default variants were used
@@ -1670,7 +1692,7 @@ impl PreDict {
         for i in 0..node.failed_cases.len() {
             let mut probe_ctx = ctx_flat.clone();
             probe_ctx.extend(ctx.clone());
-            if !node.failed_case_might_pass(i, probe_ctx, labels.clone(), self.content()?)? {
+            if !node.failed_case_might_pass(i, probe_ctx, &labels, &self.content()?)? {
                 /* TODO: add optional logging
                 self._debug(
                     "\n*    this subtree has failed before %s\n"
@@ -1703,7 +1725,7 @@ impl PreDict {
 
         // process internal content for the node
         let (internal_content, mut failed_internal, mut failed_internal_cond) =
-            node.process_content(ctx_flat.clone(), labels.clone())?;
+            node.process_content(&ctx_flat, &labels)?;
         failed_internal.append(&mut failed_internal_cond);
         self._content.push(internal_content);
 
@@ -1711,7 +1733,7 @@ impl PreDict {
         let mut content_node = Node::new();
         content_node.swap_content(content)?;
         let (external_content, failed_external, mut failed_external_cond) =
-            content_node.process_content(ctx_flat.clone(), labels.clone())?;
+            content_node.process_content(&ctx_flat, &labels)?;
         // NOTE: the failed filters should go into the failed internal filters
         // because we don't expect them to come from outside this node, even if
         // the condition itself was external
