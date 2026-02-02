@@ -145,3 +145,18 @@ class Parser(object):
             if d is None:
                 break
             yield d
+
+    def get_dicts(
+        self,
+        skipdups: bool = True,
+    ) -> Generator[dict[str, str], None, None]:
+        """
+        Get dictionaries from a parser and given or its current node (legacy).
+
+        :returns: (recursive) dictionary generator
+        """
+        LOG.warning(
+            "Using get_dicts() is deprecated, use get_dicts_gen() instead",
+        )
+        for d in self.get_dicts_gen(skipdups=skipdups):
+            yield d
