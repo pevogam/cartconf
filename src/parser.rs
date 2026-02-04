@@ -1544,6 +1544,12 @@ pub struct PreDict {
     pub num_failed_cases: usize,
 }
 
+impl Default for PreDict {
+    fn default() -> Self {
+        Self::new(None, None, None, None, None, None)
+    }
+}
+
 #[pymethods]
 impl PreDict {
     #[getter]
@@ -1645,7 +1651,7 @@ impl PreDict {
     }
 
     #[pyo3(signature = (node))]
-    fn update_from_node(&mut self, mut node: Node) -> PyResult<bool> {
+    pub fn update_from_node(&mut self, mut node: Node) -> PyResult<bool> {
         /* TODO: add optional logging
         if self.debug:    #Print dict on which is working now.
             print(node.dump(0))

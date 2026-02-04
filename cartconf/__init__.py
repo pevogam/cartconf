@@ -4,4 +4,4 @@ from . import filters
 from . import parser
 from . import tokens
 
-from .cartconf import sum_as_string
+from .cartconf import parse_dicts
