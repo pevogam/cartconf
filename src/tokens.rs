@@ -44,12 +44,22 @@ impl<'a> From<&'a ParamKey> for Cow<'a, str> {
 }
 impl fmt::Display for ParamKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", Cow::from(self))
+        match self {
+            ParamKey::String(key) => {
+                f.write_str(key)?;
+            }
+            ParamKey::Tuple(key) => {
+                for value in key {
+                    f.write_str(value)?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 impl fmt::Debug for ParamKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", Cow::from(self))
+        write!(f, "{}", self)
     }
 }
 impl<'py> IntoPyObject<'py> for ParamKey {
@@ -123,12 +133,31 @@ impl<'a> From<&'a ParamVal> for Cow<'a, str> {
 }
 impl fmt::Display for ParamVal {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", Cow::from(self))
+        match self {
+            ParamVal::String(value) => {
+                f.write_str(value)?;
+            }
+            ParamVal::List(values) => {
+                for value in values {
+                    f.write_str(value)?;
+                    f.write_str(",")?;
+                }
+            }
+            ParamVal::Dict(hash) => {
+                for (key, value) in hash {
+                    f.write_str(key)?;
+                    f.write_str("=")?;
+                    f.write_str(value)?;
+                    f.write_str(";")?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 impl fmt::Debug for ParamVal {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", Cow::from(self))
+        write!(f, "{}", self)
     }
 }
 impl<'py> IntoPyObject<'py> for ParamVal {
