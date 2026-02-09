@@ -1995,8 +1995,8 @@ impl PreDict {
             let node = &mut self.branch[depth];
 
             // find joins from node content and prepare only-filters
-            let mut plain_content: Vec<ContentStep> = Vec::new();
-            let mut new_joins: Vec<ContentStep> = Vec::new();
+            let mut plain_content: Vec<ContentStep> = Vec::with_capacity(node.content.len());
+            let mut new_joins: Vec<ContentStep> = Vec::with_capacity(node.content.len());
             for t in node.get_content()? {
                 match t.content_type {
                     ContentType::Filters(Filters::JoinFilter {filter, line }) => {
