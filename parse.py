@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 """
 Main runnable module.
@@ -16,16 +16,16 @@ options = None
 
 def print_dicts_default(options, dicts):
     """Print dictionaries in the default mode"""
-    for count, dic in enumerate(dicts):
+    for count, d in enumerate(dicts):
         if options.fullname:
-            print("dict %4d:  %s" % (count + 1, dic["name"]))
+            print("dict %4d:  %s" % (count + 1, d["name"]))
         else:
-            print("dict %4d:  %s" % (count + 1, dic["shortname"]))
+            print("dict %4d:  %s" % (count + 1, d["shortname"]))
         if options.contents:
-            keys = list(dic.keys())
+            keys = list(d.keys())
             keys.sort()
             for key in keys:
-                print("    %s = %s" % (key, dic[key]))
+                print("    %s = %s" % (key, d[key]))
 
 
 # pylint: disable=W0613
@@ -33,8 +33,8 @@ def print_dicts_repr(options, dicts):
     import pprint
 
     print("[")
-    for dic in dicts:
-        print("%s," % (pprint.pformat(dic)))
+    for d in dicts:
+        print("%s," % (pprint.pformat(d)))
     print("]")
 
 
@@ -56,6 +56,7 @@ if __name__ == "__main__":
         "--verbose",
         dest="debug",
         action="store_true",
+        default=False,
         help="include debug messages in console output",
     )
     parser.add_option(
@@ -63,6 +64,7 @@ if __name__ == "__main__":
         "--fullname",
         dest="fullname",
         action="store_true",
+        default=False,
         help="show full dict names instead of short names",
     )
     parser.add_option(
@@ -70,6 +72,7 @@ if __name__ == "__main__":
         "--contents",
         dest="contents",
         action="store_true",
+        default=False,
         help="show dict contents",
     )
     parser.add_option(
@@ -77,6 +80,7 @@ if __name__ == "__main__":
         "--repr",
         dest="repr_mode",
         action="store_true",
+        default=False,
         help="output parsing results Python format",
     )
     parser.add_option(
@@ -84,6 +88,7 @@ if __name__ == "__main__":
         "--defaults",
         dest="defaults",
         action="store_true",
+        default=False,
         help="use only default variant of variants if there" " is some",
     )
     parser.add_option(
@@ -98,8 +103,8 @@ if __name__ == "__main__":
         "-s",
         "--skip-dups",
         dest="skipdups",
-        default=True,
         action="store_false",
+        default=True,
         help="Don't drop variables with different suffixes and same val",
     )
 
@@ -122,5 +127,5 @@ if __name__ == "__main__":
     if options.debug:
         print(c.node.dump(0, True))
 
-    dicts = c.get_dicts(skipdups=options.skipdups)
+    dicts = c.get_dicts_gen(skipdups=options.skipdups)
     print_dicts(options, dicts)

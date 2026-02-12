@@ -1,5 +1,8 @@
 """
 Exceptions module.
+
+..note:: This module is deprecated and kept around until more migration is completed.
+    Please use lexer or parser errors from the lexer or parser modules respectively.
 """
 
 
@@ -32,7 +35,7 @@ class MissingIncludeError(Exception):
         self.linenum = linenum
 
     def __str__(self):
-        return "%r (%s:%s): file does not exist or it's not a regular " "file" % (
+        return "%r (%s:%s): file does not exist or it's not a regular file" % (
             self.line,
             self.filename,
             self.linenum,
