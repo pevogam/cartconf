@@ -2,4 +2,6 @@
 maturin
 
 # runtime dependencies (must overlap with pyproject dependencies)
+# TODO: fix for avocado not controlling their setuptools dependency version
+setuptools==81.0
 avocado-framework==113.0
