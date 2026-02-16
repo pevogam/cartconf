@@ -17,7 +17,6 @@ pub struct Reader {
     pub filename: String,
     #[pyo3(get)]
     lines: Vec<(String, usize, usize)>,
-    line_index: usize,
     stored_line: Option<(String, usize, usize)>,
 }
 
@@ -72,7 +71,6 @@ impl Reader {
         Ok(Reader {
             filename,
             lines,
-            line_index: 0,
             stored_line: None,
         })
     }
@@ -81,20 +79,19 @@ impl Reader {
         if let Some((line, indent, linenum)) = self.stored_line.take() {
             return (Some(line), indent as isize, linenum as isize);
         }
-        if self.line_index >= self.lines.len() {
+        if self.lines.is_empty() {
             return (None, -1, -1);
         }
         // TODO: converting usize to isize can also overflow, unify all indents and linenums
         // to usize option to map -1 to None
-        let (line, indent, linenum) = &self.lines[self.line_index];
-        if *indent as isize <= prev_indent {
-            return (None, *indent as isize, *linenum as isize);
+        if self.lines[0].1 as isize <= prev_indent {
+            return (None, self.lines[0].1 as isize, self.lines[0].2 as isize);
         }
-        self.line_index += 1;
-        (Some(line.clone()), *indent as isize, *linenum as isize)
+        let (line, indent, linenum) = self.lines.remove(0);
+        (Some(line), indent as isize, linenum as isize)
     }
 
-    pub fn set_next_line(&mut self, line: &str, indent: usize, linenum: usize) {
+    pub fn set_next_line(&mut self, line: String, indent: usize, linenum: usize) {
         let line = line.trim();
         if !line.is_empty() {
             self.stored_line = Some((line.to_string(), indent, linenum));
@@ -510,7 +507,7 @@ impl Lexer {
                                     "Cannot store negative indent '{}' at position {}",
                                     indent, self.pos,
                                 ),
-                                Some(line.to_string()),
+                                Some(line),
                                 Some(self.filename.clone()),
                                 Some(self.linenum),
                             )));
@@ -521,13 +518,13 @@ impl Lexer {
                                     "Cannot store negative line number '{}' at position {}",
                                     linenum, self.pos,
                                 ),
-                                Some(line.to_string()),
+                                Some(line),
                                 Some(self.filename.clone()),
                                 Some(self.linenum),
                             )));
                         }
                         // Keep the current line as the next line to comply with the line state machine.
-                        self.reader.set_next_line(&line, indent as usize, linenum as usize);
+                        self.reader.set_next_line(line, indent as usize, linenum as usize);
                     }
                 }
             }
@@ -663,7 +660,7 @@ impl Lexer {
     }
 
     /// Make the next line to get return the given line instead of the real next line.
-    pub fn set_next_line(&mut self, line: &str, indent: usize, linenum: usize) {
+    pub fn set_next_line(&mut self, line: String, indent: usize, linenum: usize) {
         self.reader.set_next_line(line, indent, linenum);
     }
 

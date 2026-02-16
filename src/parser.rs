@@ -773,7 +773,7 @@ impl Node {
         let next_line = lexer.get_rest_line_as_string_token()?;
         let next_line_str: String = next_line.string()?;
         if !next_line_str.is_empty() {
-            lexer.set_next_line(&next_line_str, (indent + 1) as usize, lexer.linenum as usize);
+            lexer.set_next_line(next_line_str, (indent + 1) as usize, lexer.linenum as usize);
         }
 
         // Create a new Node for the condition
@@ -830,7 +830,7 @@ impl Node {
         let next_line = lexer.get_rest_line_as_string_token()?;
         let next_line_str: String = next_line.string()?;
         if !next_line_str.is_empty() {
-            lexer.set_next_line(&next_line_str, (indent + 1)  as usize, lexer.linenum as usize);
+            lexer.set_next_line(next_line_str, (indent + 1)  as usize, lexer.linenum as usize);
         }
 
         // Create a new Node for the negative condition
