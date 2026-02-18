@@ -326,14 +326,14 @@ impl Tokens {
 
     pub fn like(&self, name: String, value: String) -> PyResult<Self> {
         match self {
-            Tokens::LSet(_name, _value) => Ok(Tokens::LSet(name.to_string(), value.to_string())),
-            Tokens::LAppend(_name, _value) => Ok(Tokens::LAppend(name.to_string(), value.to_string())),
-            Tokens::LPrepend(_name, _value) => Ok(Tokens::LPrepend(name.to_string(), value.to_string())),
-            Tokens::LLazySet(_name, _value) => Ok(Tokens::LLazySet(name.to_string(), value.to_string())),
-            Tokens::LRegExpSet(_name, _value) => Ok(Tokens::LRegExpSet(name.to_string(), value.to_string())),
-            Tokens::LRegExpAppend(_name, _value) => Ok(Tokens::LRegExpAppend(name.to_string(), value.to_string())),
-            Tokens::LRegExpPrepend(_name, _value) => Ok(Tokens::LRegExpPrepend(name.to_string(), value.to_string())),
-            Tokens::LDel(_name, _value) => Ok(Tokens::LDel(name.to_string(), value.to_string())),
+            Tokens::LSet(_name, _value) => Ok(Tokens::LSet(name, value)),
+            Tokens::LAppend(_name, _value) => Ok(Tokens::LAppend(name, value)),
+            Tokens::LPrepend(_name, _value) => Ok(Tokens::LPrepend(name, value)),
+            Tokens::LLazySet(_name, _value) => Ok(Tokens::LLazySet(name, value)),
+            Tokens::LRegExpSet(_name, _value) => Ok(Tokens::LRegExpSet(name, value)),
+            Tokens::LRegExpAppend(_name, _value) => Ok(Tokens::LRegExpAppend(name, value)),
+            Tokens::LRegExpPrepend(_name, _value) => Ok(Tokens::LRegExpPrepend(name, value)),
+            Tokens::LDel(_name, _value) => Ok(Tokens::LDel(name, value)),
             _ => Err(PyAttributeError::new_err("like is not a valid attribute for this token")),
         }
     }
@@ -350,9 +350,9 @@ impl Tokens {
     #[getter]
     pub fn string(&self) -> PyResult<String> {
         match self {
-            Tokens::LIdentifier(string) => Ok(string.to_string()),
-            Tokens::LWhite(string) => Ok(string.to_string()),
-            Tokens::LString(string) => Ok(string.to_string()),
+            Tokens::LIdentifier(string) => Ok(string.clone()),
+            Tokens::LWhite(string) => Ok(string.clone()),
+            Tokens::LString(string) => Ok(string.clone()),
             _ => Err(PyAttributeError::new_err("string is not a valid attribute for this token")),
         }
     }
@@ -360,17 +360,17 @@ impl Tokens {
     #[getter]
     pub fn name(&self) -> PyResult<String> {
         match self {
-            Tokens::LSet(name, _value) => Ok(name.to_string()),
-            Tokens::LAppend(name, _value) => Ok(name.to_string()),
-            Tokens::LPrepend(name, _value) => Ok(name.to_string()),
-            Tokens::LLazySet(name, _value) => Ok(name.to_string()),
-            Tokens::LRegExpSet(name, _value) => Ok(name.to_string()),
-            Tokens::LRegExpAppend(name, _value) => Ok(name.to_string()),
-            Tokens::LRegExpPrepend(name, _value) => Ok(name.to_string()),
-            Tokens::LDel(name, _value) => Ok(name.to_string()),
-            Tokens::LApplyDict(name, _value) => Ok(name.to_string()),
-            Tokens::LUpdateFileMap(_filename, name, _value) => Ok(name.to_string()),
-            Tokens::Suffix(name, _value) => Ok(name.to_string()),
+            Tokens::LSet(name, _value) => Ok(name.clone()),
+            Tokens::LAppend(name, _value) => Ok(name.clone()),
+            Tokens::LPrepend(name, _value) => Ok(name.clone()),
+            Tokens::LLazySet(name, _value) => Ok(name.clone()),
+            Tokens::LRegExpSet(name, _value) => Ok(name.clone()),
+            Tokens::LRegExpAppend(name, _value) => Ok(name.clone()),
+            Tokens::LRegExpPrepend(name, _value) => Ok(name.clone()),
+            Tokens::LDel(name, _value) => Ok(name.clone()),
+            Tokens::LApplyDict(name, _value) => Ok(name.clone()),
+            Tokens::LUpdateFileMap(_filename, name, _value) => Ok(name.clone()),
+            Tokens::Suffix(name, _value) => Ok(name.clone()),
             _ => Err(PyAttributeError::new_err("name is not a valid attribute for this token")),
         }
     }
@@ -378,16 +378,16 @@ impl Tokens {
     #[getter]
     fn value(&self) -> PyResult<String> {
         match self {
-            Tokens::LSet(_name, value) => Ok(value.to_string()),
-            Tokens::LAppend(_name, value) => Ok(value.to_string()),
-            Tokens::LPrepend(_name, value) => Ok(value.to_string()),
-            Tokens::LLazySet(_name, value) => Ok(value.to_string()),
-            Tokens::LRegExpSet(_name, value) => Ok(value.to_string()),
-            Tokens::LRegExpAppend(_name, value) => Ok(value.to_string()),
-            Tokens::LRegExpPrepend(_name, value) => Ok(value.to_string()),
-            Tokens::LDel(_name, value) => Ok(value.to_string()),
-            Tokens::LUpdateFileMap(_filename, _name, value) => Ok(value.to_string()),
-            Tokens::Suffix(_name, value) => Ok(value.to_string()),
+            Tokens::LSet(_name, value) => Ok(value.clone()),
+            Tokens::LAppend(_name, value) => Ok(value.clone()),
+            Tokens::LPrepend(_name, value) => Ok(value.clone()),
+            Tokens::LLazySet(_name, value) => Ok(value.clone()),
+            Tokens::LRegExpSet(_name, value) => Ok(value.clone()),
+            Tokens::LRegExpAppend(_name, value) => Ok(value.clone()),
+            Tokens::LRegExpPrepend(_name, value) => Ok(value.clone()),
+            Tokens::LDel(_name, value) => Ok(value.clone()),
+            Tokens::LUpdateFileMap(_filename, _name, value) => Ok(value.clone()),
+            Tokens::Suffix(_name, value) => Ok(value.clone()),
             _ => Err(PyAttributeError::new_err("value is not a valid attribute for this token")),
         }
     }
@@ -395,7 +395,7 @@ impl Tokens {
     #[getter]
     fn filename(&self) -> PyResult<String> {
         match self {
-            Tokens::LUpdateFileMap(filename, _name, _value) => Ok(filename.to_string()),
+            Tokens::LUpdateFileMap(filename, _name, _value) => Ok(filename.clone()),
             _ => Err(PyAttributeError::new_err("filename is not a valid attribute for this token")),
         }
     }
