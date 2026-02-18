@@ -372,7 +372,7 @@ impl Node {
                             format!("Unexpected content type for {:?}", step.content_type)
                         )),
                     };
-                    if filter.requires_action(ctx.clone(), labels.clone())? {
+                    if filter.requires_action(&ctx, &labels) {
                         // this filter requires action now
                         match &step.content_type {
                             // node represents conditional block with its own content
@@ -416,7 +416,7 @@ impl Node {
                             }
                         }
                     }
-                    else if filter.is_irrelevant(ctx.clone(), labels.clone())? {
+                    else if filter.is_irrelevant(&ctx, &labels) {
                         // this filter is no longer relevant and can be removed
                         continue
                     }
@@ -489,7 +489,7 @@ impl Node {
         // cannot pass if at least one external filter cannot pass
         for ContentStep {content_type, ..} in failed_external_filters {
             if let ContentType::Filters(external_filter) = content_type
-                && !external_filter.might_pass(failed_ctx.clone(), ctx.clone(), labels.clone())? {
+                && !external_filter.might_pass(failed_ctx, &ctx, &labels) {
                     return Ok(false);
                 }
         }
@@ -505,7 +505,7 @@ impl Node {
         // cannot pass if at least one internal filter cannot pass
         for ContentStep {content_type, ..} in failed_internal_filters {
             if let ContentType::Filters(internal_filter) = content_type
-                && !internal_filter.might_pass(failed_ctx.clone(), ctx.clone(), labels.clone())? {
+                && !internal_filter.might_pass(failed_ctx, &ctx, &labels) {
                     return Ok(false);
                 }
         }
@@ -764,8 +764,8 @@ impl Node {
         // Parse the condition filter
         let cfilter: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
             tokens,
-            lexer.line.clone().unwrap_or("<none>".to_string()),
-            lexer.filename.clone(),
+            lexer.line.as_deref(),
+            lexer.filename.as_str(),
             lexer.linenum,
         )?;
 
@@ -821,8 +821,8 @@ impl Node {
         // Parse the condition filter
         let lfilter: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
             tokens,
-            lexer.line.clone().unwrap_or("<none>".to_string()),
-            lexer.filename.clone(),
+            lexer.line.as_deref(),
+            lexer.filename.as_str(),
             lexer.linenum,
         )?;
 
@@ -1113,8 +1113,8 @@ impl Node {
                 )?);
                 deps = Filters::parse_filter(
                     filter_tokens,
-                    lexer.line.clone().unwrap_or("<none>".to_string()),
-                    lexer.filename.clone(),
+                    lexer.line.as_deref(),
+                    lexer.filename.as_str(),
                     lexer.linenum,
                 )?;
             }
@@ -1408,8 +1408,8 @@ pub fn parse(
                 let rest_tokens: Vec<Tokens> = lexer.get_rest_line(None)?;
                 let filters: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
                     rest_tokens,
-                    lexer.line.clone().unwrap_or("<none>".to_string()),
-                    lexer.filename.clone(),
+                    lexer.line.as_deref(),
+                    lexer.filename.as_str(),
                     lexer.linenum,
                 )?;
                 node.apply_dict(lexer, dict)?;
