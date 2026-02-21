@@ -538,25 +538,21 @@ impl Lexer {
     }
 
     /// Check that a token type is among the allowed token types.
+    #[pyo3(name = "check_token")]
     #[pyo3(signature = (token, check_tokens))]
-    pub fn check_token(
+    pub fn check_token_py(
         &self,
         token: Tokens,
         check_tokens: Vec<Tokens>,
     ) -> PyResult<()> {
-        if !check_tokens.is_empty() && !check_tokens.iter()
-                .any(|t| discriminant(t) == discriminant(&token)) {
-            return Err(PyErr::new::<LexerError, _>((
-                format!(
-                    "Unexpected token '{:?}' not among expected ones {:?}",
-                    token, check_tokens.iter(),
-                ),
-                self.line.clone(),
-                Some(self.filename.clone()),
-                Some(self.linenum),
-            )));
-        }
-        Ok(())
+        self.check_token(&token, &check_tokens).map_err(|err|
+            PyErr::new::<LexerError, _>((
+                err.msg,
+                err.line,
+                err.filename,
+                err.linenum,
+            ))
+        )
     }
 
     /// Get the next token from one or more tokenized lines.
@@ -577,7 +573,13 @@ impl Lexer {
                     return self.get_next_token(check_tokens, Some(no_white));
                 }
                 if let Some(check_tokens_some) = check_tokens {
-                    self.check_token(token.clone(), check_tokens_some)?;
+                    self.check_token(&token, &check_tokens_some).map_err(|err|
+                        PyErr::new::<LexerError, _>((
+                            err.msg,
+                            err.line,
+                            err.filename,
+                            err.linenum,
+                    )))?;
                 }
                 Ok(token)
             },
@@ -664,4 +666,27 @@ impl Lexer {
         self.reader.set_next_line(line, indent, linenum);
     }
 
+}
+
+impl Lexer {
+    /// Get the next token from one or more tokenized lines.
+    pub fn check_token(
+        &self,
+        token: &Tokens,
+        check_tokens: &[Tokens],
+    ) -> Result<(), LexerError> {
+        if !check_tokens.is_empty() && !check_tokens.iter()
+                .any(|t| discriminant(t) == discriminant(token)) {
+            return Err(LexerError {
+                msg: format!(
+                    "Unexpected token '{:?}' not among expected ones {:?}",
+                    token, check_tokens,
+                ),
+                line: self.line.clone(),
+                filename: Some(self.filename.clone()),
+                linenum: Some(self.linenum),
+            });
+        }
+        Ok(())
+    }
 }
