@@ -53,20 +53,20 @@ pub enum Filters {
 
 #[pymethods]
 impl Filters {
-    pub fn __str__(&self) -> PyResult<String> {
+    pub fn __str__(&self) -> String {
         match self {
-            Filters::OnlyFilter { filter, .. } => Ok(format!("Only {:?}", filter)),
-            Filters::NoFilter { filter, .. } => Ok(format!("No {:?}", filter)),
-            Filters::JoinFilter { filter, .. } => Ok(format!("Join {:?}", filter)),
-            Filters::Condition { filter, .. } => Ok(format!("Condition {:?}", filter)),
-            Filters::NegativeCondition { filter, .. } => Ok(format!("NotCond {:?}", filter)),
-            Filters::BlockFilter { blocked } => Ok(format!("BlockFilter blocked={}", blocked)),
-            Filters::Filter { filter } => Ok(format!("Filter {:?}", filter)),
-            Filters::NoOnlyFilter { filter, .. } => Ok(format!("NoOnlyFilter {:?}", filter)),
+            Filters::OnlyFilter { filter, .. } => format!("Only {:?}", filter),
+            Filters::NoFilter { filter, .. } => format!("No {:?}", filter),
+            Filters::JoinFilter { filter, .. } => format!("Join {:?}", filter),
+            Filters::Condition { filter, .. } => format!("Condition {:?}", filter),
+            Filters::NegativeCondition { filter, .. } => format!("NotCond {:?}", filter),
+            Filters::BlockFilter { blocked } => format!("BlockFilter blocked={}", blocked),
+            Filters::Filter { filter } => format!("Filter {:?}", filter),
+            Filters::NoOnlyFilter { filter, .. } => format!("NoOnlyFilter {:?}", filter),
         }
     }
 
-    pub fn __repr__(&self) -> PyResult<String> {
+    pub fn __repr__(&self) -> String {
         self.__str__()
     }
 

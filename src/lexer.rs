@@ -667,7 +667,6 @@ impl Lexer {
     }
 
 }
-
 impl Lexer {
     /// Get the next token from one or more tokenized lines.
     pub fn check_token(

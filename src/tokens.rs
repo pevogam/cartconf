@@ -292,13 +292,13 @@ impl Tokens {
         self.to_string()
     }
 
-    fn __str__(&self) -> PyResult<String> {
-        Ok(self.to_string())
+    fn __str__(&self) -> String {
+        self.to_string()
     }
 
-    fn __repr__(&self) -> PyResult<String> {
-        let s = self.__str__()?;
-        Ok(format!("'{s}'"))
+    fn __repr__(&self) -> String {
+        let s = self.__str__();
+        format!("'{s}'")
     }
 
     #[staticmethod]
@@ -672,7 +672,7 @@ fn compare_data_size(a: &str, b: &str) -> cmp::Ordering {
     }
 }
 
-pub fn apply_suffix_bounds(dict: &mut HashMap<ParamKey, ParamVal>) -> PyResult<()> {
+pub fn apply_suffix_bounds(dict: &mut HashMap<ParamKey, ParamVal>) {
     for key in dict.keys().cloned().collect::<Vec<_>>() {
         match key {
             ParamKey::Tuple(_) => {
@@ -705,8 +705,6 @@ pub fn apply_suffix_bounds(dict: &mut HashMap<ParamKey, ParamVal>) -> PyResult<(
             _ => {}
         }
     }
-
-    Ok(())
 }
 
 pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyResult<HashMap<ParamKey, ParamVal>> {
@@ -867,16 +865,16 @@ mod tests {
             (ParamKey::String("speed_fixed".to_string()), ParamVal::String("100M".to_string())),
             (ParamKey::String("speed".to_string()), ParamVal::String("50M".to_string())),
         ].iter().cloned().collect();
-        apply_suffix_bounds(&mut d).unwrap();
+        apply_suffix_bounds(&mut d);
         assert_eq!(d.get(&ParamKey::String("size".to_string())), Some(&ParamVal::String("2G".to_string())));
         assert_eq!(d.get(&ParamKey::String("speed".to_string())), Some(&ParamVal::String("100M".to_string())));
 
         d.insert(ParamKey::String("size".to_string()), ParamVal::String("0.5G".to_string()));
-        apply_suffix_bounds(&mut d).unwrap();
+        apply_suffix_bounds(&mut d);
         assert_eq!(d.get(&ParamKey::String("size".to_string())), Some(&ParamVal::String("1G".to_string())));
 
         d.insert(ParamKey::String("size".to_string()), ParamVal::String("1.5G".to_string()));
-        apply_suffix_bounds(&mut d).unwrap();
+        apply_suffix_bounds(&mut d);
         assert_eq!(d.get(&ParamKey::String("size".to_string())), Some(&ParamVal::String("1.5G".to_string())));
     }
 
