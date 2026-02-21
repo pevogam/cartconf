@@ -329,6 +329,50 @@ impl Filters {
         Ok(or_filters)
     }
 }
+
+macro_rules! py_slice_method {
+    (fn $name:ident(&self, $($param:ident: Vec<$type:ty>),*) -> $ret:ty $body:block) => {
+        paste::paste! {
+            #[pyo3(name = stringify!($name))]
+            pub fn [<$name _py>](&self, $($param: Vec<$type>),*) -> $ret {
+                self.$name($($param.as_slice()),*)
+            }
+        }
+
+        pub fn $name(&self, $($param: &[$type]),*) -> $ret $body
+    }
+}
+
+impl Filters {
+    py_slice_method! {
+        fn might_pass2(&self, failed_ctx: Vec<Label>, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> PyResult<bool> {
+            match self {
+                Filters::OnlyFilter { filter, .. } | Filters::NegativeCondition { filter, .. } => {
+                    for word in filter {
+                        for block in word {
+                            if Self::match_adjacent(block, ctx) > Self::match_adjacent(block, failed_ctx) {
+                                return self.might_match(ctx, descendant_labels);
+                            }
+                        }
+                    }
+                    Ok(false)
+                }
+                Filters::NoFilter { filter, .. } | Filters::Condition { filter, .. } => {
+                    for word in filter {
+                        for block in word {
+                            if Self::match_adjacent(block, ctx) < Self::match_adjacent(block, failed_ctx) {
+                                return Ok(!self.match_ctx(ctx)?);
+                            }
+                        }
+                    }
+                    Ok(false)
+                }
+                _ => Ok(false)
+            }
+        }
+    }
+}
+
 impl Filters {
     /// Try to match as many blocks as possible from context.
     fn match_adjacent(block: &[Label], ctx: &[Label]) -> usize {
