@@ -564,43 +564,14 @@ impl Lexer {
     }
 
     /// Get the next token from one or more tokenized lines.
+    #[pyo3(name = "get_next_token")]
     #[pyo3(signature = (check_tokens=None, no_white=None))]
-    pub fn get_next_token(
+    pub fn get_next_token_py(
         &mut self,
         check_tokens: Option<Vec<Tokens>>,
         no_white: Option<bool>,
     ) -> PyResult<Tokens> {
-        let no_white = no_white.unwrap_or(false);
-        if self.token_queue.is_empty() {
-            let tokens = self.match_multiline()?;
-            self.token_queue.extend(tokens);
-        }
-        match self.token_queue.pop_front() {
-            Some(token) => {
-                if no_white && matches!(token, Tokens::LWhite(_)) {
-                    return self.get_next_token(check_tokens, Some(no_white));
-                }
-                if let Some(check_tokens_some) = check_tokens {
-                    self.check_token(&token, &check_tokens_some).map_err(|err|
-                        PyErr::new::<LexerError, _>((
-                            err.msg,
-                            err.line,
-                            err.filename,
-                            err.linenum,
-                    )))?;
-                }
-                Ok(token)
-            },
-            None => Err(PyErr::new::<LexerError, _>((
-                format!(
-                    "Lexer returned no token at position {}",
-                    self.pos,
-                ),
-                self.line.clone(),
-                Some(self.filename.clone()),
-                Some(self.linenum),
-            )))
-        }
+        self.get_next_token(check_tokens.as_deref(), no_white)
     }
 
     /// Get all tokens until not allowed tokens or end tokens are found.
@@ -662,8 +633,8 @@ impl Lexer {
     pub fn get_rest_line_as_string_token(&mut self) -> PyResult<Tokens> {
         self.rest_as_string = true;
         let lstring: Tokens = {
-            let remainder_str = self.get_next_token(Some(vec![Tokens::default("String")]), None)?;
-            let _ = self.get_next_token(Some(vec![Tokens::default("endl")]), None)?;
+            let remainder_str = self.get_next_token(Some(&[Tokens::default("String")]), None)?;
+            let _ = self.get_next_token(Some(&[Tokens::default("endl")]), None)?;
             remainder_str
         };
         Ok(lstring)
@@ -695,5 +666,45 @@ impl Lexer {
             });
         }
         Ok(())
+    }
+
+   /// Get the next token from one or more tokenized lines.
+    pub fn get_next_token(
+        &mut self,
+        check_tokens: Option<&[Tokens]>,
+        no_white: Option<bool>,
+    ) -> PyResult<Tokens> {
+        let no_white = no_white.unwrap_or(false);
+        if self.token_queue.is_empty() {
+            let tokens = self.match_multiline()?;
+            self.token_queue.extend(tokens);
+        }
+        match self.token_queue.pop_front() {
+            Some(token) => {
+                if no_white && matches!(token, Tokens::LWhite(_)) {
+                    return self.get_next_token(check_tokens, Some(no_white));
+                }
+                if let Some(check_tokens_some) = check_tokens {
+                    self.check_token(&token, check_tokens_some).map_err(|err|
+                        PyErr::new::<LexerError, _>((
+                            err.msg,
+                            err.line,
+                            err.filename,
+                            err.linenum,
+                        ))
+                    )?;
+                }
+                Ok(token)
+            },
+            None => Err(PyErr::new::<LexerError, _>((
+                format!(
+                    "Lexer returned no token at position {}",
+                    self.pos,
+                ),
+                self.line.clone(),
+                Some(self.filename.clone()),
+                Some(self.linenum),
+            )))
+        }
     }
 }
