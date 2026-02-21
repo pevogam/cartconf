@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cmp::min;
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
@@ -105,36 +106,36 @@ impl Label {
         }
     }
 
-    fn __str__(&self) -> PyResult<String> {
-        Ok(self.long_name.clone())
+    fn __str__(&self) -> String {
+        self.long_name.clone()
     }
 
-    fn __repr__(&self) -> PyResult<String> {
-        Ok(self.long_name.clone())
+    fn __repr__(&self) -> String {
+        self.long_name.clone()
     }
 
-    fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+    fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
         if let Ok(other_label) = other.extract::<Label>() {
-            Ok(self.eq(&other_label))
+            self.eq(&other_label)
         } else {
-            Ok(false)
+            false
         }
     }
 
-    fn __ne__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+    fn __ne__(&self, other: &Bound<'_, PyAny>) -> bool {
         if let Ok(other_label) = other.extract::<Label>() {
             if other_label.var_name.is_some() {
-                Ok(self.long_name != other_label.long_name)
+                self.long_name != other_label.long_name
             } else {
-                Ok(self.name != other_label.name)
+                self.name != other_label.name
             }
         } else {
-            Ok(true)
+            true
         }
     }
 
-    fn __hash__(&self) -> PyResult<i64> {
-        Ok(self.hash_val)
+    fn __hash__(&self) -> i64 {
+        self.hash_val
     }
 
     #[staticmethod]
@@ -278,50 +279,131 @@ impl Node {
         }
     }
 
-    pub fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+    pub fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
         if let Ok(other_node) = other.extract::<Node>() {
-            Ok(self.id == other_node.id)
+            self.id == other_node.id
         } else {
-            Ok(false)
+            false
         }
     }
 
-    pub fn update_labels(&mut self, new_labels: Vec<Label>) -> PyResult<()> {
-        for label in &new_labels {
-            if !self.labels.contains(label) {
-                self.labels.push(label.clone());
+    #[staticmethod]
+    pub fn join_names(n1: &str, n2: &str) -> String {
+        // find the common prefix between the two names
+        let common_prefix_len = n1
+            .chars()
+            .zip(n2.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let common_prefix = &n1[..common_prefix_len];
+
+        // strip the last dot-separated component from the common prefix
+        let p = common_prefix.rsplit_once('.').map_or("", |(before, _)| before);
+        if p.is_empty() {
+            format!("{}.{}", n1, n2)
+        } else {
+            // remove the common prefix part from both names
+            let p1 = &n1[p.len()..];
+            let p2 = &n2[p.len()..];
+            format!("{}{}{}", p, p1, p2)
+        }
+    }
+
+    pub fn update_labels(&mut self, new_labels: Vec<Label>) {
+        for label in new_labels {
+            if !self.labels.contains(&label) {
+                self.labels.push(label);
             }
         }
-        Ok(())
     }
 
-    pub fn get_children(&self) -> PyResult<Vec<Node>> {
-        Ok(self.children.iter().map(|child| child.borrow().clone()).collect())
+    pub fn get_children(&self) -> Vec<Node> {
+        self.children.iter().map(|child| child.borrow().clone()).collect()
     }
 
-    pub fn prepend_child(&mut self, node: Node) -> PyResult<()> {
+    pub fn prepend_child(&mut self, node: Node) {
         self.children.push_front(Rc::new(RefCell::new(node)));
-        Ok(())
     }
 
-    pub fn append_child(&mut self, node: Node) -> PyResult<()> {
+    pub fn append_child(&mut self, node: Node) {
         self.children.push_back(Rc::new(RefCell::new(node)));
-        Ok(())
     }
 
-    pub fn get_content(&self) -> PyResult<Vec<ContentStep>> {
-        Ok(self.content.clone())
+    pub fn get_content(&self) -> Vec<ContentStep> {
+        self.content.clone()
     }
 
-    pub fn add_content(&mut self, filename: String, linenum: isize, content_type: ContentType) -> PyResult<()> {
+    pub fn add_content(&mut self, filename: String, linenum: isize, content_type: ContentType) {
         self.content.push(ContentStep { filename, linenum, content_type });
-        Ok(())
     }
 
-    pub fn swap_content(&mut self, new_content: Vec<ContentStep>) -> PyResult<()> {
+    pub fn swap_content(&mut self, new_content: Vec<ContentStep>) {
         self.content = new_content;
-        Ok(())
     }
+
+    #[pyo3(name = "process_content")]
+    pub fn process_content_py(
+        &mut self,
+        ctx: Vec<Label>,
+        labels: Vec<Label>
+    ) -> PyResult<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
+        self.process_content(&ctx, &labels)
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn get_failed_cases(&self) -> Vec<(Vec<Label>, Vec<ContentStep>, Vec<ContentStep>)> {
+        self.failed_cases.clone().into()
+    }
+
+    pub fn add_failed_case(
+        &mut self,
+        ctx: Vec<Label>,
+        external_filters: Vec<ContentStep>,
+        internal_filters: Vec<ContentStep>,
+        capacity: usize,
+    ) {
+        self.failed_cases.push_front((ctx, external_filters, internal_filters));
+        if self.failed_cases.len() > capacity {
+            _ = self.failed_cases.pop_back()
+        }
+    }
+
+    pub fn prioritize_failed_case(
+        &mut self,
+        idx: usize,
+    ) {
+        let failed_case = self.failed_cases.remove(idx);
+        if let Some(f) = failed_case { self.failed_cases.push_front(f) }
+    }
+
+    #[pyo3(name = "failed_case_might_pass")]
+    pub fn failed_case_might_pass_py(
+        &self,
+        idx: usize,
+        ctx: Vec<Label>,
+        labels: Vec<Label>,
+        content: Vec<ContentStep>
+    ) -> bool {
+        self.failed_case_might_pass(idx, ctx, &labels, &content)
+    }
+
+    #[pyo3(signature = (indent, recurse=false))]
+    pub fn dump(&self, indent: usize, recurse: bool) -> String {
+        let mut dump_lines = vec![
+            format!("{:indent$}name: {:?}", "", self.name, indent = indent),
+            format!("{:indent$}variable name: {:?}", "", self.var_name, indent = indent),
+            format!("{:indent$}content: {:?}", "", self.content, indent = indent),
+            format!("{:indent$}failed cases: {:?}", "", self.failed_cases, indent = indent),
+        ];
+        if recurse {
+            for child in &self.children {
+                dump_lines.push(child.borrow().dump(indent + 3, recurse));
+            }
+        }
+        dump_lines.join("\n")
+    }
+}
+impl Node {
 
     /*
     Process content with respect to the current context returning new
@@ -343,8 +425,8 @@ impl Node {
     */
     pub fn process_content(
         &mut self,
-        ctx: Vec<Label>,
-        labels: Vec<Label>
+        ctx: &Vec<Label>,
+        labels: &Vec<Label>
     ) -> PyResult<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
         let mut new_content: Vec<ContentStep> = Vec::new();
         let mut failed_filters: Vec<ContentStep> = Vec::new();
@@ -372,7 +454,7 @@ impl Node {
                             format!("Unexpected content type for {:?}", step.content_type)
                         )),
                     };
-                    if filter.requires_action(ctx.clone(), labels.clone())? {
+                    if filter.requires_action(ctx, labels) {
                         // this filter requires action now
                         match &step.content_type {
                             // node represents conditional block with its own content
@@ -390,7 +472,7 @@ impl Node {
                                 let (cond_content,
                                     mut failed_cond_filters,
                                     deeper_failed_filters) = cond_node
-                                        .process_content(ctx.clone(), labels.clone())?;
+                                        .process_content(ctx, labels)?;
                                 new_content.extend(cond_content);
                                 if !failed_cond_filters.is_empty() {
                                     // record the entire conditional step as a failing filter
@@ -416,7 +498,7 @@ impl Node {
                             }
                         }
                     }
-                    else if filter.is_irrelevant(ctx.clone(), labels.clone())? {
+                    else if filter.is_irrelevant(ctx, labels) {
                         // this filter is no longer relevant and can be removed
                         continue
                     }
@@ -431,50 +513,18 @@ impl Node {
         Ok((new_content, failed_filters, Vec::new()))
     }
 
-    #[allow(clippy::type_complexity)]
-    pub fn get_failed_cases(&self) -> PyResult<Vec<(Vec<Label>, Vec<ContentStep>, Vec<ContentStep>)>> {
-        Ok(self.failed_cases.clone().into())
-
-    }
-
-    pub fn add_failed_case(
-        &mut self,
-        ctx: Vec<Label>,
-        external_filters: Vec<ContentStep>,
-        internal_filters: Vec<ContentStep>,
-        capacity: usize,
-    ) -> PyResult<()> {
-        self.failed_cases.push_front((ctx, external_filters, internal_filters));
-        if self.failed_cases.len() > capacity {
-            _ = self.failed_cases.pop_back()
-        }
-        Ok(())
-    }
-
-    pub fn prioritize_failed_case(
-        &mut self,
-        idx: usize,
-    ) -> PyResult<()> {
-        let failed_case = self.failed_cases.remove(idx);
-        match failed_case {
-            Some(f) => self.failed_cases.push_front(f),
-            None => { return Ok(()); }
-        };
-        Ok(())
-    }
-
     pub fn failed_case_might_pass(
         &self,
         idx: usize,
         ctx: Vec<Label>,
-        labels: Vec<Label>,
-        content: Vec<ContentStep>
-    ) -> PyResult<bool> {
-        let node_content = self.get_content()?;
-        let all_content: Vec<&ContentStep> = content.iter().chain(&node_content).collect();
+        labels: &[Label],
+        content: &[ContentStep]
+    ) -> bool {
+        let node_content = &self.content;
+        let all_content: Vec<&ContentStep> = content.iter().chain(node_content).collect();
         let failed_case = match self.failed_cases.get(idx) {
             Some(f) => f,
-            None => { return Ok(false); }
+            None => { return false; }
         };
         let (failed_ctx, failed_external_filters, failed_internal_filters) = failed_case;
 
@@ -483,14 +533,14 @@ impl Node {
         if failed_external_filters.iter().any(|t| !in_all_content(t))
             || failed_internal_filters.iter().any(|t| !in_all_content(t))
         {
-            return Ok(true);
+            return true;
         }
 
         // cannot pass if at least one external filter cannot pass
         for ContentStep {content_type, ..} in failed_external_filters {
             if let ContentType::Filters(external_filter) = content_type
-                && !external_filter.might_pass(failed_ctx.clone(), ctx.clone(), labels.clone())? {
-                    return Ok(false);
+                && !external_filter.might_pass(failed_ctx, &ctx, labels) {
+                    return false;
                 }
         }
 
@@ -499,56 +549,18 @@ impl Node {
             .iter()
             .any(|t| !node_content.contains(t))
         {
-            return Ok(true);
+            return true;
         }
 
         // cannot pass if at least one internal filter cannot pass
         for ContentStep {content_type, ..} in failed_internal_filters {
             if let ContentType::Filters(internal_filter) = content_type
-                && !internal_filter.might_pass(failed_ctx.clone(), ctx.clone(), labels.clone())? {
-                    return Ok(false);
+                && !internal_filter.might_pass(failed_ctx, &ctx, labels) {
+                    return false;
                 }
         }
 
-        Ok(true)
-    }
-
-    #[staticmethod]
-    pub fn join_names(n1: &str, n2: &str) -> String {
-        // find the common prefix between the two names
-        let common_prefix_len = n1
-            .chars()
-            .zip(n2.chars())
-            .take_while(|(a, b)| a == b)
-            .count();
-        let common_prefix = &n1[..common_prefix_len];
-
-        // strip the last dot-separated component from the common prefix
-        let p = common_prefix.rsplit_once('.').map_or("", |(before, _)| before);
-        if p.is_empty() {
-            format!("{}.{}", n1, n2)
-        } else {
-            // remove the common prefix part from both names
-            let p1 = &n1[p.len()..];
-            let p2 = &n2[p.len()..];
-            format!("{}{}{}", p, p1, p2)
-        }
-    }
-
-    #[pyo3(signature = (indent, recurse=false))]
-    pub fn dump(&self, indent: usize, recurse: bool) -> PyResult<String> {
-        let mut dump_lines = vec![
-            format!("{:indent$}name: {:?}", "", self.name, indent = indent),
-            format!("{:indent$}variable name: {:?}", "", self.var_name, indent = indent),
-            format!("{:indent$}content: {:?}", "", self.content, indent = indent),
-            format!("{:indent$}failed cases: {:?}", "", self.failed_cases, indent = indent),
-        ];
-        if recurse {
-            for child in &self.children {
-                dump_lines.push(child.borrow().dump(indent + 3, recurse)?);
-            }
-        }
-        Ok(dump_lines.join("\n"))
+        true
     }
 }
 impl Node {
@@ -556,7 +568,7 @@ impl Node {
         &mut self,
         lexer: &Lexer,
         dict: HashMap<ParamKey, ParamVal>
-    ) -> PyResult<()> {
+    ) {
         // Build a LApplyDict from the Rust HashMap
         let content_type = ContentType::Tokens(Tokens::LApplyDict(String::new(), dict));
 
@@ -565,9 +577,8 @@ impl Node {
             lexer.filename.clone(),
             lexer.linenum,
             content_type,
-        )?;
+        );
 
-        Ok(())
     }
 
     /*
@@ -648,7 +659,7 @@ impl Node {
                     return Ok(dict);
                 } else {
                     // flush dict into node
-                    self.apply_dict(lexer, dict)?;
+                    self.apply_dict(lexer, dict);
                     dict = HashMap::new();
                 }
             }
@@ -658,7 +669,7 @@ impl Node {
                 lexer.filename.clone(),
                 lexer.linenum,
                 ContentType::Tokens(op_obj),
-            )?;
+            );
         }
 
         // consume end-of-line
@@ -683,12 +694,12 @@ impl Node {
         let to_del_str: String = to_del.string()?;
 
         // flush dict and add token as content
-        self.apply_dict(lexer, dict)?;
+        self.apply_dict(lexer, dict);
         self.add_content(
             lexer.filename.clone(),
             lexer.linenum,
             ContentType::Tokens(Tokens::LDel(to_del_str, "".to_string())),
-        )?;
+        );
 
         Ok(())
     }
@@ -733,7 +744,7 @@ impl Node {
         }
 
         // Apply current dict and create new lexer for included file
-        self.apply_dict(lexer, dict)?;
+        self.apply_dict(lexer, dict);
 
         let filepath_str = filepath.to_str()
             .ok_or_else(|| PyErr::new::<PyValueError, _>("Invalid filepath"))?;
@@ -764,8 +775,8 @@ impl Node {
         // Parse the condition filter
         let cfilter: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
             tokens,
-            lexer.line.clone().unwrap_or("<none>".to_string()),
-            lexer.filename.clone(),
+            lexer.line.as_deref(),
+            lexer.filename.as_str(),
             lexer.linenum,
         )?;
 
@@ -773,7 +784,7 @@ impl Node {
         let next_line = lexer.get_rest_line_as_string_token()?;
         let next_line_str: String = next_line.string()?;
         if !next_line_str.is_empty() {
-            lexer.set_next_line(&next_line_str, (indent + 1) as usize, lexer.linenum as usize);
+            lexer.set_next_line(next_line_str, (indent + 1) as usize, lexer.linenum as usize);
         }
 
         // Create a new Node for the condition
@@ -784,12 +795,12 @@ impl Node {
         cond = parse(lexer, cond, indent, false, None)?;
 
         // Apply the current dict and add the condition node as content
-        self.apply_dict(lexer, dict)?;
+        self.apply_dict(lexer, dict);
         self.add_content(
             lexer.filename.clone(),
             lexer.linenum,
             ContentType::Node(cond),
-        )?;
+        );
 
         Ok(())
     }
@@ -821,8 +832,8 @@ impl Node {
         // Parse the condition filter
         let lfilter: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
             tokens,
-            lexer.line.clone().unwrap_or("<none>".to_string()),
-            lexer.filename.clone(),
+            lexer.line.as_deref(),
+            lexer.filename.as_str(),
             lexer.linenum,
         )?;
 
@@ -830,7 +841,7 @@ impl Node {
         let next_line = lexer.get_rest_line_as_string_token()?;
         let next_line_str: String = next_line.string()?;
         if !next_line_str.is_empty() {
-            lexer.set_next_line(&next_line_str, (indent + 1)  as usize, lexer.linenum as usize);
+            lexer.set_next_line(next_line_str, (indent + 1)  as usize, lexer.linenum as usize);
         }
 
         // Create a new Node for the negative condition
@@ -844,12 +855,12 @@ impl Node {
         cond = parse(lexer, cond, indent, false, None)?;
 
         // Apply the current dict and add the condition node as content
-        self.apply_dict(lexer, dict)?;
+        self.apply_dict(lexer, dict);
         self.add_content(
             lexer.filename.clone(),
             lexer.linenum,
             ContentType::Node(cond),
-        )?;
+        );
 
         Ok(())
     }
@@ -1024,7 +1035,7 @@ impl Node {
         let mut node4 = Node::new();
 
         if !dict.is_empty() {
-            self.apply_dict(lexer, dict)?;
+            self.apply_dict(lexer, dict);
         }
 
         // Handle default variants
@@ -1113,16 +1124,16 @@ impl Node {
                 )?);
                 deps = Filters::parse_filter(
                     filter_tokens,
-                    lexer.line.clone().unwrap_or("<none>".to_string()),
-                    lexer.filename.clone(),
+                    lexer.line.as_deref(),
+                    lexer.filename.as_str(),
                     lexer.linenum,
                 )?;
             }
 
             // Create and parse the variant node
             let mut node2 = Node::new();
-            node2.append_child(self.clone())?;
-            node2.update_labels(self.labels.clone())?;
+            node2.append_child(self.clone());
+            node2.update_labels(self.labels.clone());
 
             if !variant_name.is_empty() {
                 node2.add_content(
@@ -1140,7 +1151,7 @@ impl Node {
                                 .join("."),
                         )
                     ),
-                )?;
+                );
             }
 
             let mut node3 = parse(lexer, node2, indent, defaults, Some(expand_defaults.clone()))?;
@@ -1195,7 +1206,7 @@ impl Node {
                         "_name_map_file".to_string(),
                     ),
                 ),
-            )?;
+            );
             node3.add_content(
                 lexer.filename.clone(),
                 lexer.linenum,
@@ -1206,18 +1217,18 @@ impl Node {
                         "_short_name_map_file".to_string(),
                     ),
                 ),
-            )?;
+            );
+
+            // Update labels (move out fields since we appended clones)
+            node4.update_labels(node3.labels.clone());
+            node4.update_labels(node3.name.clone());
 
             // Add node to children
             if node3.default && defaults {
-                node4.prepend_child(node3.clone())?;
+                node4.prepend_child(node3);
             } else {
-                node4.append_child(node3.clone())?;
+                node4.append_child(node3);
             }
-
-            // Update labels (move out fields since we appended clones)
-            node4.update_labels(node3.labels)?;
-            node4.update_labels(node3.name)?;
         }
 
         // Check if all default variants were used
@@ -1300,11 +1311,11 @@ pub fn parse(
         if matches!(token, Tokens::LEndBlock(_)) {
             if !dict.is_empty() {
                 // Flush dict to node content
-                node.apply_dict(lexer, dict)?;
+                node.apply_dict(lexer, dict);
             }
             if let Some((filename, linenum, op)) = suffix {
                 // Node has suffix, apply it to all elements
-                node.add_content(filename.clone(), linenum, ContentType::Tokens(op))?;
+                node.add_content(filename.clone(), linenum, ContentType::Tokens(op));
             }
             return Ok(node);
         }
@@ -1408,11 +1419,11 @@ pub fn parse(
                 let rest_tokens: Vec<Tokens> = lexer.get_rest_line(None)?;
                 let filters: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
                     rest_tokens,
-                    lexer.line.clone().unwrap_or("<none>".to_string()),
-                    lexer.filename.clone(),
+                    lexer.line.as_deref(),
+                    lexer.filename.as_str(),
                     lexer.linenum,
                 )?;
-                node.apply_dict(lexer, dict)?;
+                node.apply_dict(lexer, dict);
                 dict = HashMap::new();
 
                 let content_type = match token {
@@ -1433,14 +1444,14 @@ pub fn parse(
                     lexer.filename.clone(),
                     lexer.linenum,
                     content_type,
-                )?;
+                );
             }
 
             Tokens::LSuffix() => {
                 // Parse:
                 //    suffix SUFFIX
                 if !dict.is_empty() {
-                    node.apply_dict(lexer, dict)?;
+                    node.apply_dict(lexer, dict);
                 }
                 dict = HashMap::new();
                 let token_val = lexer.get_next_token(
@@ -1500,18 +1511,18 @@ pub fn parse_file(
 #[pyclass(unsendable)]
 #[derive(Debug, Clone)]
 pub struct PreDict {
-    pub _ctx: Vec<Vec<Label>>,
-    pub _shortname: Vec<Vec<Label>>,
+    _ctx: Vec<Vec<Label>>,
+    _shortname: Vec<Vec<Label>>,
 
-    pub _content: Vec<Vec<ContentStep>>,
-    pub _ctx_content: Vec<Vec<ContentStep>>,
+    _content: Vec<Vec<ContentStep>>,
+    _ctx_content: Vec<Vec<ContentStep>>,
 
-    pub _dep: Vec<Vec<String>>,
+    _dep: Vec<Vec<String>>,
 
     // traversal state
-    #[pyo3(get, set)]
+    #[pyo3(get)]
     pub branch: Vec<Node>,
-    #[pyo3(get, set)]
+    #[pyo3(get)]
     pub route: Vec<Option<usize>>,
     #[pyo3(get, set)]
     pub joins: Vec<Option<Vec<ContentStep>>>,
@@ -1536,22 +1547,22 @@ pub struct PreDict {
 #[pymethods]
 impl PreDict {
     #[getter]
-    fn ctx(&self) -> PyResult<Vec<Label>> {
-        Ok(self._ctx.iter().flatten().cloned().collect())
+    fn ctx(&self) -> Vec<Label> {
+        self._ctx.iter().flatten().cloned().collect()
     }
 
     #[getter]
-    fn shortname(&self) -> PyResult<Vec<Label>> {
-        Ok(self._shortname.iter().flatten().cloned().collect())
+    fn shortname(&self) -> Vec<Label> {
+        self._shortname.iter().flatten().cloned().collect()
     }
 
     #[getter]
-    fn content(&self) -> PyResult<Vec<ContentStep>> {
-        Ok(self._content.iter().flatten().cloned().collect())
+    fn content(&self) -> Vec<ContentStep> {
+        self._content.iter().flatten().cloned().collect()
     }
 
     #[getter]
-    fn final_content(&self) -> PyResult<Vec<ContentStep>> {
+    fn final_content(&self) -> Vec<ContentStep> {
         let mut res: Vec<ContentStep> = Vec::new();
         if let Some(last) = self._content.last() {
             res.extend(last.clone());
@@ -1559,12 +1570,12 @@ impl PreDict {
         if let Some(last) = self._ctx_content.last() {
             res.extend(last.clone());
         }
-        Ok(res)
+        res
     }
 
     #[getter]
-    fn dep(&self) -> PyResult<Vec<String>> {
-        Ok(self._dep.iter().flatten().cloned().collect())
+    fn dep(&self) -> Vec<String> {
+        self._dep.iter().flatten().cloned().collect()
     }
 
     #[new]
@@ -1600,27 +1611,27 @@ impl PreDict {
         }
     }
 
-    fn __str__(&self) -> PyResult<String> {
-        let ctx = self.ctx()?;
-        let content = self.content()?;
-        let shortname = self.shortname()?;
-        let dep = self.dep()?;
-        Ok(format!(
+    fn __str__(&self) -> String {
+        let ctx = self.ctx();
+        let content = self.content();
+        let shortname = self.shortname();
+        let dep = self.dep();
+        format!(
             "PreDict(ctx={:?}, content={:?}, shortname={:?}, dep={:?})",
             ctx, content, shortname, dep
-        ))
+        )
     }
 
-    fn __copy__(&self) -> PyResult<PreDict> {
-        Ok(self.clone())
+    fn __copy__(&self) -> PreDict {
+        self.clone()
     }
 
-    fn shallow_copy(&self) -> PyResult<PreDict> {
-        let ctx = self.ctx()?;
+    fn shallow_copy(&self) -> PreDict {
+        let ctx = self.ctx();
         let content = self._content.last().cloned().unwrap_or_default();
         let ctx_content = self._ctx_content.last().cloned().unwrap_or_default();
-        let shortname = self.shortname()?;
-        let dep = self.dep()?;
+        let shortname = self.shortname();
+        let dep = self.dep();
         let mut new = PreDict::new(
             Some(ctx),
             Some(content),
@@ -1630,7 +1641,7 @@ impl PreDict {
             Some(self.expand_defaults.clone()),
         );
         new._ctx_content[0] = ctx_content;
-        Ok(new)
+        new
     }
 
     #[pyo3(signature = (node))]
@@ -1649,7 +1660,7 @@ impl PreDict {
         };
 
         // build dep strings using current flattened ctx and node.dep
-        let ctx_flat: Vec<Label> = self.ctx()?;
+        let ctx_flat: Vec<Label> = self.ctx();
         let mut dep: Vec<String> = Vec::new();
         for d in &node.dep {
             for dd in d {
@@ -1669,7 +1680,7 @@ impl PreDict {
         for i in 0..node.failed_cases.len() {
             let mut probe_ctx = ctx_flat.clone();
             probe_ctx.extend(ctx.clone());
-            if !node.failed_case_might_pass(i, probe_ctx, labels.clone(), self.content()?)? {
+            if !node.failed_case_might_pass(i, probe_ctx, &labels, &self.content()) {
                 /* TODO: add optional logging
                 self._debug(
                     "\n*    this subtree has failed before %s\n"
@@ -1680,7 +1691,7 @@ impl PreDict {
                     failed_case,
                 )
                 */
-                node.prioritize_failed_case(i)?;
+                node.prioritize_failed_case(i);
                 return Ok(false);
             }
         }
@@ -1696,21 +1707,21 @@ impl PreDict {
         self.join_pre_dicts.push(None);
 
         // recompute flattened ctx (includes the newly added ctx)
-        let ctx_flat = self.ctx()?;
+        let ctx_flat = self.ctx();
         // capture external content (final content) before node is pushed
-        let content = self.final_content()?;
+        let content = self.final_content();
 
         // process internal content for the node
         let (internal_content, mut failed_internal, mut failed_internal_cond) =
-            node.process_content(ctx_flat.clone(), labels.clone())?;
+            node.process_content(&ctx_flat, &labels)?;
         failed_internal.append(&mut failed_internal_cond);
         self._content.push(internal_content);
 
         // process external (previous) content against current context
         let mut content_node = Node::new();
-        content_node.swap_content(content)?;
+        content_node.swap_content(content);
         let (external_content, failed_external, mut failed_external_cond) =
-            content_node.process_content(ctx_flat.clone(), labels.clone())?;
+            content_node.process_content(&ctx_flat, &labels)?;
         // NOTE: the failed filters should go into the failed internal filters
         // because we don't expect them to come from outside this node, even if
         // the condition itself was external
@@ -1719,19 +1730,19 @@ impl PreDict {
 
         // register failed case and return false if failed filters
         if !failed_internal.is_empty() || !failed_external.is_empty() {
-            node.add_failed_case(ctx_flat.clone(), failed_external, failed_internal, self.num_failed_cases)?;
+            node.add_failed_case(ctx_flat.clone(), failed_external, failed_internal, self.num_failed_cases);
             /* TODO: add optional logging
             self._debug("Failed_cases %s", node.failed_cases)
             */
-            self.branch.push(node.clone());
+            self.branch.push(node);
             return Ok(false);
         }
 
-        self.branch.push(node.clone());
+        self.branch.push(node);
         Ok(true)
     }
 
-    fn reset_from_last_node(&mut self) -> PyResult<()> {
+    fn reset_from_last_node(&mut self) {
         self.branch.pop();
         self.route.pop();
         self.joins.pop();
@@ -1743,22 +1754,20 @@ impl PreDict {
         self._content.pop();
         self._shortname.pop();
         self._dep.pop();
-
-        Ok(())
     }
 
     pub fn get_dict(&self) -> PyResult<HashMap<ParamKey, ParamVal>> {
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
 
-        let name = self.ctx()?.iter().map(|l| l.long_name.clone()).collect::<Vec<_>>().join(".");
-        let shortname = self.shortname()?.iter().map(|l| l.name.clone()).collect::<Vec<_>>().join(".");
-        let dep = self.dep()?;
+        let name = self.ctx().iter().map(|l| l.long_name.clone()).collect::<Vec<_>>().join(".");
+        let shortname = self.shortname().iter().map(|l| l.name.clone()).collect::<Vec<_>>().join(".");
+        let dep = self.dep();
 
         dict.insert("name".to_string().into(), name.into());
         dict.insert("shortname".to_string().into(), shortname.into());
         dict.insert("dep".to_string().into(), ParamVal::List(dep));
 
-        for step in self.final_content()? {
+        for step in self.final_content() {
             match step.content_type {
                 ContentType::Tokens(t) => {
                     // ignore inapplicable token types by ignoring the status
@@ -1801,7 +1810,7 @@ impl PreDict {
                     self._debug("    reached leaf, returning it")
                     */
                     let mut d = self.get_dict()?;
-                    apply_suffix_bounds(&mut d)?;
+                    apply_suffix_bounds(&mut d);
                     return Ok(Some(d));
                 }
             // one for leaf down from final index
@@ -1812,7 +1821,7 @@ impl PreDict {
                 }
                 // remove all previous grand children and their effects on pre-dict
                 for _ in i + 1..self.route.len() {
-                    self.reset_from_last_node()?;
+                    self.reset_from_last_node();
                 }
             }
 
@@ -1829,6 +1838,8 @@ impl PreDict {
                 continue;
             }
 
+            // the original parsed node is preserved as the pre-dict modifies a clone
+            // for the purpose of traversal and dictionary getters
             let child = self.branch[i].children[route_idx].borrow().clone();
             if !self.update_from_node(child)? {
                 continue;
@@ -1865,7 +1876,7 @@ impl PreDict {
         }
         let depth = self.branch.len() - 1;
         let mut sub_pre_dict = self.clone();
-        sub_pre_dict.reset_from_last_node()?;
+        sub_pre_dict.reset_from_last_node();
 
         // TODO: this doesn't panic on out of bounds or uninitialized joins but is bulky to use
         // also in all other vector depth or width access cases - use anyhow or find a better way 
@@ -1899,20 +1910,19 @@ impl PreDict {
 
             // initialize join pre-dict with a shallow copy of a node-reset pre-dict clone
             if pre_dicts[j].is_none() {
-                pre_dicts[j] = Some(sub_pre_dict.shallow_copy()?);
+                pre_dicts[j] = Some(sub_pre_dict.shallow_copy());
             }
             // update the pre-dict with differently filtered current node
             if let Some(ref mut pre_dict) = pre_dicts[j] {
-                let node = &mut self.branch[depth];
+                let node = &self.branch[depth];
                 if !pre_dict.branch.contains(node) {
-                    let content_orig = node.get_content()?;
                     // current join/only
                     let step = &joins[j];
-                    node.add_content(step.filename.clone(), step.linenum, step.content_type.clone())?;
-                    if !pre_dict.update_from_node(node.clone())? {
+                    let mut node = self.branch[depth].clone();
+                    node.add_content(step.filename.clone(), step.linenum, step.content_type.clone());
+                    if !pre_dict.update_from_node(node)? {
                         return Ok(None);
                     }
-                    node.swap_content(content_orig)?;
                 }
                 // compute dict for this width
                 let d = pre_dict.get_dicts(false, true)?;
@@ -1923,7 +1933,7 @@ impl PreDict {
                 // remove all previous grand children and their effects on current pre-dict clone
                 if let Some(ref mut pre_dict) = pre_dicts[j] {
                     for _ in (pre_dict.route.len().saturating_sub(1))..pre_dict.route.len() {
-                        pre_dict.reset_from_last_node()?;
+                        pre_dict.reset_from_last_node();
                     }
                 }
                 width -= 1;
@@ -1937,11 +1947,11 @@ impl PreDict {
                 let mut shortname = String::new();
                 for di in dicts.iter().flatten() {
                     if name.is_empty() {
-                        name = di.get(&"name".to_string().into()).map(|v| v.clone().into()).unwrap_or_default();
-                        shortname = di.get(&"shortname".to_string().into()).map(|v| v.clone().into()).unwrap_or_default();
+                        name = di.get(&"name".to_string().into()).map(|v| Cow::from(v).into()).unwrap_or_default();
+                        shortname = di.get(&"shortname".to_string().into()).map(|v| Cow::from(v).into()).unwrap_or_default();
                     } else {
-                        let other_name = di.get(&"name".to_string().into()).map(|v| Into::<String>::into(v.clone())).unwrap_or_default();
-                        let other_short = di.get(&"shortname".to_string().into()).map(|v| Into::<String>::into(v.clone())).unwrap_or_default();
+                        let other_name: String = di.get(&"name".to_string().into()).map(|v| Cow::from(v).into()).unwrap_or_default();
+                        let other_short: String = di.get(&"shortname".to_string().into()).map(|v| Cow::from(v).into()).unwrap_or_default();
                         name = Node::join_names(&name, &other_name);
                         shortname = Node::join_names(&shortname, &other_short);
                     }
@@ -1994,9 +2004,9 @@ impl PreDict {
             let node = &mut self.branch[depth];
 
             // find joins from node content and prepare only-filters
-            let mut plain_content: Vec<ContentStep> = Vec::new();
-            let mut new_joins: Vec<ContentStep> = Vec::new();
-            for t in node.get_content()? {
+            let mut plain_content: Vec<ContentStep> = Vec::with_capacity(node.content.len());
+            let mut new_joins: Vec<ContentStep> = Vec::with_capacity(node.content.len());
+            for t in node.get_content() {
                 match t.content_type {
                     ContentType::Filters(Filters::JoinFilter {filter, line }) => {
                         // accumulate join steps
@@ -2029,7 +2039,7 @@ impl PreDict {
                 self.join_dicts[depth] = Some(vec![None; onlys.len()]);
                 self.join_pre_dicts[depth] = Some(vec![None; onlys.len()]);
                 // provide join-free content to processed node
-                node.swap_content(plain_content)?;
+                node.swap_content(plain_content);
                 joins = &mut self.joins[depth];
             }
         }
@@ -2067,8 +2077,8 @@ mod tests {
         dict.insert("key".to_string().into(), "value".to_string().into());
 
         // apply_dict should add an LApplyDict content step and clear dict
-        node.apply_dict(&lexer, dict).expect("apply_dict failed");
-        let content = node.get_content().expect("get_content failed");
+        node.apply_dict(&lexer, dict);
+        let content = node.get_content();
         assert_eq!(content.len(), 1);
 
         // content type should be Tokens::LApplyDict and contains our key/value
@@ -2101,7 +2111,7 @@ mod tests {
 
         // apply_include should parse the included file and return a node with a child named "test"
         let returned = node.apply_include(&mut lexer, dict).expect("apply_include failed");
-        let children = returned.get_children().unwrap();
+        let children = returned.get_children();
         assert_eq!(children.len(), 1);
         let child = &children[0];
         assert_eq!(child.name.len(), 1);
@@ -2127,7 +2137,7 @@ mod tests {
         // dict now should contain both key1 and key2, and node content should be empty
         assert_eq!(dict.get(&"key1".to_string().into()), Some(&"value1".to_string().into()));
         assert_eq!(dict.get(&"key2".to_string().into()), Some(&"value2".to_string().into()));
-        let content = node.get_content().expect("get_content failed");
+        let content = node.get_content();
         assert_eq!(content.len(), 0);
     }
 
@@ -2148,7 +2158,7 @@ mod tests {
         // dict should be updated
         assert_eq!(dict.get(&"key1".to_string().into()), Some(&"value1&value2".to_string().into()));
         // node content should be empty
-        let content = node.get_content().expect("get_content failed");
+        let content = node.get_content();
         assert_eq!(content.len(), 0);
     }
 
@@ -2167,7 +2177,7 @@ mod tests {
         node.apply_operator(identifier, token, &mut lexer, dict).expect("apply_operator failed");
 
         // node content should be extended with append operation step
-        let content = node.get_content().expect("get_content failed");
+        let content = node.get_content();
         assert_eq!(content.len(), 2);
         // first should be an LApplyDict, second an LAppend
         match &content[0].content_type {
@@ -2199,7 +2209,7 @@ mod tests {
         node.apply_deletion(&mut lexer, dict).expect("apply_deletion failed");
 
         // node content should be extended with delete operation step
-        let content = node.get_content().expect("get_content failed");
+        let content = node.get_content();
         assert_eq!(content.len(), 2);
         match &content[0].content_type {
             ContentType::Tokens(Tokens::LApplyDict(_, map)) => {
@@ -2229,7 +2239,7 @@ mod tests {
 
         node.apply_condition(identifier, token, &mut lexer, dict, 0).expect("apply_condition failed");
 
-        let content = node.get_content().expect("get_content failed");
+        let content = node.get_content();
         assert_eq!(content.len(), 2);
         // first should be LApplyDict, second a Node with a positive condition
         match &content[0].content_type {
@@ -2262,7 +2272,7 @@ mod tests {
 
         node.apply_notcondition(&mut lexer, dict, 0).expect("apply_notcondition failed");
 
-        let content = node.get_content().expect("get_content failed");
+        let content = node.get_content();
         assert_eq!(content.len(), 2);
         // first should be LApplyDict, second a Node with a negative condition
         match &content[0].content_type {
@@ -2296,7 +2306,7 @@ mod tests {
         assert_eq!(variant_name, "test");
         assert!(meta.is_empty());
         // content should be empty
-        let content = node.get_content().expect("get_content failed");
+        let content = node.get_content();
         assert_eq!(content.len(), 0);
     }
 
@@ -2319,7 +2329,7 @@ mod tests {
         assert_eq!(meta.get("meta3").map(|v| v.as_slice()), Some(&["true".to_string()][..]));
         assert_eq!(meta.get("meta4").map(|v| v.as_slice()), Some(&["val4 val5".to_string()][..]));
         // content should be empty
-        let content = node.get_content().expect("get_content failed");
+        let content = node.get_content();
         assert_eq!(content.len(), 0);
     }
 
@@ -2347,7 +2357,7 @@ mod tests {
         ).expect("apply_variant failed");
 
         // original node should receive the flushed dict content
-        let content = node.get_content().expect("get_content");
+        let content = node.get_content();
         assert!(!content.is_empty());
         match &content[0].content_type {
             ContentType::Tokens(Tokens::LApplyDict(_, map)) => {
@@ -2357,7 +2367,7 @@ mod tests {
         }
 
         // grandparent node should have one child (the variant) whose name is "test"
-        let parents = grandparent_node.get_children().unwrap();
+        let parents = grandparent_node.get_children();
         assert_eq!(parents.len(), 1);
         let parent_node = &parents[0];
         assert_eq!(parent_node.name.len(), 1);
@@ -2365,7 +2375,7 @@ mod tests {
         assert_eq!(parent_node.name[0].name, "test".to_string());
 
         // child should include the original grand child as its child
-        let children = parent_node.get_children().unwrap();
+        let children = parent_node.get_children();
         assert_eq!(children.len(), 1);
         assert_eq!(children[0], node);
     }

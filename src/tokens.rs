@@ -28,27 +28,38 @@ impl From<String> for ParamKey {
         ParamKey::String(s)
     }
 }
-impl From<ParamKey> for String {
-    fn from(p: ParamKey) -> Self {
+impl<'a> From<&'a ParamKey> for Cow<'a, str> {
+    fn from(p: &'a ParamKey) -> Self {
         match p {
-            ParamKey::String(s) => s,
+            ParamKey::String(s) => Cow::Borrowed(s.as_str()),
             ParamKey::Tuple(v) => {
-                v.iter().fold(String::new(), |mut acc, item| {
+                let concatenated = v.iter().fold(String::new(), |mut acc, item| {
                     acc.push_str(item);
                     acc
-                })
+                });
+                Cow::Owned(concatenated)
             }
         }
     }
 }
 impl fmt::Display for ParamKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", String::from(self.clone()))
+        match self {
+            ParamKey::String(key) => {
+                f.write_str(key)?;
+            }
+            ParamKey::Tuple(key) => {
+                for value in key {
+                    f.write_str(value)?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 impl fmt::Debug for ParamKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", String::from(self.clone()))
+        write!(f, "{}", self)
     }
 }
 impl<'py> IntoPyObject<'py> for ParamKey {
@@ -96,36 +107,57 @@ impl From<String> for ParamVal {
         ParamVal::String(s)
     }
 }
-impl From<ParamVal> for String {
-    fn from(p: ParamVal) -> Self {
+impl<'a> From<&'a ParamVal> for Cow<'a, str> {
+    fn from(p: &'a ParamVal) -> Self {
         match p {
-            ParamVal::String(s) => s,
+            ParamVal::String(s) => Cow::Borrowed(s.as_str()),
             ParamVal::List(v) => {
-                v.iter().fold(String::new(), |mut acc, item| {
+                let concatenated = v.iter().fold(String::new(), |mut acc, item| {
                     acc.push_str(item);
                     acc
-                })
+                });
+                Cow::Owned(concatenated)
             }
             ParamVal::Dict(h) => {
-                h.iter().fold(String::new(), |mut acc, item| {
+                let concatenated = h.iter().fold(String::new(), |mut acc, item| {
                     acc.push_str(item.0);
                     acc.push('=');
                     acc.push_str(item.1);
                     acc.push(';');
                     acc
-                })
+                });
+                Cow::Owned(concatenated)
             }
         }
     }
 }
 impl fmt::Display for ParamVal {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", String::from(self.clone()))
+        match self {
+            ParamVal::String(value) => {
+                f.write_str(value)?;
+            }
+            ParamVal::List(values) => {
+                for value in values {
+                    f.write_str(value)?;
+                    f.write_str(",")?;
+                }
+            }
+            ParamVal::Dict(hash) => {
+                for (key, value) in hash {
+                    f.write_str(key)?;
+                    f.write_str("=")?;
+                    f.write_str(value)?;
+                    f.write_str(";")?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 impl fmt::Debug for ParamVal {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", String::from(self.clone()))
+        write!(f, "{}", self)
     }
 }
 impl<'py> IntoPyObject<'py> for ParamVal {
@@ -260,13 +292,13 @@ impl Tokens {
         self.to_string()
     }
 
-    fn __str__(&self) -> PyResult<String> {
-        Ok(self.to_string())
+    fn __str__(&self) -> String {
+        self.to_string()
     }
 
-    fn __repr__(&self) -> PyResult<String> {
-        let s = self.__str__()?;
-        Ok(format!("'{s}'"))
+    fn __repr__(&self) -> String {
+        let s = self.__str__();
+        format!("'{s}'")
     }
 
     #[staticmethod]
@@ -326,14 +358,14 @@ impl Tokens {
 
     pub fn like(&self, name: String, value: String) -> PyResult<Self> {
         match self {
-            Tokens::LSet(_name, _value) => Ok(Tokens::LSet(name.to_string(), value.to_string())),
-            Tokens::LAppend(_name, _value) => Ok(Tokens::LAppend(name.to_string(), value.to_string())),
-            Tokens::LPrepend(_name, _value) => Ok(Tokens::LPrepend(name.to_string(), value.to_string())),
-            Tokens::LLazySet(_name, _value) => Ok(Tokens::LLazySet(name.to_string(), value.to_string())),
-            Tokens::LRegExpSet(_name, _value) => Ok(Tokens::LRegExpSet(name.to_string(), value.to_string())),
-            Tokens::LRegExpAppend(_name, _value) => Ok(Tokens::LRegExpAppend(name.to_string(), value.to_string())),
-            Tokens::LRegExpPrepend(_name, _value) => Ok(Tokens::LRegExpPrepend(name.to_string(), value.to_string())),
-            Tokens::LDel(_name, _value) => Ok(Tokens::LDel(name.to_string(), value.to_string())),
+            Tokens::LSet(_name, _value) => Ok(Tokens::LSet(name, value)),
+            Tokens::LAppend(_name, _value) => Ok(Tokens::LAppend(name, value)),
+            Tokens::LPrepend(_name, _value) => Ok(Tokens::LPrepend(name, value)),
+            Tokens::LLazySet(_name, _value) => Ok(Tokens::LLazySet(name, value)),
+            Tokens::LRegExpSet(_name, _value) => Ok(Tokens::LRegExpSet(name, value)),
+            Tokens::LRegExpAppend(_name, _value) => Ok(Tokens::LRegExpAppend(name, value)),
+            Tokens::LRegExpPrepend(_name, _value) => Ok(Tokens::LRegExpPrepend(name, value)),
+            Tokens::LDel(_name, _value) => Ok(Tokens::LDel(name, value)),
             _ => Err(PyAttributeError::new_err("like is not a valid attribute for this token")),
         }
     }
@@ -350,9 +382,9 @@ impl Tokens {
     #[getter]
     pub fn string(&self) -> PyResult<String> {
         match self {
-            Tokens::LIdentifier(string) => Ok(string.to_string()),
-            Tokens::LWhite(string) => Ok(string.to_string()),
-            Tokens::LString(string) => Ok(string.to_string()),
+            Tokens::LIdentifier(string) => Ok(string.clone()),
+            Tokens::LWhite(string) => Ok(string.clone()),
+            Tokens::LString(string) => Ok(string.clone()),
             _ => Err(PyAttributeError::new_err("string is not a valid attribute for this token")),
         }
     }
@@ -360,17 +392,17 @@ impl Tokens {
     #[getter]
     pub fn name(&self) -> PyResult<String> {
         match self {
-            Tokens::LSet(name, _value) => Ok(name.to_string()),
-            Tokens::LAppend(name, _value) => Ok(name.to_string()),
-            Tokens::LPrepend(name, _value) => Ok(name.to_string()),
-            Tokens::LLazySet(name, _value) => Ok(name.to_string()),
-            Tokens::LRegExpSet(name, _value) => Ok(name.to_string()),
-            Tokens::LRegExpAppend(name, _value) => Ok(name.to_string()),
-            Tokens::LRegExpPrepend(name, _value) => Ok(name.to_string()),
-            Tokens::LDel(name, _value) => Ok(name.to_string()),
-            Tokens::LApplyDict(name, _value) => Ok(name.to_string()),
-            Tokens::LUpdateFileMap(_filename, name, _value) => Ok(name.to_string()),
-            Tokens::Suffix(name, _value) => Ok(name.to_string()),
+            Tokens::LSet(name, _value) => Ok(name.clone()),
+            Tokens::LAppend(name, _value) => Ok(name.clone()),
+            Tokens::LPrepend(name, _value) => Ok(name.clone()),
+            Tokens::LLazySet(name, _value) => Ok(name.clone()),
+            Tokens::LRegExpSet(name, _value) => Ok(name.clone()),
+            Tokens::LRegExpAppend(name, _value) => Ok(name.clone()),
+            Tokens::LRegExpPrepend(name, _value) => Ok(name.clone()),
+            Tokens::LDel(name, _value) => Ok(name.clone()),
+            Tokens::LApplyDict(name, _value) => Ok(name.clone()),
+            Tokens::LUpdateFileMap(_filename, name, _value) => Ok(name.clone()),
+            Tokens::Suffix(name, _value) => Ok(name.clone()),
             _ => Err(PyAttributeError::new_err("name is not a valid attribute for this token")),
         }
     }
@@ -378,16 +410,16 @@ impl Tokens {
     #[getter]
     fn value(&self) -> PyResult<String> {
         match self {
-            Tokens::LSet(_name, value) => Ok(value.to_string()),
-            Tokens::LAppend(_name, value) => Ok(value.to_string()),
-            Tokens::LPrepend(_name, value) => Ok(value.to_string()),
-            Tokens::LLazySet(_name, value) => Ok(value.to_string()),
-            Tokens::LRegExpSet(_name, value) => Ok(value.to_string()),
-            Tokens::LRegExpAppend(_name, value) => Ok(value.to_string()),
-            Tokens::LRegExpPrepend(_name, value) => Ok(value.to_string()),
-            Tokens::LDel(_name, value) => Ok(value.to_string()),
-            Tokens::LUpdateFileMap(_filename, _name, value) => Ok(value.to_string()),
-            Tokens::Suffix(_name, value) => Ok(value.to_string()),
+            Tokens::LSet(_name, value) => Ok(value.clone()),
+            Tokens::LAppend(_name, value) => Ok(value.clone()),
+            Tokens::LPrepend(_name, value) => Ok(value.clone()),
+            Tokens::LLazySet(_name, value) => Ok(value.clone()),
+            Tokens::LRegExpSet(_name, value) => Ok(value.clone()),
+            Tokens::LRegExpAppend(_name, value) => Ok(value.clone()),
+            Tokens::LRegExpPrepend(_name, value) => Ok(value.clone()),
+            Tokens::LDel(_name, value) => Ok(value.clone()),
+            Tokens::LUpdateFileMap(_filename, _name, value) => Ok(value.clone()),
+            Tokens::Suffix(_name, value) => Ok(value.clone()),
             _ => Err(PyAttributeError::new_err("value is not a valid attribute for this token")),
         }
     }
@@ -395,7 +427,7 @@ impl Tokens {
     #[getter]
     fn filename(&self) -> PyResult<String> {
         match self {
-            Tokens::LUpdateFileMap(filename, _name, _value) => Ok(filename.to_string()),
+            Tokens::LUpdateFileMap(filename, _name, _value) => Ok(filename.clone()),
             _ => Err(PyAttributeError::new_err("filename is not a valid attribute for this token")),
         }
     }
@@ -464,8 +496,8 @@ impl Tokens {
                 let substituted = substitution(value, dict)?;
                 let substituted_val = ParamVal::from(substituted);
                 for (key, val) in dict.iter_mut() {
-                    let key_str = String::from(key.clone());
-                    if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
+                    let key_str = Cow::from(key);
+                    if !RESERVED_KEYS.contains(&key_str.as_ref()) && exp.is_match(&key_str) {
                         *val = substituted_val.clone();
                     }
                 }
@@ -476,8 +508,8 @@ impl Tokens {
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
                 let substituted = substitution(value, dict)?;
                 for (key, val) in dict.iter_mut() {
-                    let key_str = String::from(key.clone());
-                    if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
+                    let key_str = Cow::from(key);
+                    if !RESERVED_KEYS.contains(&key_str.as_ref()) && exp.is_match(&key_str) {
                         *val = format!("{val}{substituted}").into();
                     }
                 }
@@ -488,8 +520,8 @@ impl Tokens {
                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
                 let substituted = substitution(value, dict)?;
                 for (key, val) in dict.iter_mut() {
-                    let key_str: String = String::from(key.clone());
-                    if !RESERVED_KEYS.contains(&key_str.as_str()) && exp.is_match(&key_str) {
+                    let key_str = Cow::from(key);
+                    if !RESERVED_KEYS.contains(&key_str.as_ref()) && exp.is_match(&key_str) {
                         *val = format!("{substituted}{val}").into();
                     }
                 }
@@ -499,8 +531,8 @@ impl Tokens {
                 let exp = Regex::new(&format!(r"^{name}$"))
                     .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
                 dict.retain(|key, _value| {
-                    let key_str: String = String::from(key.clone());
-                    RESERVED_KEYS.contains(&key_str.as_str()) || !exp.is_match(&key_str)
+                    let key_str = Cow::from(key);
+                    RESERVED_KEYS.contains(&key_str.as_ref()) || !exp.is_match(&key_str)
                 });
                 Ok(())
             }
@@ -640,7 +672,7 @@ fn compare_data_size(a: &str, b: &str) -> cmp::Ordering {
     }
 }
 
-pub fn apply_suffix_bounds(dict: &mut HashMap<ParamKey, ParamVal>) -> PyResult<()> {
+pub fn apply_suffix_bounds(dict: &mut HashMap<ParamKey, ParamVal>) {
     for key in dict.keys().cloned().collect::<Vec<_>>() {
         match key {
             ParamKey::Tuple(_) => {
@@ -673,8 +705,6 @@ pub fn apply_suffix_bounds(dict: &mut HashMap<ParamKey, ParamVal>) -> PyResult<(
             _ => {}
         }
     }
-
-    Ok(())
 }
 
 pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyResult<HashMap<ParamKey, ParamVal>> {
@@ -691,9 +721,9 @@ pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyRe
                     let mut can_drop_all_suffixes = true;
 
                     if skipdups {
-                        let value_str = String::from(value.clone());
+                        let value_str = Cow::from(value);
                         if let Some(gen_value) = dict.get(&gen_key) {
-                            let gen_value_str = String::from(gen_value.clone());
+                            let gen_value_str = Cow::from(gen_value);
                             if gen_value_str == value_str {
                                 return None; // Skip duplicate suffixes
                             } else {
@@ -709,7 +739,7 @@ pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyRe
                                         ParamKey::Tuple(other_vec) => {
                                             other_vec.first()
                                                 .filter(|k| *k == &gen_key_str)
-                                                .map(|_| String::from(other_value.clone()))
+                                                .map(|_| Cow::from(other_value))
                                         }
                                         _ => None,
                                     }
@@ -835,16 +865,16 @@ mod tests {
             (ParamKey::String("speed_fixed".to_string()), ParamVal::String("100M".to_string())),
             (ParamKey::String("speed".to_string()), ParamVal::String("50M".to_string())),
         ].iter().cloned().collect();
-        apply_suffix_bounds(&mut d).unwrap();
+        apply_suffix_bounds(&mut d);
         assert_eq!(d.get(&ParamKey::String("size".to_string())), Some(&ParamVal::String("2G".to_string())));
         assert_eq!(d.get(&ParamKey::String("speed".to_string())), Some(&ParamVal::String("100M".to_string())));
 
         d.insert(ParamKey::String("size".to_string()), ParamVal::String("0.5G".to_string()));
-        apply_suffix_bounds(&mut d).unwrap();
+        apply_suffix_bounds(&mut d);
         assert_eq!(d.get(&ParamKey::String("size".to_string())), Some(&ParamVal::String("1G".to_string())));
 
         d.insert(ParamKey::String("size".to_string()), ParamVal::String("1.5G".to_string()));
-        apply_suffix_bounds(&mut d).unwrap();
+        apply_suffix_bounds(&mut d);
         assert_eq!(d.get(&ParamKey::String("size".to_string())), Some(&ParamVal::String("1.5G".to_string())));
     }
 

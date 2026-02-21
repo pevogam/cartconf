@@ -1,4 +1,4 @@
-use std::iter::{once, Once, Chain};
+use std::iter::{Once, once, Chain};
 use std::vec::IntoIter;
 
 use pyo3::prelude::*;
@@ -53,112 +53,20 @@ pub enum Filters {
 
 #[pymethods]
 impl Filters {
-    /// Check if filter matches in context.
-    pub fn match_ctx(&self, ctx: Vec<Label>) -> PyResult<bool> {
+    pub fn __str__(&self) -> String {
         match self {
-            Filters::Filter { filter } | Filters::NoOnlyFilter { filter, .. } | Filters::OnlyFilter { filter, .. } | Filters::NoFilter { filter, .. } | Filters::JoinFilter { filter, .. } | Filters::Condition { filter, .. } | Filters::NegativeCondition { filter, .. } => {
-                for word in filter {
-                    let mut all_blocks_matched = true;
-                    for block in word {
-                        if Self::match_adjacent(block.clone(), ctx.clone()) != block.len() {
-                            all_blocks_matched = false;
-                            break;
-                        }
-                    }
-                    if all_blocks_matched {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-            _ => Ok(false)
+            Filters::OnlyFilter { filter, .. } => format!("Only {:?}", filter),
+            Filters::NoFilter { filter, .. } => format!("No {:?}", filter),
+            Filters::JoinFilter { filter, .. } => format!("Join {:?}", filter),
+            Filters::Condition { filter, .. } => format!("Condition {:?}", filter),
+            Filters::NegativeCondition { filter, .. } => format!("NotCond {:?}", filter),
+            Filters::BlockFilter { blocked } => format!("BlockFilter blocked={}", blocked),
+            Filters::Filter { filter } => format!("Filter {:?}", filter),
+            Filters::NoOnlyFilter { filter, .. } => format!("NoOnlyFilter {:?}", filter),
         }
     }
 
-    /// Check if filter might match in context, considering descendant labels.
-    pub fn might_match(&self, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> PyResult<bool> {
-        match self {
-            Filters::Filter { filter } | Filters::NoOnlyFilter { filter, .. } | Filters::OnlyFilter { filter, .. } | Filters::NoFilter { filter, .. } | Filters::Condition { filter, .. } | Filters::NegativeCondition { filter, .. } | Filters::JoinFilter { filter, .. } => {
-                for word in filter {
-                    let mut all_blocks_passed = true;
-                    for block in word {
-                        if !Self::might_match_adjacent(block.clone(), ctx.clone(), descendant_labels.clone()) {
-                            all_blocks_passed = false;
-                            break;
-                        }
-                    }
-                    if all_blocks_passed {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-            _ => Ok(false)
-        }
-    }
-
-    pub fn is_irrelevant(&self, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> PyResult<bool> {
-        match self {
-            // Matched in this tree.
-            Filters::OnlyFilter { .. } => self.match_ctx(ctx),
-            Filters::NoFilter { .. } => Ok(!self.might_match(ctx, descendant_labels)?),
-            Filters::Condition { .. } => Ok(!self.might_match(ctx, descendant_labels)?),
-            Filters::NegativeCondition { .. } => self.match_ctx(ctx),
-            _ => Ok(false)
-        }
-    }
-
-    pub fn requires_action(&self, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> PyResult<bool> {
-        match self {
-            // Impossible to match in this tree.
-            Filters::OnlyFilter { .. } => Ok(!self.might_match(ctx, descendant_labels)?),
-            Filters::NoFilter { .. } => self.match_ctx(ctx),
-            Filters::Condition { .. } => self.match_ctx(ctx),
-            Filters::NegativeCondition { .. } => Ok(!self.might_match(ctx, descendant_labels)?),
-            _ => Ok(false)
-        }
-    }
-
-    pub fn might_pass(&self, failed_ctx: Vec<Label>, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> PyResult<bool> {
-        match self {
-            Filters::OnlyFilter { filter, .. } | Filters::NegativeCondition { filter, .. } => {
-                for word in filter {
-                    for block in word {
-                        if Self::match_adjacent(block.clone(), ctx.clone()) > Self::match_adjacent(block.clone(), failed_ctx.clone()) {
-                            return self.might_match(ctx, descendant_labels);
-                        }
-                    }
-                }
-                Ok(false)
-            }
-            Filters::NoFilter { filter, .. } | Filters::Condition { filter, .. } => {
-                for word in filter {
-                    for block in word {
-                        if Self::match_adjacent(block.clone(), ctx.clone()) < Self::match_adjacent(block.clone(), failed_ctx.clone()) {
-                            return Ok(!self.match_ctx(ctx)?);
-                        }
-                    }
-                }
-                Ok(false)
-            }
-            _ => Ok(false)
-        }
-    }
-
-    pub fn __str__(&self) -> PyResult<String> {
-        match self {
-            Filters::OnlyFilter { filter, .. } => Ok(format!("Only {:?}", filter)),
-            Filters::NoFilter { filter, .. } => Ok(format!("No {:?}", filter)),
-            Filters::JoinFilter { filter, .. } => Ok(format!("Join {:?}", filter)),
-            Filters::Condition { filter, .. } => Ok(format!("Condition {:?}", filter)),
-            Filters::NegativeCondition { filter, .. } => Ok(format!("NotCond {:?}", filter)),
-            Filters::BlockFilter { blocked } => Ok(format!("BlockFilter blocked={}", blocked)),
-            Filters::Filter { filter } => Ok(format!("Filter {:?}", filter)),
-            Filters::NoOnlyFilter { filter, .. } => Ok(format!("NoOnlyFilter {:?}", filter)),
-        }
-    }
-
-    pub fn __repr__(&self) -> PyResult<String> {
+    pub fn __repr__(&self) -> String {
         self.__str__()
     }
 
@@ -178,47 +86,43 @@ impl Filters {
 
     /// Try to match as many blocks as possible from context.
     #[staticmethod]
-    fn match_adjacent(block: Vec<Label>, ctx: Vec<Label>) -> usize {
-        if block.is_empty() || !ctx.contains(&block[0]) {
-            return 0;
-        }
-        if block.len() == 1 {
-            return 1;
-        }
-        if !ctx.contains(&block[1]) {
-            return if ctx.last().is_some_and(|x| x == &block[0]) { 1 } else { 0 };
-        }
-        let mut k = 0;
-        let mut i = ctx.iter().position(|x| x == &block[0]).unwrap_or(0);
-        while i < ctx.len() {
-            if k > 0 && ctx[i] != block[k] {
-                i = i.saturating_sub(k - 1);
-                k = 0;
-            }
-            if ctx[i] == block[k] {
-                k += 1;
-                if k >= block.len() {
-                    break;
-                }
-                if !ctx.contains(&block[k]) {
-                    break;
-                }
-            }
-            i += 1;
-        }
-        k
+    #[pyo3(name = "match_adjacent")]
+    fn match_adjacent_py(block: Vec<Label>, ctx: Vec<Label>) -> usize {
+        Filters::match_adjacent(&block, &ctx)
     }
 
     /// Try to maybe match as many blocks as possible from context.
     #[staticmethod]
-    fn might_match_adjacent(block: Vec<Label>, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> bool {
-        let matched = Self::match_adjacent(block.clone(), ctx.clone());
-        for elem in block.iter().skip(matched) {
-            if !descendant_labels.contains(elem) {
-                return false;
-            }
-        }
-        true
+    #[pyo3(name = "might_match_adjacent")]
+    fn might_match_adjacent_py(block: Vec<Label>, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> bool {
+        Filters::might_match_adjacent(&block, &ctx, &descendant_labels)
+    }
+
+    /// Check if filter matches in context.
+    #[pyo3(name = "match_ctx")]
+    pub fn match_ctx_py(&self, ctx: Vec<Label>) -> bool {
+        Filters::match_ctx(self, &ctx)
+    }
+
+    /// Check if filter might match in context, considering descendant labels.
+    #[pyo3(name = "might_match")]
+    pub fn might_match_py(&self, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> bool {
+        Filters::might_match(self, &ctx, &descendant_labels)
+    }
+
+    #[pyo3(name = "is_irrelevant")]
+    pub fn is_irrelevant_py(&self, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> bool {
+        Filters::is_irrelevant(self, &ctx, &descendant_labels)
+    }
+
+    #[pyo3(name = "requires_action")]
+    pub fn requires_action_py(&self, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> bool {
+        Filters::requires_action(self, &ctx, &descendant_labels)
+    }
+
+    #[pyo3(name = "might_pass")]
+    pub fn might_pass_py(&self, failed_ctx: Vec<Label>, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> bool {
+        Filters::might_pass(self, &failed_ctx, &ctx, &descendant_labels)
     }
 
     /// Parse a filter from a list of tokens.
@@ -251,7 +155,7 @@ impl Filters {
     * ``ide, scsi`` is equivalent to ``scsi, ide``.
     */
     #[staticmethod]
-    pub fn parse_filter(tokens: Vec<Tokens>, line: String, filename: String, linenum: isize) -> PyResult<Vec<Vec<Vec<Label>>>> {
+    pub fn parse_filter(tokens: Vec<Tokens>, line: Option<&str>, filename: &str, linenum: isize) -> PyResult<Vec<Vec<Vec<Label>>>> {
         let mut or_filters = Vec::new();
         let mut and_filter = Vec::new();
         let mut con_filter = Vec::new();
@@ -281,8 +185,8 @@ impl Filters {
                         } else {
                             return Err(PyErr::new::<ParserError, _>((
                                 "Expected identifier after '('".to_string(),
-                                Some(line),
-                                Some(filename),
+                                Some(line.unwrap_or("<none>").to_string()),
+                                Some(filename.to_string()),
                                 Some(linenum),
                             )));
                         };
@@ -296,8 +200,8 @@ impl Filters {
                                     _ => {
                                         return Err(PyErr::new::<ParserError, _>((
                                             "Expected value after '='".to_string(),
-                                            Some(line),
-                                            Some(filename),
+                                            Some(line.unwrap_or("<none>").to_string()),
+                                            Some(filename.to_string()),
                                             Some(linenum),
                                         )));
                                     }
@@ -307,8 +211,8 @@ impl Filters {
                                     _ => {
                                         return Err(PyErr::new::<ParserError, _>((
                                             "Expected ')' after value".to_string(),
-                                            Some(line),
-                                            Some(filename),
+                                            Some(line.unwrap_or("<none>").to_string()),
+                                            Some(filename.to_string()),
                                             Some(linenum),
                                         )));
                                     }
@@ -321,8 +225,8 @@ impl Filters {
                             _ => {
                                 return Err(PyErr::new::<ParserError, _>((
                                     "Expected '=' or ')' after '( with format like (xxx=yyy) or (xxx)'".to_string(),
-                                    Some(line),
-                                    Some(filename),
+                                    Some(line.unwrap_or("<none>").to_string()),
+                                    Some(filename.to_string()),
                                     Some(linenum),
                                 )));
                             }
@@ -333,8 +237,8 @@ impl Filters {
                     } else {
                         return Err(PyErr::new::<ParserError, _>((
                             "Complex filter doesn't have format like (xxx=yyy) or (xxx)'".to_string(),
-                            Some(line),
-                            Some(filename),
+                            Some(line.unwrap_or("<none>").to_string()),
+                            Some(filename.to_string()),
                             Some(linenum),
                         )));
                     };
@@ -347,8 +251,8 @@ impl Filters {
                     } else if dots == 0 || dots > 2{
                         return Err(PyErr::new::<ParserError, _>((
                             "Syntax Error: Expected '.' or '..' between identifiers".to_string(),
-                            Some(line),
-                            Some(filename),
+                            Some(line.unwrap_or("<none>").to_string()),
+                            Some(filename.to_string()),
                             Some(linenum),
                         )));
                     }
@@ -361,8 +265,8 @@ impl Filters {
                     if first_token {
                         return Err(PyErr::new::<ParserError, _>((
                             "Syntax Error: Filter cannot start with '.'".to_string(),
-                            Some(line),
-                            Some(filename),
+                            Some(line.unwrap_or("<none>").to_string()),
+                            Some(filename.to_string()),
                             Some(linenum),
                         )));
                     }
@@ -376,16 +280,16 @@ impl Filters {
                     if matches!(token, Tokens::LComa()) && first_token {
                         return Err(PyErr::new::<ParserError, _>((
                             "Syntax Error: Filter cannot start with ','".to_string(),
-                            Some(line),
-                            Some(filename),
+                            Some(line.unwrap_or("<none>").to_string()),
+                            Some(filename.to_string()),
                             Some(linenum),
                         )));
                     }
                     if !white_after_comma && dots > 0 {
                         return Err(PyErr::new::<ParserError, _>((
                             "Syntax Error: Expected identifier between '.' and ','".to_string(),
-                            Some(line),
-                            Some(filename),
+                            Some(line.unwrap_or("<none>").to_string()),
+                            Some(filename.to_string()),
                             Some(linenum),
                         )));
                     }
@@ -406,8 +310,8 @@ impl Filters {
                 _ => {
                     return Err(PyErr::new::<ParserError, _>((
                         "Unexpected token in filter".to_string(),
-                        Some(line),
-                        Some(filename),
+                        Some(line.unwrap_or("<none>").to_string()),
+                        Some(filename.to_string()),
                         Some(linenum),
                     )));
                 }
@@ -425,11 +329,150 @@ impl Filters {
         Ok(or_filters)
     }
 }
+impl Filters {
+    /// Try to match as many blocks as possible from context.
+    fn match_adjacent(block: &[Label], ctx: &[Label]) -> usize {
+        if block.is_empty() || !ctx.contains(&block[0]) {
+            return 0;
+        }
+        if block.len() == 1 {
+            return 1;
+        }
+        if !ctx.contains(&block[1]) {
+            return if ctx.last().is_some_and(|x| x == &block[0]) { 1 } else { 0 };
+        }
+        let mut k = 0;
+        let mut i = ctx.iter().position(|x| x == &block[0]).unwrap_or(0);
+        while i < ctx.len() {
+            if k > 0 && ctx[i] != block[k] {
+                i = i.saturating_sub(k - 1);
+                k = 0;
+            }
+            if ctx[i] == block[k] {
+                k += 1;
+                if k >= block.len() {
+                    break;
+                }
+                if !ctx.contains(&block[k]) {
+                    break;
+                }
+            }
+            i += 1;
+        }
+        k
+    }
+
+    /// Try to maybe match as many blocks as possible from context.
+    fn might_match_adjacent(block: &[Label], ctx: &[Label], descendant_labels: &[Label]) -> bool {
+        let matched = Self::match_adjacent(block, ctx);
+        for elem in block.iter().skip(matched) {
+            if !descendant_labels.contains(elem) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Check if filter matches in context.
+    pub fn match_ctx(&self, ctx: &[Label]) -> bool {
+        match self {
+            Filters::Filter { filter } | Filters::NoOnlyFilter { filter, .. } | Filters::OnlyFilter { filter, .. } | Filters::NoFilter { filter, .. } | Filters::JoinFilter { filter, .. } | Filters::Condition { filter, .. } | Filters::NegativeCondition { filter, .. } => {
+                for word in filter {
+                    let mut all_blocks_matched = true;
+                    for block in word {
+                        if Self::match_adjacent(block, ctx) != block.len() {
+                            all_blocks_matched = false;
+                            break;
+                        }
+                    }
+                    if all_blocks_matched {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false
+        }
+    }
+
+    /// Check if filter might match in context, considering descendant labels.
+    pub fn might_match(&self, ctx: &[Label], descendant_labels: &[Label]) -> bool {
+        match self {
+            Filters::Filter { filter } | Filters::NoOnlyFilter { filter, .. } | Filters::OnlyFilter { filter, .. } | Filters::NoFilter { filter, .. } | Filters::Condition { filter, .. } | Filters::NegativeCondition { filter, .. } | Filters::JoinFilter { filter, .. } => {
+                for word in filter {
+                    let mut all_blocks_passed = true;
+                    for block in word {
+                        if !Self::might_match_adjacent(block, ctx, descendant_labels) {
+                            all_blocks_passed = false;
+                            break;
+                        }
+                    }
+                    if all_blocks_passed {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false
+        }
+    }
+
+    pub fn is_irrelevant(&self, ctx: &[Label], descendant_labels: &[Label]) -> bool {
+        match self {
+            // Matched in this tree.
+            Filters::OnlyFilter { .. } => self.match_ctx(ctx),
+            Filters::NoFilter { .. } => !self.might_match(ctx, descendant_labels),
+            Filters::Condition { .. } => !self.might_match(ctx, descendant_labels),
+            Filters::NegativeCondition { .. } => self.match_ctx(ctx),
+            _ => false
+        }
+    }
+
+    pub fn requires_action(&self, ctx: &[Label], descendant_labels: &[Label]) -> bool {
+        match self {
+            // Impossible to match in this tree.
+            Filters::OnlyFilter { .. } => !self.might_match(ctx, descendant_labels),
+            Filters::NoFilter { .. } => self.match_ctx(ctx),
+            Filters::Condition { .. } => self.match_ctx(ctx),
+            Filters::NegativeCondition { .. } => !self.might_match(ctx, descendant_labels),
+            _ => false
+        }
+    }
+
+    pub fn might_pass(&self, failed_ctx: &[Label], ctx: &[Label], descendant_labels: &[Label]) -> bool {
+        match self {
+            Filters::OnlyFilter { filter, .. } | Filters::NegativeCondition { filter, .. } => {
+                for word in filter {
+                    for block in word {
+                        if Self::match_adjacent(block, ctx) > Self::match_adjacent(block, failed_ctx) {
+                            return self.might_match(ctx, descendant_labels);
+                        }
+                    }
+                }
+                false
+            }
+            Filters::NoFilter { filter, .. } | Filters::Condition { filter, .. } => {
+                for word in filter {
+                    for block in word {
+                        if Self::match_adjacent(block, ctx) < Self::match_adjacent(block, failed_ctx) {
+                            return !self.match_ctx(ctx);
+                        }
+                    }
+                }
+                false
+            }
+            _ => false
+        }
+    }
+
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    // TODO: either migrate local better isolating tests or remove
+    // this test as it also exists on the python side
     #[test]
     fn test_match_adjacent_basic() {
         let a = Label {
@@ -448,8 +491,6 @@ mod tests {
         };
         let block = vec![a.clone()];
         let ctx = vec![a.clone(), b.clone()];
-        assert_eq!(Filters::match_adjacent(block, ctx), 1);
+        assert_eq!(Filters::match_adjacent(&block, &ctx), 1);
     }
-
-    //TODO: add local better isolating tests for functionality not exported to Python
 }

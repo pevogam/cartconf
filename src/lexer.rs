@@ -1,4 +1,6 @@
+use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::fs;
 use std::io::{self};
 use std::mem::discriminant;
 use std::sync::LazyLock;
@@ -15,7 +17,6 @@ pub struct Reader {
     pub filename: String,
     #[pyo3(get)]
     lines: Vec<(String, usize, usize)>,
-    line_index: usize,
     stored_line: Option<(String, usize, usize)>,
 }
 
@@ -24,29 +25,44 @@ impl Reader {
     #[new]
     #[pyo3(signature = (content=None, filename=None))]
     pub fn new(content: Option<&str>, filename: Option<&str>) -> io::Result<Self> {
-        if filename.is_some() && content.is_some() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Only one of filename or content can be provided"));
-        }
-        let content = if let Some(content) = content {
-            Ok(content.to_string())
-        } else if let Some(filename) = filename {
-                Ok(std::fs::read_to_string(filename)?)
-        }
-        else {
-            Err(io::Error::new(io::ErrorKind::InvalidInput, "Either filename or content must be provided"))
-        }?;
-        let filename = if let Some(filename) = filename {
-            filename.to_string()
-        } else {
-            "<string>".to_string()
+        // Nice and tight closed block of code covering all cases instead of separate loosely
+        // connected `if` statements spread out.
+        let (filename, content) = match (filename, content) {
+            (Some(_filename), Some(_content)) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Only one of filename or content can be provided",
+                ));
+            }
+            (None, Some(content)) => ("<string>".to_string(), Cow::from(content)),
+            (Some(filename), None) => (
+                filename.to_string(),
+                Cow::from(fs::read_to_string(filename)?),
+            ),
+            (None, None) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Either filename or content must be provided",
+                ));
+            }
         };
 
-        let mut lines = Vec::new();
-        for (linenum, line) in content.lines().enumerate() {
+        // lines() works on &str purely so it is either a &str directly from the Cow or
+        // the held String's as_str() returned &str
+        let content_lines = content.lines();
+        // preallocate vector to guessed capacity so that no regrows needed in case of pushes
+        let mut lines = Vec::with_capacity(match content_lines.size_hint() {
+            (_lb, Some(ub)) => ub,
+            (lb, None) => lb,
+        });
+        for (linenum, line) in content_lines.enumerate() {
             let line = line.trim_end().replace('\t', "    ");
             let stripped_line = line.trim_start();
             let indent = line.len() - stripped_line.len();
-            if stripped_line.is_empty() || stripped_line.starts_with('#') || stripped_line.starts_with("//") {
+            if stripped_line.is_empty()
+                || stripped_line.starts_with('#')
+                || stripped_line.starts_with("//")
+            {
                 continue;
             }
             lines.push((stripped_line.to_string(), indent, linenum + 1));
@@ -55,7 +71,6 @@ impl Reader {
         Ok(Reader {
             filename,
             lines,
-            line_index: 0,
             stored_line: None,
         })
     }
@@ -64,20 +79,19 @@ impl Reader {
         if let Some((line, indent, linenum)) = self.stored_line.take() {
             return (Some(line), indent as isize, linenum as isize);
         }
-        if self.line_index >= self.lines.len() {
+        if self.lines.is_empty() {
             return (None, -1, -1);
         }
         // TODO: converting usize to isize can also overflow, unify all indents and linenums
         // to usize option to map -1 to None
-        let (line, indent, linenum) = &self.lines[self.line_index];
-        if *indent as isize <= prev_indent {
-            return (None, *indent as isize, *linenum as isize);
+        if self.lines[0].1 as isize <= prev_indent {
+            return (None, self.lines[0].1 as isize, self.lines[0].2 as isize);
         }
-        self.line_index += 1;
-        (Some(line.clone()), *indent as isize, *linenum as isize)
+        let (line, indent, linenum) = self.lines.remove(0);
+        (Some(line), indent as isize, linenum as isize)
     }
 
-    pub fn set_next_line(&mut self, line: &str, indent: usize, linenum: usize) {
+    pub fn set_next_line(&mut self, line: String, indent: usize, linenum: usize) {
         let line = line.trim();
         if !line.is_empty() {
             self.stored_line = Some((line.to_string(), indent, linenum));
@@ -493,7 +507,7 @@ impl Lexer {
                                     "Cannot store negative indent '{}' at position {}",
                                     indent, self.pos,
                                 ),
-                                Some(line.to_string()),
+                                Some(line),
                                 Some(self.filename.clone()),
                                 Some(self.linenum),
                             )));
@@ -504,13 +518,13 @@ impl Lexer {
                                     "Cannot store negative line number '{}' at position {}",
                                     linenum, self.pos,
                                 ),
-                                Some(line.to_string()),
+                                Some(line),
                                 Some(self.filename.clone()),
                                 Some(self.linenum),
                             )));
                         }
                         // Keep the current line as the next line to comply with the line state machine.
-                        self.reader.set_next_line(&line, indent as usize, linenum as usize);
+                        self.reader.set_next_line(line, indent as usize, linenum as usize);
                     }
                 }
             }
@@ -524,25 +538,21 @@ impl Lexer {
     }
 
     /// Check that a token type is among the allowed token types.
+    #[pyo3(name = "check_token")]
     #[pyo3(signature = (token, check_tokens))]
-    pub fn check_token(
+    pub fn check_token_py(
         &self,
         token: Tokens,
         check_tokens: Vec<Tokens>,
     ) -> PyResult<()> {
-        if !check_tokens.is_empty() && !check_tokens.iter()
-                .any(|t| discriminant(t) == discriminant(&token)) {
-            return Err(PyErr::new::<LexerError, _>((
-                format!(
-                    "Unexpected token '{:?}' not among expected ones {:?}",
-                    token, check_tokens.iter(),
-                ),
-                self.line.clone(),
-                Some(self.filename.clone()),
-                Some(self.linenum),
-            )));
-        }
-        Ok(())
+        self.check_token(&token, &check_tokens).map_err(|err|
+            PyErr::new::<LexerError, _>((
+                err.msg,
+                err.line,
+                err.filename,
+                err.linenum,
+            ))
+        )
     }
 
     /// Get the next token from one or more tokenized lines.
@@ -563,7 +573,13 @@ impl Lexer {
                     return self.get_next_token(check_tokens, Some(no_white));
                 }
                 if let Some(check_tokens_some) = check_tokens {
-                    self.check_token(token.clone(), check_tokens_some)?;
+                    self.check_token(&token, &check_tokens_some).map_err(|err|
+                        PyErr::new::<LexerError, _>((
+                            err.msg,
+                            err.line,
+                            err.filename,
+                            err.linenum,
+                    )))?;
                 }
                 Ok(token)
             },
@@ -646,8 +662,30 @@ impl Lexer {
     }
 
     /// Make the next line to get return the given line instead of the real next line.
-    pub fn set_next_line(&mut self, line: &str, indent: usize, linenum: usize) {
+    pub fn set_next_line(&mut self, line: String, indent: usize, linenum: usize) {
         self.reader.set_next_line(line, indent, linenum);
     }
 
+}
+impl Lexer {
+    /// Get the next token from one or more tokenized lines.
+    pub fn check_token(
+        &self,
+        token: &Tokens,
+        check_tokens: &[Tokens],
+    ) -> Result<(), LexerError> {
+        if !check_tokens.is_empty() && !check_tokens.iter()
+                .any(|t| discriminant(t) == discriminant(token)) {
+            return Err(LexerError {
+                msg: format!(
+                    "Unexpected token '{:?}' not among expected ones {:?}",
+                    token, check_tokens,
+                ),
+                line: self.line.clone(),
+                filename: Some(self.filename.clone()),
+                linenum: Some(self.linenum),
+            });
+        }
+        Ok(())
+    }
 }
