@@ -774,13 +774,16 @@ pub fn substitution(value: String, dict: &HashMap<ParamKey, ParamVal>) -> PyResu
     }
     let mut start = 0;
     let mut result = String::with_capacity(value.len());
-
-    let d = drop_suffixes(dict, true)?;
+    // only initialize and drop suffixes of the dict is we actually have matches to substitute
+    let mut d: Option<HashMap<ParamKey, ParamVal>> = None;
 
     while let Some(captures) = MATCH_SUBSTITUTE.captures(&value[start..]) {
         if let Some(matched) = captures.get(0) {
             let key = captures.get(1).map_or("", |m| m.as_str());
-            if let Some(val) = d.get(&key.to_string().into()) {
+            if d.is_none() {
+                d = Some(drop_suffixes(dict, true)?);
+            }
+            if let Some(val) = d.as_ref().unwrap_or(&HashMap::new()).get(&key.to_string().into()) {
                 result.push_str(&value[start..start + matched.start()]);
                 result.push_str(&val.to_string());
                 start += matched.end();
