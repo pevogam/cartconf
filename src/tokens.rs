@@ -712,9 +712,7 @@ pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyRe
         .iter()
         .filter_map(|(key, value)| {
             match key {
-                ParamKey::String(key_str) => {
-                    Some((key_str.clone().into(), value.clone()))
-                }
+                ParamKey::String(_) => Some((key.clone(), value.clone())),
                 ParamKey::Tuple(key_vec) => {
                     let gen_key_str = key_vec.first()?.clone();
                     let gen_key = ParamKey::String(gen_key_str.clone());
