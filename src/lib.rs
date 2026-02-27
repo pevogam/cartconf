@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use pyo3::prelude::*;
 
 mod tokens;
@@ -9,6 +9,7 @@ mod parser;
 #[cfg(test)]
 mod tests {
     use super::*; // bring the module under test into scope
+    use crate::tokens::ParamKeyHashMapExt;
 
     #[test]
     fn test_parse_dicts() {
@@ -17,10 +18,10 @@ mod tests {
         ).unwrap();
         assert_eq!(dicts.len(), 1);
         assert_eq!(dicts[0].len(), 4);
-        assert_ne!(dicts[0].get(&tokens::ParamKey::String("name".to_string())), None);
-        assert_ne!(dicts[0].get(&tokens::ParamKey::String("shortname".to_string())), None);
-        assert_ne!(dicts[0].get(&tokens::ParamKey::String("dep".to_string())), None);
-        assert_eq!(dicts[0].get(&tokens::ParamKey::String("param".to_string())), Some(&tokens::ParamVal::String("val".to_string())));
+        assert_ne!(dicts[0].get_str("name"), None);
+        assert_ne!(dicts[0].get_str("shortname"), None);
+        assert_ne!(dicts[0].get_str("dep"), None);
+        assert_eq!(dicts[0].get_str("param"), Some(&tokens::ParamVal::String("val".to_string())));
     }
 }
 

@@ -2,7 +2,6 @@
 
 
 # Added by cargo
-Cargo.lock
 target/
 *.so
 
