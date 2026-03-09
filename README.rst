@@ -20,6 +20,11 @@ machine:
   ``parse_file()`` and ``parse_string()`` methods return a new snapshot, copying
   the root and sharing existing descendants. Retaining a tree therefore
   preserves a configuration independently of later parsing.
+  ``root`` exposes the root node ID, ``clone_node(id)`` returns a detached node
+  by ID, and ``get_size()`` counts distinct reachable nodes, including conditional
+  blocks. The index is built only when inspected and shares the existing nodes.
+  IDs are not contiguous tree offsets; lookups belong to a particular snapshot,
+  since later parsing may retain an ID while extending that node's content.
 
 * ``PreDict`` is a stateful dictionary evaluator. Its branch holds shared nodes;
   traversal frames accumulate context, content, names and dependencies.

@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cell::OnceCell;
 use std::cmp::min;
 use std::collections::VecDeque;
 use hashbrown::HashMap;
@@ -1430,6 +1431,7 @@ pub fn parse_file(
 #[derive(Debug, Clone)]
 pub struct Tree {
     root: Rc<Node>,
+    nodes: Rc<OnceCell<HashMap<u64, Rc<Node>>>>,
 }
 
 #[pymethods]
@@ -1437,7 +1439,21 @@ impl Tree {
     #[new]
     #[pyo3(signature = (node=None))]
     fn new(node: Option<Node>) -> Self {
-        Self { root: Rc::new(node.unwrap_or_default()) }
+        Self { root: Rc::new(node.unwrap_or_default()), nodes: Rc::default() }
+    }
+
+    #[getter(root)]
+    fn root_id(&self) -> u64 {
+        self.root.id
+    }
+
+    fn get_size(&self) -> usize {
+        self.index_nodes().len()
+    }
+
+    /// Return a detached node from this snapshot by its ID.
+    fn clone_node(&self, id: u64) -> PyResult<Node> {
+        self.borrow_node(id).cloned()
     }
 
     /// Return a detached root for the legacy Node inspection API.
@@ -1454,14 +1470,42 @@ impl Tree {
     fn parse_string(&self, cfgstr: String, defaults: bool, expand_defaults: Option<Vec<String>>) -> PyResult<Self> {
         let mut node = self.root.as_ref().clone();
         node.filename = "<string>".to_string();
-        Ok(Self { root: Rc::new(parse_string(cfgstr, node, -1, defaults, expand_defaults)?) })
+        Ok(Self::new(Some(parse_string(cfgstr, node, -1, defaults, expand_defaults)?)))
     }
 
     #[pyo3(signature = (cfgfile, defaults=false, expand_defaults=None))]
     fn parse_file(&self, cfgfile: String, defaults: bool, expand_defaults: Option<Vec<String>>) -> PyResult<Self> {
         let mut node = self.root.as_ref().clone();
         node.filename = cfgfile.clone();
-        Ok(Self { root: Rc::new(parse_file(cfgfile, node, -1, defaults, expand_defaults)?) })
+        Ok(Self::new(Some(parse_file(cfgfile, node, -1, defaults, expand_defaults)?)))
+    }
+}
+impl Tree {
+    // Index only on inspection so parsing and evaluation keep sharing nodes cheaply.
+    fn index_nodes(&self) -> &HashMap<u64, Rc<Node>> {
+        self.nodes.get_or_init(|| {
+            let mut nodes = HashMap::new();
+            let mut pending = vec![Rc::clone(&self.root)];
+            while let Some(node) = pending.pop() {
+                if nodes.contains_key(&node.id) {
+                    continue;
+                }
+                pending.extend(node.children.iter().cloned());
+                for step in &node.content {
+                    if let ContentType::Node(conditional) = &step.content_type {
+                        pending.push(Rc::clone(conditional));
+                    }
+                }
+                nodes.insert(node.id, node);
+            }
+            nodes
+        })
+    }
+
+    pub fn borrow_node(&self, id: u64) -> PyResult<&Node> {
+        self.index_nodes().get(&id).map(Rc::as_ref).ok_or_else(|| {
+            PyValueError::new_err(format!("Node ID {} not available in this tree", id))
+        })
     }
 }
 
@@ -2460,6 +2504,32 @@ mod tests {
         let dict = passing.get_dicts(false, true).unwrap().unwrap();
         assert_eq!(dict.get_str("name"), Some(&ParamVal::String("test2".to_string())));
         assert!(passing.failed_cases.is_empty());
+    }
+
+    #[test]
+    fn test_tree_node_index_shares_syntax() {
+        let ast = Tree::new(None).parse_string(
+            "a:\n    value = selected\nvariants:\n    - a:\n    - b:\n".to_string(), false, None,
+        ).unwrap();
+        assert!(ast.nodes.get().is_none());
+        let mut pre_dict = PreDict::default();
+        assert!(pre_dict.update_from_tree(&ast).unwrap());
+        assert!(pre_dict.get_dicts(false, true).unwrap().is_some());
+        assert!(ast.nodes.get().is_none());
+        assert_eq!(ast.get_size(), 5);
+        let common = &ast.root.children[0].children[0];
+        let conditional = match &common.content.last().unwrap().content_type {
+            ContentType::Node(node) => node,
+            _ => panic!("expected conditional node"),
+        };
+        for node in [&ast.root, &ast.root.children[0], &ast.root.children[1], conditional] {
+            assert!(std::ptr::eq(ast.borrow_node(node.id).unwrap(), node.as_ref()));
+        }
+        let copied = ast.clone();
+        assert!(Rc::ptr_eq(&ast.nodes, &copied.nodes));
+        let extended = ast.parse_string("extra = value\n".to_string(), false, None).unwrap();
+        assert!(extended.nodes.get().is_none());
+        assert!(!Rc::ptr_eq(&ast.nodes, &extended.nodes));
     }
 
     #[test]

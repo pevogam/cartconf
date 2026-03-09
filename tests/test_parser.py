@@ -100,6 +100,56 @@ class LabelTest(unittest.TestCase):
 
 class TreeTest(unittest.TestCase):
 
+    def test_node_lookup(self):
+        parsed = parser.Parser()
+        parsed.parse_string("a:\n    !b:\n        value = selected\nvariants:\n    - a:\n    - b:\n")
+        snapshot = parsed.ast
+        root = snapshot.clone_node(snapshot.root)
+        left, right = root.get_children()
+        common = left.get_children()[0]
+        self.assertEqual(common.id, right.get_children()[0].id)
+        condition = common.get_content()[-1][2]
+        nested = condition.get_content()[-1][2]
+        self.assertEqual(snapshot.get_size(), 6)
+        for node in (root, left, right, common, condition, nested):
+            inspected = snapshot.clone_node(node.id)
+            self.assertEqual(inspected.id, node.id)
+            self.assertEqual(inspected.dump(0, True), node.dump(0, True))
+
+        expected = list(parsed.get_dicts_gen())
+        inspected.add_content("<string>", 1, parser.LSet("leaked", "1"))
+        self.assertEqual(list(parsed.get_dicts_gen()), expected)
+        self.assertEqual(snapshot.clone_node(nested.id).get_content(), nested.get_content())
+        with self.assertRaisesRegex(ValueError, "not available in this tree"):
+            snapshot.clone_node(parser.Node().id)
+        with self.assertRaises(AttributeError):
+            snapshot.root = common.id
+
+    def test_node_lookup_after_parsing(self):
+        empty = parser.Tree()
+        self.assertTrue(empty.is_empty())
+        self.assertEqual(empty.get_size(), 1)
+        self.assertEqual(empty.clone_node(empty.root).get_content(), [])
+        base = empty.parse_string("value = before\n")
+        before = base.clone_node(base.root).get_content()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".cfg") as config:
+            config.write("value = after\n")
+            config.flush()
+            extended = base.parse_file(config.name)
+        self.assertEqual(extended.root, base.root)
+        self.assertNotEqual(extended.clone_node(base.root).get_content(), before)
+        self.assertEqual(base.clone_node(base.root).get_content(), before)
+        self.assertEqual(empty.clone_node(empty.root).get_content(), [])
+
+        branched = base.parse_string("variants:\n    - branch:\n")
+        self.assertNotEqual(branched.root, base.root)
+        self.assertEqual(branched.clone_node(base.root).get_content(), before)
+        with self.assertRaises(ValueError):
+            base.clone_node(branched.root)
+        with self.assertRaises(parser.LexerError):
+            base.parse_string("variants:\n    invalid\n")
+        self.assertEqual(base.clone_node(base.root).get_content(), before)
+
     def test_snapshot_isolation(self):
         base = parser.Parser()
         base.parse_string("variants:\n    - a:\n    - b:\n")
