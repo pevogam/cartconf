@@ -20,12 +20,17 @@ Lexer = lexer.Lexer
 ParserError = parser.ParserError
 Label = parser.Label
 Node = parser.Node
+Tree = parser.Tree
 PreDict = parser.PreDict
 parse_string = parser.parse_string
 parse_file = parser.parse_file
 
 
 class Parser(object):
+
+    @property
+    def node(self):
+        return self.ast.clone_node(self.ast.root)
 
     def __init__(
         self,
@@ -42,7 +47,7 @@ class Parser(object):
         :param expand_defaults: list of default variants to expand
         :param debug: whether to enable debug logging
         """
-        self.node = Node()
+        self.ast = Tree()
         self.debug = debug
         self.defaults = defaults
         self.expand_defaults = expand_defaults or []
@@ -64,10 +69,9 @@ class Parser(object):
 
         :param cfgfile: configuration file path to parse
         """
-        self.node.filename = cfgfile
-        self.node = parse_file(
+        self.ast = parse_file(
+            self.ast,
             cfgfile,
-            self.node,
             defaults=self.defaults,
             expand_defaults=self.expand_defaults,
         )
@@ -79,10 +83,9 @@ class Parser(object):
 
         :param cfgstr: configuration string to parse
         """
-        self.node.filename = Reader(content="").filename
-        self.node = parse_string(
+        self.ast = parse_string(
+            self.ast,
             cfgstr,
-            self.node,
             defaults=self.defaults,
             expand_defaults=self.expand_defaults,
         )
@@ -131,9 +134,9 @@ class Parser(object):
         :returns: (recursive) dictionary generator
         """
         pre_dict = PreDict(defaults=self.defaults)
-        if not pre_dict.update_from_node(self.node):
+        if not pre_dict.update_from_node(self.ast.clone_node(self.ast.root)):
             # the python-rust barrier requires copying or working on copies so replace entirely
-            self.node = pre_dict.branch[-1]
+            self.ast.swap_node(pre_dict.branch[-1])
             return
         while True:
             # Since get_dicts() is recursive generator, it can invoke itself
