@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::cmp::min;
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::fmt::{Debug, Display};
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -17,8 +16,6 @@ use crate::tokens::{drop_suffixes, apply_suffix_bounds};
 use crate::filters::Filters;
 use crate::lexer::Lexer;
 use crate::lexer::LexerError;
-
-static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 #[pyclass(extends=PyException)]
 #[derive(Debug)]
@@ -244,7 +241,7 @@ pub struct Node {
     #[pyo3(get, set)]
     pub default: bool,
     #[pyo3(get)]
-    pub id: u64,
+    pub id: usize,
     children: VecDeque<Rc<RefCell<Node>>>,
 }
 
@@ -255,14 +252,15 @@ impl PartialEq for Node {
 }
 impl Default for Node {
     fn default() -> Self {
-        Self::new()
+        Self::new(0)
     }
 }
 
 #[pymethods]
 impl Node {
+    #[pyo3(signature = (id=0))]
     #[new]
-    pub fn new() -> Self {
+    pub fn new(id: usize) -> Self {
         Node {
             var_name: Vec::new(),
             name: Vec::new(),
@@ -274,7 +272,7 @@ impl Node {
             append_to_shortname: false,
             condition: None,
             default: false,
-            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            id,
             children: VecDeque::new(),
         }
     }
@@ -788,7 +786,11 @@ impl Node {
         }
 
         // Create a new Node for the condition
-        let mut cond = Node::new();
+        let mut cond = AST.with(|ast| {
+            ast.borrow_mut()
+                .borrow_new_node_mut()
+                .map(|node| node.clone())
+        })?;
         cond.condition = Some(Filters::Condition { filter : cfilter, line : lexer.line.clone().unwrap_or_default() });
 
         // Parse the condition block
@@ -845,7 +847,11 @@ impl Node {
         }
 
         // Create a new Node for the negative condition
-        let mut cond = Node::new();
+        let mut cond = AST.with(|ast| {
+            ast.borrow_mut()
+                .borrow_new_node_mut()
+                .map(|node| node.clone())
+        })?;
         cond.condition = Some(Filters::NegativeCondition {
             filter : lfilter,
             line : lexer.line.clone().unwrap_or_default()
@@ -1032,7 +1038,11 @@ impl Node {
         expand_defaults : Vec<String>,
     ) -> PyResult<Node> {
         let mut already_default = false;
-        let mut node4 = Node::new();
+        let mut node4 = AST.with(|ast| {
+            ast.borrow_mut()
+                .borrow_new_node_mut()
+                .map(|node| node.clone())
+        })?;
 
         if !dict.is_empty() {
             self.apply_dict(lexer, dict);
@@ -1131,7 +1141,11 @@ impl Node {
             }
 
             // Create and parse the variant node
-            let mut node2 = Node::new();
+            let mut node2 = AST.with(|ast| {
+                ast.borrow_mut()
+                    .borrow_new_node_mut()
+                    .map(|node| node.clone())
+            })?;
             node2.append_child(self.clone());
             node2.update_labels(self.labels.clone());
 
@@ -1242,6 +1256,120 @@ impl Node {
         }
 
         Ok(node4)
+    }
+}
+
+#[pyclass(unsendable)]
+#[derive(Debug, Clone, Default)]
+pub struct Tree {
+    #[pyo3(get)]
+    root: usize,
+    nodes: Vec<Node>,
+}
+
+thread_local! {
+    static AST: RefCell<Tree> = RefCell::new(Tree::default());
+}
+
+#[pymethods]
+impl Tree {
+    #[new]
+    pub fn new() -> PyResult<Self> {
+        let mut tree = Tree::default();
+        tree.new_node()?;
+        Ok(tree)
+    }
+
+    fn get_size(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn add_node(&mut self, node: Node) -> PyResult<()> {
+        if node.id != self.get_size() {
+            return Err(PyValueError::new_err(
+                format!("Node ID {} not available (ID {} is next available)", node.id, self.get_size())
+            ));
+        }
+        self.nodes.push(node);
+        Ok(())
+    }
+
+    pub fn new_node(&mut self) -> PyResult<usize> {
+        let node = Node::new(self.get_size());
+        let id = node.id;
+        self.add_node(node)?;
+        Ok(id)
+    }
+
+    fn clone_node(&self, id: usize) -> PyResult<Node> {
+        self.borrow_node(id).cloned()
+            .map_err(|e| PyValueError::new_err(format!("Failed to clone node: {}", e)))
+    }
+
+    fn swap_node(&mut self, node: Node) -> PyResult<()> {
+        if node.id >= self.get_size() {
+            return Err(PyValueError::new_err(
+                format!("Node ID {} not available for swapping (tree has {} nodes)", node.id, self.get_size())
+            ));
+        }
+        let id = node.id;
+        self.nodes[id] = node;
+        Ok(())
+    }
+
+    pub fn set_root(&mut self, id: usize) -> PyResult<()> {
+        if id >= self.get_size() {
+            return Err(PyValueError::new_err(
+                format!("Root node ID {} out of bounds (tree has {} nodes)", id, self.get_size())
+            ));
+        }
+        self.root = id;
+        Ok(())
+    }
+}
+impl Tree {
+    pub fn borrow_node(&self, id: usize) -> Result<&Node, PyErr> {
+        if id >= self.get_size() {
+            return Err(PyValueError::new_err(
+                format!("Node ID {} out of bounds (tree has {} nodes)", id, self.get_size())
+            ));
+        }
+        Ok(&self.nodes[id])
+    }
+
+    pub fn borrow_node_mut(&mut self, id: usize) -> Result<&mut Node, PyErr> {
+        if id >= self.get_size() {
+            return Err(PyValueError::new_err(
+                format!("Node ID {} out of bounds (tree has {} nodes)", id, self.get_size())
+            ));
+        }
+        Ok(&mut self.nodes[id])
+    }
+
+    pub fn borrow_new_node(&mut self) -> Result<&Node, PyErr> {
+        let id = self.new_node()?;
+        Ok(&self.nodes[id])
+    }
+
+    pub fn borrow_new_node_mut(&mut self) -> Result<&mut Node, PyErr> {
+        let id = self.new_node()?;
+        Ok(&mut self.nodes[id])
+    }
+
+    pub fn borrow_root(&self) -> Result<&Node, PyErr> {
+        self.borrow_node(self.root)
+    }
+
+    pub fn borrow_root_mut(&mut self) -> Result<&mut Node, PyErr> {
+        self.borrow_node_mut(self.root)
+    }
+
+    pub fn get_node(&self, id: usize) -> Option<&Node> {
+        self.borrow_node(id).ok()
+    }
+
+    pub fn get_node_mut(&mut self, id: usize) -> Option<&mut Node> {
+        self.borrow_node_mut(id).ok()
     }
 }
 
@@ -1483,29 +1611,43 @@ pub fn parse(
 }
 
 #[pyfunction]
-#[pyo3(signature = (cfgstr, node, prev_indent=-1, defaults=true, expand_defaults=None))]
+#[pyo3(signature = (tree, cfgstr, prev_indent=-1, defaults=true, expand_defaults=None))]
 pub fn parse_string(
+    mut tree: Tree,
     cfgstr: String,
-    node: Node,
     prev_indent: isize,
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
-) -> PyResult<Node> {
+) -> PyResult<Tree> {
     let mut new_lexer = Lexer::new(Some(&cfgstr), None)?;
-    parse(&mut new_lexer, node, prev_indent, defaults, expand_defaults)
+    let mut root_node = tree.clone_node(tree.root)?;
+    root_node.filename = new_lexer.filename.clone();
+    AST.with(|ast| *ast.borrow_mut() = tree);
+    root_node = parse(&mut new_lexer, root_node, prev_indent, defaults, expand_defaults)?;
+    tree = AST.with(|ast| ast.borrow().clone());
+    tree.set_root(root_node.id)?;
+    tree.swap_node(root_node)?;
+    Ok(tree)
 }
 
 #[pyfunction]
-#[pyo3(signature = (cfgfile, node, prev_indent=-1, defaults=true, expand_defaults=None))]
+#[pyo3(signature = (tree, cfgfile, prev_indent=-1, defaults=true, expand_defaults=None))]
 pub fn parse_file(
+    mut tree: Tree,
     cfgfile: String,
-    node: Node,
     prev_indent: isize,
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
-) -> PyResult<Node> {
+) -> PyResult<Tree> {
     let mut new_lexer = Lexer::new(None, Some(&cfgfile))?;
-    parse(&mut new_lexer, node, prev_indent, defaults, expand_defaults)
+    let mut root_node = tree.clone_node(tree.root)?;
+    root_node.filename = cfgfile;
+    AST.with(|ast| *ast.borrow_mut() = tree);
+    root_node = parse(&mut new_lexer, root_node, prev_indent, defaults, expand_defaults)?;
+    tree = AST.with(|ast| ast.borrow().clone());
+    tree.set_root(root_node.id)?;
+    tree.swap_node(root_node)?;
+    Ok(tree)
 }
 
 #[pyclass(unsendable)]
@@ -1724,7 +1866,11 @@ impl PreDict {
         self._content.push(internal_content);
 
         // process external (previous) content against current context
-        let mut content_node = Node::new();
+        let mut content_node = AST.with(|ast| {
+            ast.borrow_mut()
+                .borrow_new_node_mut()
+                .map(|node| node.clone())
+        })?;
         content_node.swap_content(content);
         let (external_content, failed_external, mut failed_external_cond) =
             content_node.process_content(&ctx_flat, &labels)?;
@@ -2077,7 +2223,7 @@ mod tests {
 
     #[test]
     fn test_apply_dict() {
-        let mut node = Node::new();
+        let mut node = Node::default();
         let lexer = Lexer::new(Some(""), None).expect("Failed to create lexer");
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert("key".to_string().into(), "value".to_string().into());
@@ -2111,7 +2257,7 @@ mod tests {
         let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("get_next_token indent");
         let _ = lexer.get_next_token(Some(vec![Tokens::default("include")]), None).expect("get_next_token include");
 
-        let mut node = Node::new();
+        let mut node = Node::default();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert("key1".to_string().into(), "value1".to_string().into());
 
@@ -2134,7 +2280,7 @@ mod tests {
         // get identifier tokens up to '=' (no_white = true)
         let identifier = lexer.get_until(vec![Tokens::default("=")], None, Some(true)).expect("get_until identifier");
 
-        let mut node = Node::new();
+        let mut node = Node::default();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert("key1".to_string().into(), "value1".to_string().into());
 
@@ -2155,7 +2301,7 @@ mod tests {
         let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier token");
         let identifier = lexer.get_until(vec![Tokens::default("+=")], None, Some(true)).expect("get_until identifier");
 
-        let mut node = Node::new();
+        let mut node = Node::default();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert("key1".to_string().into(), "value1".to_string().into());
 
@@ -2176,7 +2322,7 @@ mod tests {
         let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier token");
         let identifier = lexer.get_until(vec![Tokens::default("+=")], None, Some(true)).expect("get_until identifier");
 
-        let mut node = Node::new();
+        let mut node = Node::default();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert("key1".to_string().into(), "value1".to_string().into());
 
@@ -2208,7 +2354,7 @@ mod tests {
         let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
         let _ = lexer.get_next_token(Some(vec![Tokens::default("del")]), None).expect("del");
 
-        let mut node = Node::new();
+        let mut node = Node::default();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert("key1".to_string().into(), "value1".to_string().into());
 
@@ -2239,7 +2385,7 @@ mod tests {
         let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier");
         let identifier = lexer.get_until(vec![Tokens::default(":")], None, Some(true)).expect("get_until");
 
-        let mut node = Node::new();
+        let mut node = Node::default();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert("key1".to_string().into(), "value1".to_string().into());
 
@@ -2272,7 +2418,7 @@ mod tests {
         let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
         let _ = lexer.get_next_token(Some(vec![Tokens::default("!")]), None).expect("notcond");
 
-        let mut node = Node::new();
+        let mut node = Node::default();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert("key1".to_string().into(), "value1".to_string().into());
 
@@ -2305,7 +2451,7 @@ mod tests {
         let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
         let _ = lexer.get_next_token(Some(vec![Tokens::default("variants")]), None).expect("variants");
 
-        let node = Node::new();
+        let node = Node::default();
         let (variant_name, meta) = node.apply_variants(&mut lexer).expect("apply_variants failed");
 
         // variant name should be "test" and meta empty
@@ -2324,7 +2470,7 @@ mod tests {
         let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
         let _ = lexer.get_next_token(Some(vec![Tokens::default("variants")]), None).expect("variants");
 
-        let node = Node::new();
+        let node = Node::default();
         let (variant_name, meta) = node.apply_variants(&mut lexer).expect("apply_variants failed");
 
         // variant name should be "test"
@@ -2346,7 +2492,7 @@ mod tests {
         let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
         let _ = lexer.get_next_token(Some(vec![Tokens::default("-")]), None).expect("dash");
 
-        let mut node = Node::new();
+        let mut node = Node::default();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert("key1".to_string().into(), "value1".to_string().into());
         let mut meta = HashMap::new();

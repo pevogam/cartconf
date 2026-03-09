@@ -198,11 +198,13 @@ class NodeTest(unittest.TestCase):
 
     def test_process_content_condition_filter(self):
         """Check that a context matching condition filter is unpacked or else not unpacked."""
-        node = parser.Node()
+        # TODO: the fact we have to use tree here indicates this goes beyond the node scope
+        tree = parser.Tree()
+        node = tree.clone_node(tree.new_node())
         op1 = parser.LSet("a", "b")
         label_x = parser.Label("x")
         label_y = parser.Label("y")
-        conditional_node = parser.Node()
+        conditional_node = tree.clone_node(tree.new_node())
         conditional_node.condition = parser.Condition([[[label_x]]], "x")
         op2 = parser.LSet("c", "d")
         conditional_node.add_content("<string>", 3, op2)
@@ -237,11 +239,13 @@ class NodeTest(unittest.TestCase):
 
     def test_process_content_negative_condition_filter(self):
         """Check that a context matching negative condition filter is unpacked or else not unpacked."""
-        node = parser.Node()
+        # TODO: the fact we have to use tree here indicates this goes beyond the node scope
+        tree = parser.Tree()
+        node = tree.clone_node(tree.new_node())
         op1 = parser.LSet("a", "b")
         label_x = parser.Label("x")
         label_y = parser.Label("y")
-        conditional_node = parser.Node()
+        conditional_node = tree.clone_node(tree.new_node())
         conditional_node.condition = parser.NegativeCondition([[[label_x]]], "x")
         op2 = parser.LSet("c", "d")
         conditional_node.add_content("<string>", 3, op2)
@@ -276,11 +280,13 @@ class NodeTest(unittest.TestCase):
 
     def test_process_content_nested_condition_with_operator(self):
         """Check that operators inside matched Condition blocks are unpacked correctly."""
-        node = parser.Node()
+        # TODO: the fact we have to use tree here indicates this goes beyond the node scope
+        tree = parser.Tree()
+        node = tree.clone_node(tree.new_node())
         op1 = parser.LSet("a", "b")
         label_x = parser.Label("x")
         label_y = parser.Label("y")
-        conditional_node = parser.Node()
+        conditional_node = tree.clone_node(tree.new_node())
         conditional_node.condition = parser.Condition([[[label_x]]], "x")
         op2 = parser.LSet("c", "d")
         conditional_node.add_content("<string>", 3, op2)
@@ -337,8 +343,10 @@ class NodeTest(unittest.TestCase):
         self.assertEqual(expected_str, dump_str)
 
     def test_dump_with_recurse(self):
-        parent_node = parser.Node()
-        child_node = parser.Node()
+        # TODO: the fact we have to use tree here indicates this goes beyond the node scope
+        tree = parser.Tree()
+        parent_node = tree.clone_node(tree.new_node())
+        child_node = tree.clone_node(tree.new_node())
         child_node.name = [parser.Label("child_name")]
         parent_node.append_child(child_node)
         dump_str = parent_node.dump(0, recurse=True)
@@ -382,8 +390,9 @@ class PreDictTest(unittest.TestCase):
 
     def test_update_from_node_reset(self):
         pd = parser.PreDict()
+        tree = parser.Tree()
 
-        node = parser.Node()
+        node = tree.clone_node(tree.new_node())
         node.name = [parser.Label("n")]
         node.append_to_shortname = True
         node.dep = [[[parser.Label("dep1")]]]
@@ -402,7 +411,7 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pd.branch, [node])
         self.assertEqual(pd.route, [None])
 
-        node2 = parser.Node()
+        node2 = tree.clone_node(tree.new_node())
         node2.name = [parser.Label("m")]
         node2.append_to_shortname = True
         node2.dep = [[[parser.Label("dep2")]]]
@@ -432,8 +441,9 @@ class PreDictTest(unittest.TestCase):
 
     def test_update_from_node_failed(self):
         pd = parser.PreDict()
+        tree = parser.Tree()
 
-        node = parser.Node()
+        node = tree.clone_node(tree.new_node())
         node.name = [parser.Label("n")]
         node.append_to_shortname = True
         node.dep = [[[parser.Label("dep1")]]]
@@ -467,7 +477,8 @@ class PreDictTest(unittest.TestCase):
             {"dep": ["dep1"], "key": "value", "name": "a", "shortname": "a"}
         )
 
-        node = parser.Node()
+        tree = parser.Tree()
+        node = tree.clone_node(tree.new_node())
         node.name = [parser.Label("n")]
         node.append_to_shortname = True
         node.dep = [[[parser.Label("dep2")]]]

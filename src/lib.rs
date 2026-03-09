@@ -33,22 +33,22 @@ fn parse_dicts(
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
 ) -> PyResult<Vec<HashMap<tokens::ParamKey, tokens::ParamVal>>> {
-    use crate::parser::{Node, PreDict, parse_file, parse_string};
+    use crate::parser::{Tree, PreDict, parse_file, parse_string};
     use crate::tokens::{ParamKey, ParamVal};
 
-    let mut node = Node::default();
+    let mut tree = Some(Tree::new()?);
     if !cfgfile.is_empty() {
-        node = parse_file(
-            cfgfile, node, prev_indent, defaults, expand_defaults.clone()
-        )?;
+        tree = Some(parse_file(
+            tree.unwrap(), cfgfile, prev_indent, defaults, expand_defaults.clone()
+        )?);
     }
     if !cfgstr.is_empty() {
-        node = parse_string(
-            cfgstr, node, prev_indent, defaults, expand_defaults
-        )?;
+        tree = Some(parse_string(
+            tree.unwrap(), cfgstr, prev_indent, defaults, expand_defaults
+        )?);
     }
     let mut pre_dict = PreDict::default();
-    if !pre_dict.update_from_node(node)? {
+    if !pre_dict.update_from_node(tree.unwrap().borrow_root_mut()?.clone())? {
         return Err(PyErr::new::<parser::ParserError, _>((
             "Failed to generate PreDict from Node".to_string(),
             "",
@@ -81,6 +81,7 @@ fn cartconf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let parser_module = PyModule::new(m.py(), "parser")?;
     parser_module.add_class::<parser::Label>()?;
     parser_module.add_class::<parser::Node>()?;
+    parser_module.add_class::<parser::Tree>()?;
     parser_module.add_function(wrap_pyfunction!(parser::parse_string, m)?)?;
     parser_module.add_function(wrap_pyfunction!(parser::parse_file, m)?)?;
     parser_module.add_class::<parser::PreDict>()?;
