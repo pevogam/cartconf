@@ -567,22 +567,23 @@ impl Node {
         true
     }
 }
-impl Node {
+impl Tree {
     pub fn apply_dict(
         &mut self,
         lexer: &Lexer,
         dict: HashMap<ParamKey, ParamVal>
-    ) {
+    ) -> PyResult<()> {
         // Build a LApplyDict from the Rust HashMap
         let content_type = ContentType::Tokens(Tokens::LApplyDict(String::new(), dict));
 
         // Add pre-dictionary content to this node
-        self.add_content(
+        self.borrow_root_mut()?.add_content(
             lexer.filename.clone(),
             lexer.linenum,
             content_type,
         );
 
+        Ok(())
     }
 
     /*
@@ -663,13 +664,13 @@ impl Node {
                     return Ok(dict);
                 } else {
                     // flush dict into node
-                    self.apply_dict(lexer, dict);
+                    self.apply_dict(lexer, dict)?;
                     dict = HashMap::new();
                 }
             }
 
             // Add operator token as content
-            self.add_content(
+            self.borrow_root_mut()?.add_content(
                 lexer.filename.clone(),
                 lexer.linenum,
                 ContentType::Tokens(op_obj),
@@ -698,8 +699,8 @@ impl Node {
         let to_del_str: String = to_del.string()?;
 
         // flush dict and add token as content
-        self.apply_dict(lexer, dict);
-        self.add_content(
+        self.apply_dict(lexer, dict)?;
+        self.borrow_root_mut()?.add_content(
             lexer.filename.clone(),
             lexer.linenum,
             ContentType::Tokens(Tokens::LDel(to_del_str, "".to_string())),
@@ -716,7 +717,7 @@ impl Node {
         &mut self,
         lexer: &mut Lexer,
         dict: HashMap<ParamKey, ParamVal>,
-    ) -> PyResult<Node> {
+    ) -> PyResult<()> {
         // Get path from rest of line
         let path = lexer.get_rest_line_as_string_token()?;
         let path_str: String = path.string()?;
@@ -748,14 +749,15 @@ impl Node {
         }
 
         // Apply current dict and create new lexer for included file
-        self.apply_dict(lexer, dict);
+        self.apply_dict(lexer, dict)?;
 
         let filepath_str = filepath.to_str()
             .ok_or_else(|| PyErr::new::<PyValueError, _>("Invalid filepath"))?;
         let mut new_lexer = Lexer::new(None, Some(filepath_str))?;
 
         // Parse with new lexer
-        parse(&mut new_lexer, self.clone(), -1, false, None)
+        parse(self, &mut new_lexer, -1, false, None)?;
+        Ok(())
     }
 
     /*
@@ -792,19 +794,23 @@ impl Node {
         }
 
         // Create a new Node for the condition
-        let mut cond = AST.with(|ast| {
-            ast.borrow_mut()
-                .borrow_new_node_mut()
-                .map(|node| node.clone())
-        })?;
-        cond.condition = Some(Filters::Condition { filter : cfilter, line : lexer.line.clone().unwrap_or_default() });
+        let cond = self.borrow_new_node_mut()?;
+        cond.condition = Some(Filters::Condition {
+            filter : cfilter,
+            line : lexer.line.clone().unwrap_or_default()
+        });
+        let cond_id = cond.id;
 
         // Parse the condition block
-        cond = parse(lexer, cond, indent, false, None)?;
+        let root_id = self.root;
+        self.set_root(cond_id)?;
+        parse(self, lexer, indent, false, None)?;
+        self.set_root(root_id)?;
 
         // Apply the current dict and add the condition node as content
-        self.apply_dict(lexer, dict);
-        self.add_content(
+        self.apply_dict(lexer, dict)?;
+        let cond = self.borrow_node(cond_id)?.clone();
+        self.borrow_root_mut()?.add_content(
             lexer.filename.clone(),
             lexer.linenum,
             ContentType::Node(cond),
@@ -853,22 +859,23 @@ impl Node {
         }
 
         // Create a new Node for the negative condition
-        let mut cond = AST.with(|ast| {
-            ast.borrow_mut()
-                .borrow_new_node_mut()
-                .map(|node| node.clone())
-        })?;
+        let cond = self.borrow_new_node_mut()?;
         cond.condition = Some(Filters::NegativeCondition {
             filter : lfilter,
             line : lexer.line.clone().unwrap_or_default()
         });
+        let cond_id = cond.id;
 
         // Parse the condition block
-        cond = parse(lexer, cond, indent, false, None)?;
+        let root_id = self.root;
+        self.set_root(cond_id)?;
+        parse(self, lexer, indent, false, None)?;
+        self.set_root(root_id)?;
 
         // Apply the current dict and add the condition node as content
-        self.apply_dict(lexer, dict);
-        self.add_content(
+        self.apply_dict(lexer, dict)?;
+        let cond = self.borrow_node(cond_id)?.clone();
+        self.borrow_root_mut()?.add_content(
             lexer.filename.clone(),
             lexer.linenum,
             ContentType::Node(cond),
@@ -886,7 +893,7 @@ impl Node {
         lexer: &mut Lexer,
     ) -> PyResult<(String, HashMap<String, Vec<String>>)> {
         // Check if node has conditions
-        if self.condition.is_some() {
+        if self.borrow_root()?.condition.is_some() {
             return Err(PyErr::new::<ParserError, _>((
                 "'variants' is not allowed inside a conditional block".to_string(),
                 lexer.line.clone(),
@@ -1042,16 +1049,11 @@ impl Node {
         meta: &mut HashMap<String, Vec<String>>,
         defaults : bool,
         expand_defaults : Vec<String>,
-    ) -> PyResult<Node> {
+    ) -> PyResult<()> {
         let mut already_default = false;
-        let mut node4 = AST.with(|ast| {
-            ast.borrow_mut()
-                .borrow_new_node_mut()
-                .map(|node| node.clone())
-        })?;
 
         if !dict.is_empty() {
-            self.apply_dict(lexer, dict);
+            self.apply_dict(lexer, dict)?;
         }
 
         // Handle default variants
@@ -1067,6 +1069,10 @@ impl Node {
                 Tokens::default("indent"),
                 Tokens::default("endb"),
         ];
+
+        let node4_id = self.new_node()?;
+        let root = self.borrow_root_mut()?.clone();
+        let root_labels = root.labels.clone();
 
         loop {
             lexer.set_prev_indent(variant_indent);
@@ -1147,13 +1153,10 @@ impl Node {
             }
 
             // Create and parse the variant node
-            let mut node2 = AST.with(|ast| {
-                ast.borrow_mut()
-                    .borrow_new_node_mut()
-                    .map(|node| node.clone())
-            })?;
-            node2.append_child(self.clone());
-            node2.update_labels(self.labels.clone());
+            let node2 = self.borrow_new_node_mut()?;
+            node2.append_child(root.clone());
+            node2.update_labels(root_labels.clone());
+            let node2_id = node2.id;
 
             if !variant_name.is_empty() {
                 node2.add_content(
@@ -1174,7 +1177,9 @@ impl Node {
                 );
             }
 
-            let mut node3 = parse(lexer, node2, indent, defaults, Some(expand_defaults.clone()))?;
+            self.set_root(node2_id)?;
+            parse(self, lexer, indent, defaults, Some(expand_defaults.clone()))?;
+            let node3 = self.borrow_root_mut()?;
 
             // Set variant name and dependencies
             if !variant_name.is_empty() {
@@ -1215,6 +1220,11 @@ impl Node {
             }
             node3.append_to_shortname = !is_default;
 
+            // Clone node3 data ultimately consumed at a later point
+            let node3_labels = node3.labels.clone();
+            let node3_name = node3.name.clone();
+            let node3_default = node3.default;
+
             // Update file mappings
             node3.add_content(
                 lexer.filename.clone(),
@@ -1222,7 +1232,7 @@ impl Node {
                 ContentType::Tokens(
                     Tokens::LUpdateFileMap(
                         lexer.filename.clone(),
-                        node3.name.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("."),
+                        node3_name.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("."),
                         "_name_map_file".to_string(),
                     ),
                 ),
@@ -1233,18 +1243,23 @@ impl Node {
                 ContentType::Tokens(
                     Tokens::LUpdateFileMap(
                         lexer.filename.clone(),
-                        node3.name.iter().map(|x| x.name.clone()).collect::<Vec<_>>().join("."),
+                        node3_name.iter().map(|x| x.name.clone()).collect::<Vec<_>>().join("."),
                         "_short_name_map_file".to_string(),
                     ),
                 ),
             );
 
-            // Update labels (move out fields since we appended clones)
-            node4.update_labels(node3.labels.clone());
-            node4.update_labels(node3.name.clone());
+            // Clone node3 ultimately consumed at a later point
+            let node3 = node3.clone();
+            self.swap_node(node3.clone())?;
+
+            // Update labels
+            let node4 = self.borrow_node_mut(node4_id)?;
+            node4.update_labels(node3_labels);
+            node4.update_labels(node3_name);
 
             // Add node to children
-            if node3.default && defaults {
+            if node3_default && defaults {
                 node4.prepend_child(node3);
             } else {
                 node4.append_child(node3);
@@ -1261,7 +1276,8 @@ impl Node {
             )));
         }
 
-        Ok(node4)
+        self.set_root(node4_id)?;
+        Ok(())
     }
 }
 
@@ -1380,12 +1396,12 @@ impl Tree {
 }
 
 pub fn parse(
+    tree: &mut Tree,
     lexer: &mut Lexer,
-    mut node: Node,
     prev_indent: isize,
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
-) -> PyResult<Node> {
+) -> PyResult<()> {
     // Allowed token types for different contexts
     // reuse default tokens as much as possible using their identifiers
     let block_allowed = [
@@ -1445,13 +1461,14 @@ pub fn parse(
         if matches!(token, Tokens::LEndBlock(_)) {
             if !dict.is_empty() {
                 // Flush dict to node content
-                node.apply_dict(lexer, dict);
+                tree.apply_dict(lexer, dict)?;
             }
             if let Some((filename, linenum, op)) = suffix {
                 // Node has suffix, apply it to all elements
+                let node = tree.borrow_root_mut()?;
                 node.add_content(filename.clone(), linenum, ContentType::Tokens(op));
             }
-            return Ok(node);
+            return Ok(());
         }
 
         let indent: isize = token.length()?;
@@ -1459,7 +1476,7 @@ pub fn parse(
 
         match token {
             Tokens::LInclude() => {
-                node = node.apply_include(lexer, dict)?;
+                tree.apply_include(lexer, dict)?;
                 dict = HashMap::new();
                 lexer.set_prev_indent(prev_indent);
             }
@@ -1482,7 +1499,7 @@ pub fn parse(
 
                 if matches!(last_token, Tokens::LColon()) {
                     // Handle condition block
-                    node.apply_condition(
+                    tree.apply_condition(
                         identifier,
                         token,
                         lexer,
@@ -1495,7 +1512,7 @@ pub fn parse(
                     Tokens::LRegExpSet(_, _) | Tokens::LRegExpAppend(_, _) | Tokens::LRegExpPrepend(_, _)
                 ) {
                     // Handle operator
-                    dict = node.apply_operator(
+                    dict = tree.apply_operator(
                         identifier,
                         token,
                         lexer,
@@ -1512,18 +1529,18 @@ pub fn parse(
             }
 
             Tokens::LDel(_, _) => {
-                node.apply_deletion(lexer, dict)?;
+                tree.apply_deletion(lexer, dict)?;
                 dict = HashMap::new();
             }
 
             Tokens::LNotCond() => {
-                node.apply_notcondition(lexer, dict, indent)?;
+                tree.apply_notcondition(lexer, dict, indent)?;
                 dict = HashMap::new();
                 lexer.set_prev_indent(prev_indent);
             }
 
             Tokens::LVariants() => {
-                let (name, meta_dict) = node.apply_variants(lexer)?;
+                let (name, meta_dict) = tree.apply_variants(lexer)?;
                 variant_name = name;
                 variant_indent = indent;
                 for (key, values) in meta_dict {
@@ -1533,7 +1550,7 @@ pub fn parse(
             }
 
             Tokens::LVariant() => {
-                node = node.apply_variant(
+                tree.apply_variant(
                     lexer,
                     dict,
                     indent,
@@ -1557,7 +1574,7 @@ pub fn parse(
                     lexer.filename.as_str(),
                     lexer.linenum,
                 )?;
-                node.apply_dict(lexer, dict);
+                tree.apply_dict(lexer, dict)?;
                 dict = HashMap::new();
 
                 let content_type = match token {
@@ -1574,6 +1591,7 @@ pub fn parse(
                         line: lexer.line.clone().unwrap_or_default(),
                     }),
                 };
+                let node = tree.borrow_root_mut()?;
                 node.add_content(
                     lexer.filename.clone(),
                     lexer.linenum,
@@ -1585,7 +1603,7 @@ pub fn parse(
                 // Parse:
                 //    suffix SUFFIX
                 if !dict.is_empty() {
-                    node.apply_dict(lexer, dict);
+                    tree.apply_dict(lexer, dict)?;
                 }
                 dict = HashMap::new();
                 let token_val = lexer.get_next_token(
@@ -1626,13 +1644,9 @@ pub fn parse_string(
     expand_defaults: Option<Vec<String>>,
 ) -> PyResult<Tree> {
     let mut new_lexer = Lexer::new(Some(&cfgstr), None)?;
-    let mut root_node = tree.clone_node(tree.root)?;
-    root_node.filename = new_lexer.filename.clone();
-    AST.with(|ast| *ast.borrow_mut() = tree);
-    root_node = parse(&mut new_lexer, root_node, prev_indent, defaults, expand_defaults)?;
-    tree = AST.with(|ast| ast.borrow().clone());
-    tree.set_root(root_node.id)?;
-    tree.swap_node(root_node)?;
+    tree.borrow_root_mut()?.filename = new_lexer.filename.clone();
+    parse(&mut tree, &mut new_lexer, prev_indent, defaults, expand_defaults)?;
+    AST.with(|ast| *ast.borrow_mut() = tree.clone());
     Ok(tree)
 }
 
@@ -1646,13 +1660,9 @@ pub fn parse_file(
     expand_defaults: Option<Vec<String>>,
 ) -> PyResult<Tree> {
     let mut new_lexer = Lexer::new(None, Some(&cfgfile))?;
-    let mut root_node = tree.clone_node(tree.root)?;
-    root_node.filename = cfgfile;
-    AST.with(|ast| *ast.borrow_mut() = tree);
-    root_node = parse(&mut new_lexer, root_node, prev_indent, defaults, expand_defaults)?;
-    tree = AST.with(|ast| ast.borrow().clone());
-    tree.set_root(root_node.id)?;
-    tree.swap_node(root_node)?;
+    tree.borrow_root_mut()?.filename = cfgfile;
+    parse(&mut tree, &mut new_lexer, prev_indent, defaults, expand_defaults)?;
+    AST.with(|ast| *ast.borrow_mut() = tree.clone());
     Ok(tree)
 }
 
@@ -2229,14 +2239,14 @@ mod tests {
 
     #[test]
     fn test_apply_dict() {
-        let mut node = Node::default();
+        let mut tree = Tree::new().unwrap();
         let lexer = Lexer::new(Some(""), None).expect("Failed to create lexer");
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert_str("key", "value".to_string().into());
 
         // apply_dict should add an LApplyDict content step and clear dict
-        node.apply_dict(&lexer, dict);
-        let content = node.get_content();
+        tree.apply_dict(&lexer, dict).unwrap();
+        let content = tree.borrow_root().unwrap().get_content();
         assert_eq!(content.len(), 1);
 
         // content type should be Tokens::LApplyDict and contains our key/value
@@ -2263,13 +2273,13 @@ mod tests {
         let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("get_next_token indent");
         let _ = lexer.get_next_token(Some(vec![Tokens::default("include")]), None).expect("get_next_token include");
 
-        let mut node = Node::default();
+        let mut tree = Tree::new().unwrap();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert_str("key1", "value1".to_string().into());
 
         // apply_include should parse the included file and return a node with a child named "test"
-        let returned = node.apply_include(&mut lexer, dict).expect("apply_include failed");
-        let children = returned.get_children();
+        tree.apply_include(&mut lexer, dict).expect("apply_include failed");
+        let children = tree.borrow_root().unwrap().get_children();
         assert_eq!(children.len(), 1);
         let child = &children[0];
         assert_eq!(child.name.len(), 1);
@@ -2286,16 +2296,16 @@ mod tests {
         // get identifier tokens up to '=' (no_white = true)
         let identifier = lexer.get_until(vec![Tokens::default("=")], None, Some(true)).expect("get_until identifier");
 
-        let mut node = Node::default();
+        let mut tree = Tree::new().unwrap();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert_str("key1", "value1".to_string().into());
 
         // apply_operator should add key2 to dict directly (optimized path)
-        dict = node.apply_operator(identifier, token, &mut lexer, dict).expect("apply_operator failed");
+        dict = tree.apply_operator(identifier, token, &mut lexer, dict).expect("apply_operator failed");
         // dict now should contain both key1 and key2, and node content should be empty
         assert_eq!(dict.get_str("key1"), Some(&"value1".to_string().into()));
         assert_eq!(dict.get_str("key2"), Some(&"value2".to_string().into()));
-        let content = node.get_content();
+        let content = tree.borrow_root().unwrap().get_content();
         assert_eq!(content.len(), 0);
     }
 
@@ -2307,16 +2317,16 @@ mod tests {
         let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier token");
         let identifier = lexer.get_until(vec![Tokens::default("+=")], None, Some(true)).expect("get_until identifier");
 
-        let mut node = Node::default();
+        let mut tree = Tree::new().unwrap();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert_str("key1", "value1".to_string().into());
 
-        dict = node.apply_operator(identifier, token, &mut lexer, dict).expect("apply_operator failed");
+        dict = tree.apply_operator(identifier, token, &mut lexer, dict).expect("apply_operator failed");
 
         // dict should be updated
         assert_eq!(dict.get_str("key1"), Some(&"value1&value2".to_string().into()));
         // node content should be empty
-        let content = node.get_content();
+        let content = tree.borrow_root().unwrap().get_content();
         assert_eq!(content.len(), 0);
     }
 
@@ -2328,14 +2338,14 @@ mod tests {
         let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier token");
         let identifier = lexer.get_until(vec![Tokens::default("+=")], None, Some(true)).expect("get_until identifier");
 
-        let mut node = Node::default();
+        let mut tree = Tree::new().unwrap();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert_str("key1", "value1".to_string().into());
 
-        node.apply_operator(identifier, token, &mut lexer, dict).expect("apply_operator failed");
+        tree.apply_operator(identifier, token, &mut lexer, dict).expect("apply_operator failed");
 
         // node content should be extended with append operation step
-        let content = node.get_content();
+        let content = tree.borrow_root().unwrap().get_content();
         assert_eq!(content.len(), 2);
         // first should be an LApplyDict, second an LAppend
         match &content[0].content_type {
@@ -2360,14 +2370,14 @@ mod tests {
         let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
         let _ = lexer.get_next_token(Some(vec![Tokens::default("del")]), None).expect("del");
 
-        let mut node = Node::default();
+        let mut tree = Tree::new().unwrap();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert_str("key1", "value1".to_string().into());
 
-        node.apply_deletion(&mut lexer, dict).expect("apply_deletion failed");
+        tree.apply_deletion(&mut lexer, dict).expect("apply_deletion failed");
 
         // node content should be extended with delete operation step
-        let content = node.get_content();
+        let content = tree.borrow_root().unwrap().get_content();
         assert_eq!(content.len(), 2);
         match &content[0].content_type {
             ContentType::Tokens(Tokens::LApplyDict(_, map)) => {
@@ -2391,13 +2401,13 @@ mod tests {
         let token = lexer.get_next_token(Some(vec![Tokens::default("Identifier")]), None).expect("identifier");
         let identifier = lexer.get_until(vec![Tokens::default(":")], None, Some(true)).expect("get_until");
 
-        let mut node = Node::default();
+        let mut tree = Tree::new().unwrap();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert_str("key1", "value1".to_string().into());
 
-        node.apply_condition(identifier, token, &mut lexer, dict, 0).expect("apply_condition failed");
+        tree.apply_condition(identifier, token, &mut lexer, dict, 0).expect("apply_condition failed");
 
-        let content = node.get_content();
+        let content = tree.borrow_root().unwrap().get_content();
         assert_eq!(content.len(), 2);
         // first should be LApplyDict, second a Node with a positive condition
         match &content[0].content_type {
@@ -2424,13 +2434,13 @@ mod tests {
         let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
         let _ = lexer.get_next_token(Some(vec![Tokens::default("!")]), None).expect("notcond");
 
-        let mut node = Node::default();
+        let mut tree = Tree::new().unwrap();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert_str("key1", "value1".to_string().into());
 
-        node.apply_notcondition(&mut lexer, dict, 0).expect("apply_notcondition failed");
+        tree.apply_notcondition(&mut lexer, dict, 0).expect("apply_notcondition failed");
 
-        let content = node.get_content();
+        let content = tree.borrow_root().unwrap().get_content();
         assert_eq!(content.len(), 2);
         // first should be LApplyDict, second a Node with a negative condition
         match &content[0].content_type {
@@ -2457,14 +2467,14 @@ mod tests {
         let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
         let _ = lexer.get_next_token(Some(vec![Tokens::default("variants")]), None).expect("variants");
 
-        let node = Node::default();
-        let (variant_name, meta) = node.apply_variants(&mut lexer).expect("apply_variants failed");
+        let tree = Tree::new().unwrap();
+        let (variant_name, meta) = tree.apply_variants(&mut lexer).expect("apply_variants failed");
 
         // variant name should be "test" and meta empty
         assert_eq!(variant_name, "test");
         assert!(meta.is_empty());
         // content should be empty
-        let content = node.get_content();
+        let content = tree.borrow_root().unwrap().get_content();
         assert_eq!(content.len(), 0);
     }
 
@@ -2476,8 +2486,8 @@ mod tests {
         let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
         let _ = lexer.get_next_token(Some(vec![Tokens::default("variants")]), None).expect("variants");
 
-        let node = Node::default();
-        let (variant_name, meta) = node.apply_variants(&mut lexer).expect("apply_variants failed");
+        let tree = Tree::new().unwrap();
+        let (variant_name, meta) = tree.apply_variants(&mut lexer).expect("apply_variants failed");
 
         // variant name should be "test"
         assert_eq!(variant_name, "test");
@@ -2487,7 +2497,7 @@ mod tests {
         assert_eq!(meta.get("meta3").map(|v| v.as_slice()), Some(&["true".to_string()][..]));
         assert_eq!(meta.get("meta4").map(|v| v.as_slice()), Some(&["val4 val5".to_string()][..]));
         // content should be empty
-        let content = node.get_content();
+        let content = tree.borrow_root().unwrap().get_content();
         assert_eq!(content.len(), 0);
     }
 
@@ -2498,12 +2508,13 @@ mod tests {
         let _ = lexer.get_next_token(Some(vec![Tokens::default("indent")]), None).expect("indent");
         let _ = lexer.get_next_token(Some(vec![Tokens::default("-")]), None).expect("dash");
 
-        let mut node = Node::default();
+        let mut tree = Tree::new().unwrap();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
         dict.insert_str("key1", "value1".to_string().into());
         let mut meta = HashMap::new();
+        let root_id = tree.root;
 
-        let grandparent_node = node.apply_variant(
+        tree.apply_variant(
             &mut lexer,
             dict,
             0,
@@ -2515,6 +2526,7 @@ mod tests {
         ).expect("apply_variant failed");
 
         // original node should receive the flushed dict content
+        let node = tree.clone_node(root_id).unwrap();
         let content = node.get_content();
         assert!(!content.is_empty());
         match &content[0].content_type {
@@ -2525,6 +2537,7 @@ mod tests {
         }
 
         // grandparent node should have one child (the variant) whose name is "test"
+        let grandparent_node = tree.borrow_root().unwrap();
         let parents = grandparent_node.get_children();
         assert_eq!(parents.len(), 1);
         let parent_node = &parents[0];
