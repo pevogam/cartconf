@@ -572,6 +572,7 @@ impl Node {
         true
     }
 }
+// TODO: this entire section must move the tree struct implementations
 impl Tree {
     pub fn apply_dict(
         &mut self,
@@ -761,7 +762,7 @@ impl Tree {
         let mut new_lexer = Lexer::new(None, Some(filepath_str))?;
 
         // Parse with new lexer
-        parse(self, &mut new_lexer, -1, false, None)?;
+        self.parse(&mut new_lexer, -1, false, None)?;
         Ok(())
     }
 
@@ -809,7 +810,7 @@ impl Tree {
         // Parse the condition block
         let root_id = self.root;
         self.set_root(cond_id)?;
-        parse(self, lexer, indent, false, None)?;
+        self.parse(lexer, indent, false, None)?;
         self.set_root(root_id)?;
 
         // Apply the current dict and add the condition node as content
@@ -874,7 +875,7 @@ impl Tree {
         // Parse the condition block
         let root_id = self.root;
         self.set_root(cond_id)?;
-        parse(self, lexer, indent, false, None)?;
+        self.parse(lexer, indent, false, None)?;
         self.set_root(root_id)?;
 
         // Apply the current dict and add the condition node as content
@@ -1183,7 +1184,7 @@ impl Tree {
             }
 
             self.set_root(node2_id)?;
-            parse(self, lexer, indent, defaults, Some(expand_defaults.clone()))?;
+            self.parse(lexer, indent, defaults, Some(expand_defaults.clone()))?;
             let node3 = self.borrow_root_mut()?;
 
             // Set variant name and dependencies
@@ -1281,6 +1282,245 @@ impl Tree {
         self.set_root(node4_id)?;
         Ok(())
     }
+
+    pub fn parse(
+        &mut self,
+        lexer: &mut Lexer,
+        prev_indent: isize,
+        defaults: bool,
+        expand_defaults: Option<Vec<String>>,
+    ) -> PyResult<()> {
+        // Allowed token types for different contexts
+        // reuse default tokens as much as possible using their identifiers
+        let block_allowed = [
+            Tokens::default("variants"),
+            Tokens::default("Identifier"),
+            Tokens::default("only"),
+            Tokens::default("no"),
+            Tokens::default("include"),
+            Tokens::default("del"),
+            Tokens::default("!"),
+            Tokens::default("suffix"),
+            Tokens::default("join"),
+        ];
+        let variants_allowed = [Tokens::default("-")];
+        let identifier_allowed = [
+            Tokens::default("="),
+            Tokens::default("+="),
+            Tokens::default("<="),
+            Tokens::default("~="),
+            Tokens::default("?="),
+            Tokens::default("?+="),
+            Tokens::default("?<="),
+            Tokens::default(":"),
+            Tokens::default("endl"),
+        ];
+        let indent_allowed = [
+            Tokens::default("indent"),
+            Tokens::default("endb")
+        ];
+        let mut allowed = block_allowed.to_vec();
+
+        // Variant tracking state
+        let mut variant_name = String::new();
+        let mut variant_indent = 0;
+        let mut meta = HashMap::new();
+
+        // Suffix operator state
+        // NOTE: Suffix should be applied as the last operator in the dictionary
+        // Reasons:
+        // 1. Escapes multiplying suffix operators
+        // 2. Affects all elements in current block
+        let mut suffix: Option<(String, isize, Tokens)> = None;
+
+        // Dictionary contains block of operation without collision with
+        // other blocks or operations which increases speed almost twice.
+        let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
+
+        loop {
+            lexer.set_prev_indent(prev_indent);
+
+            // Handle indentation
+            let token = lexer.get_next_token(
+                Some(indent_allowed.to_vec()),
+                None
+            )?;
+
+            if matches!(token, Tokens::LEndBlock(_)) {
+                if !dict.is_empty() {
+                    // Flush dict to node content
+                    self.apply_dict(lexer, dict)?;
+                }
+                if let Some((filename, linenum, op)) = suffix {
+                    // Node has suffix, apply it to all elements
+                    let node = self.borrow_root_mut()?;
+                    node.add_content(filename.clone(), linenum, ContentType::Tokens(op));
+                }
+                return Ok(());
+            }
+
+            let indent: isize = token.length()?;
+            let token = lexer.get_next_token(Some(allowed.to_vec()), None)?;
+
+            match token {
+                Tokens::LInclude() => {
+                    self.apply_include(lexer, dict)?;
+                    dict = HashMap::new();
+                    lexer.set_prev_indent(prev_indent);
+                }
+
+                Tokens::LIdentifier(_) => {
+                    // Parse:
+                    //    identifier .....
+                    // Get tokens until an operator or colon
+                    let identifier = lexer.get_until(
+                        identifier_allowed.to_vec(),
+                        None,
+                        Some(true),
+                    )?;
+                    let last_token: &Tokens = match identifier.last() {
+                        Some(last_token) => last_token,
+                        None => {
+                            return Err(PyValueError::new_err("Empty identifier"));
+                        }
+                    };
+
+                    if matches!(last_token, Tokens::LColon()) {
+                        // Handle condition block
+                        self.apply_condition(
+                            identifier,
+                            token,
+                            lexer,
+                            dict,
+                            indent,
+                        )?;
+                        dict = HashMap::new();
+                    } else if matches!(&last_token,
+                        Tokens::LSet(_, _) | Tokens::LLazySet(_, _) | Tokens::LAppend(_, _) | Tokens::LPrepend(_, _) |
+                        Tokens::LRegExpSet(_, _) | Tokens::LRegExpAppend(_, _) | Tokens::LRegExpPrepend(_, _)
+                    ) {
+                        // Handle operator
+                        dict = self.apply_operator(
+                            identifier,
+                            token,
+                            lexer,
+                            dict,
+                        )?;
+                    } else {
+                        return Err(PyErr::new::<ParserError, _>((
+                            "Syntax ERROR expected ':' or operand".to_string(),
+                            lexer.line.clone(),
+                            Some(lexer.filename.clone()),
+                            Some(lexer.linenum),
+                        )));
+                    }
+                }
+
+                Tokens::LDel(_, _) => {
+                    self.apply_deletion(lexer, dict)?;
+                    dict = HashMap::new();
+                }
+
+                Tokens::LNotCond() => {
+                    self.apply_notcondition(lexer, dict, indent)?;
+                    dict = HashMap::new();
+                    lexer.set_prev_indent(prev_indent);
+                }
+
+                Tokens::LVariants() => {
+                    let (name, meta_dict) = self.apply_variants(lexer)?;
+                    variant_name = name;
+                    variant_indent = indent;
+                    for (key, values) in meta_dict {
+                        meta.insert(key, values);
+                    }
+                    allowed = variants_allowed.to_vec();
+                }
+
+                Tokens::LVariant() => {
+                    self.apply_variant(
+                        lexer,
+                        dict,
+                        indent,
+                        variant_name.clone(),
+                        variant_indent,
+                        &mut meta,
+                        defaults,
+                        expand_defaults.clone().unwrap_or_default(),
+                    )?;
+                    dict = HashMap::new();
+                    allowed = block_allowed.to_vec();
+                }
+
+                Tokens::LNo() | Tokens::LOnly() | Tokens::LJoin() => {
+                    // Parse:
+                    //    only/no/join (filter=text)..aaa.bbb, xxxx
+                    let rest_tokens: Vec<Tokens> = lexer.get_rest_line(None)?;
+                    let filters: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
+                        rest_tokens,
+                        lexer.line.as_deref(),
+                        lexer.filename.as_str(),
+                        lexer.linenum,
+                    )?;
+                    self.apply_dict(lexer, dict)?;
+                    dict = HashMap::new();
+
+                    let content_type = match token {
+                        Tokens::LOnly() => ContentType::Filters(Filters::OnlyFilter {
+                            filter: filters,
+                            line: lexer.line.clone().unwrap_or_default(),
+                        }),
+                        Tokens::LNo() => ContentType::Filters(Filters::NoFilter {
+                            filter: filters,
+                            line: lexer.line.clone().unwrap_or_default(),
+                        }),
+                        _ => ContentType::Filters(Filters::JoinFilter {
+                            filter: filters,
+                            line: lexer.line.clone().unwrap_or_default(),
+                        }),
+                    };
+                    let node = self.borrow_root_mut()?;
+                    node.add_content(
+                        lexer.filename.clone(),
+                        lexer.linenum,
+                        content_type,
+                    );
+                }
+
+                Tokens::LSuffix() => {
+                    // Parse:
+                    //    suffix SUFFIX
+                    if !dict.is_empty() {
+                        self.apply_dict(lexer, dict)?;
+                    }
+                    dict = HashMap::new();
+                    let token_val = lexer.get_next_token(
+                        Some(vec![Tokens::default("Identifier")]),
+                        None,
+                    )?;
+                    lexer.get_next_token(
+                        Some(vec![Tokens::default("endl")]),
+                        None,
+                    )?;
+
+                    suffix = Some((
+                        lexer.filename.clone(),
+                        lexer.linenum,
+                        Tokens::Suffix(String::new(), token_val.string()?),
+                    ));
+                }
+
+                _ => {
+                    return Err(PyErr::new::<ParserError, _>((
+                        "Syntax ERROR expected".to_string(),
+                        lexer.line.clone(),
+                        Some(lexer.filename.clone()),
+                        Some(lexer.linenum),
+                    )));
+                }
+            }
+        }
+    }
 }
 
 #[pyclass]
@@ -1350,6 +1590,36 @@ impl Tree {
         self.root = id;
         Ok(())
     }
+
+    #[pyo3(signature = (cfgstr, prev_indent=-1, defaults=true, expand_defaults=None))]
+    pub fn parse_string(
+        &mut self,
+        cfgstr: String,
+        prev_indent: isize,
+        defaults: bool,
+        expand_defaults: Option<Vec<String>>,
+    ) -> PyResult<()> {
+        let mut new_lexer = Lexer::new(Some(&cfgstr), None)?;
+        self.borrow_root_mut()?.filename = new_lexer.filename.clone();
+        self.parse(&mut new_lexer, prev_indent, defaults, expand_defaults)?;
+        AST.with(|ast| *ast.borrow_mut() = self.clone());
+        Ok(())
+    }
+
+    #[pyo3(signature = (cfgfile, prev_indent=-1, defaults=true, expand_defaults=None))]
+    pub fn parse_file(
+        &mut self,
+        cfgfile: String,
+        prev_indent: isize,
+        defaults: bool,
+        expand_defaults: Option<Vec<String>>,
+    ) -> PyResult<()> {
+        let mut new_lexer = Lexer::new(None, Some(&cfgfile))?;
+        self.borrow_root_mut()?.filename = cfgfile;
+        self.parse(&mut new_lexer, prev_indent, defaults, expand_defaults)?;
+        AST.with(|ast| *ast.borrow_mut() = self.clone());
+        Ok(())
+    }
 }
 impl Tree {
     pub fn borrow_node(&self, id: usize) -> Result<&Node, PyErr> {
@@ -1395,277 +1665,6 @@ impl Tree {
     pub fn get_node_mut(&mut self, id: usize) -> Option<&mut Node> {
         self.borrow_node_mut(id).ok()
     }
-}
-
-pub fn parse(
-    tree: &mut Tree,
-    lexer: &mut Lexer,
-    prev_indent: isize,
-    defaults: bool,
-    expand_defaults: Option<Vec<String>>,
-) -> PyResult<()> {
-    // Allowed token types for different contexts
-    // reuse default tokens as much as possible using their identifiers
-    let block_allowed = [
-        Tokens::default("variants"),
-        Tokens::default("Identifier"),
-        Tokens::default("only"),
-        Tokens::default("no"),
-        Tokens::default("include"),
-        Tokens::default("del"),
-        Tokens::default("!"),
-        Tokens::default("suffix"),
-        Tokens::default("join"),
-    ];
-    let variants_allowed = [Tokens::default("-")];
-    let identifier_allowed = [
-        Tokens::default("="),
-        Tokens::default("+="),
-        Tokens::default("<="),
-        Tokens::default("~="),
-        Tokens::default("?="),
-        Tokens::default("?+="),
-        Tokens::default("?<="),
-        Tokens::default(":"),
-        Tokens::default("endl"),
-    ];
-    let indent_allowed = [
-        Tokens::default("indent"),
-        Tokens::default("endb")
-    ];
-    let mut allowed = block_allowed.to_vec();
-
-    // Variant tracking state
-    let mut variant_name = String::new();
-    let mut variant_indent = 0;
-    let mut meta = HashMap::new();
-
-    // Suffix operator state
-    // NOTE: Suffix should be applied as the last operator in the dictionary
-    // Reasons:
-    // 1. Escapes multiplying suffix operators
-    // 2. Affects all elements in current block
-    let mut suffix: Option<(String, isize, Tokens)> = None;
-
-    // Dictionary contains block of operation without collision with
-    // other blocks or operations which increases speed almost twice.
-    let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-
-    loop {
-        lexer.set_prev_indent(prev_indent);
-
-        // Handle indentation
-        let token = lexer.get_next_token(
-            Some(indent_allowed.to_vec()),
-            None
-        )?;
-
-        if matches!(token, Tokens::LEndBlock(_)) {
-            if !dict.is_empty() {
-                // Flush dict to node content
-                tree.apply_dict(lexer, dict)?;
-            }
-            if let Some((filename, linenum, op)) = suffix {
-                // Node has suffix, apply it to all elements
-                let node = tree.borrow_root_mut()?;
-                node.add_content(filename.clone(), linenum, ContentType::Tokens(op));
-            }
-            return Ok(());
-        }
-
-        let indent: isize = token.length()?;
-        let token = lexer.get_next_token(Some(allowed.to_vec()), None)?;
-
-        match token {
-            Tokens::LInclude() => {
-                tree.apply_include(lexer, dict)?;
-                dict = HashMap::new();
-                lexer.set_prev_indent(prev_indent);
-            }
-
-            Tokens::LIdentifier(_) => {
-                // Parse:
-                //    identifier .....
-                // Get tokens until an operator or colon
-                let identifier = lexer.get_until(
-                    identifier_allowed.to_vec(),
-                    None,
-                    Some(true),
-                )?;
-                let last_token: &Tokens = match identifier.last() {
-                    Some(last_token) => last_token,
-                    None => {
-                        return Err(PyValueError::new_err("Empty identifier"));
-                    }
-                };
-
-                if matches!(last_token, Tokens::LColon()) {
-                    // Handle condition block
-                    tree.apply_condition(
-                        identifier,
-                        token,
-                        lexer,
-                        dict,
-                        indent,
-                    )?;
-                    dict = HashMap::new();
-                } else if matches!(&last_token,
-                    Tokens::LSet(_, _) | Tokens::LLazySet(_, _) | Tokens::LAppend(_, _) | Tokens::LPrepend(_, _) |
-                    Tokens::LRegExpSet(_, _) | Tokens::LRegExpAppend(_, _) | Tokens::LRegExpPrepend(_, _)
-                ) {
-                    // Handle operator
-                    dict = tree.apply_operator(
-                        identifier,
-                        token,
-                        lexer,
-                        dict,
-                    )?;
-                } else {
-                    return Err(PyErr::new::<ParserError, _>((
-                        "Syntax ERROR expected ':' or operand".to_string(),
-                        lexer.line.clone(),
-                        Some(lexer.filename.clone()),
-                        Some(lexer.linenum),
-                    )));
-                }
-            }
-
-            Tokens::LDel(_, _) => {
-                tree.apply_deletion(lexer, dict)?;
-                dict = HashMap::new();
-            }
-
-            Tokens::LNotCond() => {
-                tree.apply_notcondition(lexer, dict, indent)?;
-                dict = HashMap::new();
-                lexer.set_prev_indent(prev_indent);
-            }
-
-            Tokens::LVariants() => {
-                let (name, meta_dict) = tree.apply_variants(lexer)?;
-                variant_name = name;
-                variant_indent = indent;
-                for (key, values) in meta_dict {
-                    meta.insert(key, values);
-                }
-                allowed = variants_allowed.to_vec();
-            }
-
-            Tokens::LVariant() => {
-                tree.apply_variant(
-                    lexer,
-                    dict,
-                    indent,
-                    variant_name.clone(),
-                    variant_indent,
-                    &mut meta,
-                    defaults,
-                    expand_defaults.clone().unwrap_or_default(),
-                )?;
-                dict = HashMap::new();
-                allowed = block_allowed.to_vec();
-            }
-
-            Tokens::LNo() | Tokens::LOnly() | Tokens::LJoin() => {
-                // Parse:
-                //    only/no/join (filter=text)..aaa.bbb, xxxx
-                let rest_tokens: Vec<Tokens> = lexer.get_rest_line(None)?;
-                let filters: Vec<Vec<Vec<Label>>> = Filters::parse_filter(
-                    rest_tokens,
-                    lexer.line.as_deref(),
-                    lexer.filename.as_str(),
-                    lexer.linenum,
-                )?;
-                tree.apply_dict(lexer, dict)?;
-                dict = HashMap::new();
-
-                let content_type = match token {
-                    Tokens::LOnly() => ContentType::Filters(Filters::OnlyFilter {
-                        filter: filters,
-                        line: lexer.line.clone().unwrap_or_default(),
-                    }),
-                    Tokens::LNo() => ContentType::Filters(Filters::NoFilter {
-                        filter: filters,
-                        line: lexer.line.clone().unwrap_or_default(),
-                    }),
-                    _ => ContentType::Filters(Filters::JoinFilter {
-                        filter: filters,
-                        line: lexer.line.clone().unwrap_or_default(),
-                    }),
-                };
-                let node = tree.borrow_root_mut()?;
-                node.add_content(
-                    lexer.filename.clone(),
-                    lexer.linenum,
-                    content_type,
-                );
-            }
-
-            Tokens::LSuffix() => {
-                // Parse:
-                //    suffix SUFFIX
-                if !dict.is_empty() {
-                    tree.apply_dict(lexer, dict)?;
-                }
-                dict = HashMap::new();
-                let token_val = lexer.get_next_token(
-                    Some(vec![Tokens::default("Identifier")]),
-                    None,
-                )?;
-                lexer.get_next_token(
-                    Some(vec![Tokens::default("endl")]),
-                    None,
-                )?;
-
-                suffix = Some((
-                    lexer.filename.clone(),
-                    lexer.linenum,
-                    Tokens::Suffix(String::new(), token_val.string()?),
-                ));
-            }
-
-            _ => {
-                return Err(PyErr::new::<ParserError, _>((
-                    "Syntax ERROR expected".to_string(),
-                    lexer.line.clone(),
-                    Some(lexer.filename.clone()),
-                    Some(lexer.linenum),
-                )));
-            }
-        }
-    }
-}
-
-#[pyfunction]
-#[pyo3(signature = (tree, cfgstr, prev_indent=-1, defaults=true, expand_defaults=None))]
-pub fn parse_string(
-    mut tree: Tree,
-    cfgstr: String,
-    prev_indent: isize,
-    defaults: bool,
-    expand_defaults: Option<Vec<String>>,
-) -> PyResult<Tree> {
-    let mut new_lexer = Lexer::new(Some(&cfgstr), None)?;
-    tree.borrow_root_mut()?.filename = new_lexer.filename.clone();
-    parse(&mut tree, &mut new_lexer, prev_indent, defaults, expand_defaults)?;
-    AST.with(|ast| *ast.borrow_mut() = tree.clone());
-    Ok(tree)
-}
-
-#[pyfunction]
-#[pyo3(signature = (tree, cfgfile, prev_indent=-1, defaults=true, expand_defaults=None))]
-pub fn parse_file(
-    mut tree: Tree,
-    cfgfile: String,
-    prev_indent: isize,
-    defaults: bool,
-    expand_defaults: Option<Vec<String>>,
-) -> PyResult<Tree> {
-    let mut new_lexer = Lexer::new(None, Some(&cfgfile))?;
-    tree.borrow_root_mut()?.filename = cfgfile;
-    parse(&mut tree, &mut new_lexer, prev_indent, defaults, expand_defaults)?;
-    AST.with(|ast| *ast.borrow_mut() = tree.clone());
-    Ok(tree)
 }
 
 #[pyclass]

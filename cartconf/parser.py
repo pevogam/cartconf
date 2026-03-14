@@ -22,8 +22,6 @@ Label = parser.Label
 Node = parser.Node
 Tree = parser.Tree
 PreDict = parser.PreDict
-parse_string = parser.parse_string
-parse_file = parser.parse_file
 
 
 class Parser(object):
@@ -69,8 +67,7 @@ class Parser(object):
 
         :param cfgfile: configuration file path to parse
         """
-        self.ast = parse_file(
-            self.ast,
+        self.ast.parse_file(
             cfgfile,
             defaults=self.defaults,
             expand_defaults=self.expand_defaults,
@@ -83,8 +80,7 @@ class Parser(object):
 
         :param cfgstr: configuration string to parse
         """
-        self.ast = parse_string(
-            self.ast,
+        self.ast.parse_string(
             cfgstr,
             defaults=self.defaults,
             expand_defaults=self.expand_defaults,
