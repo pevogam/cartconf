@@ -1694,7 +1694,7 @@ pub struct PreDict {
 
     // traversal state
     #[pyo3(get)]
-    pub branch: Vec<Node>,
+    pub branch: Vec<usize>,
     #[pyo3(get)]
     pub route: Vec<Option<usize>>,
     #[pyo3(get, set)]
@@ -1919,11 +1919,15 @@ impl PreDict {
             /* TODO: add optional logging
             self._debug("Failed_cases %s", node.failed_cases)
             */
-            self.branch.push(node);
+            self.branch.push(node.id);
+            // TODO: oddly as in other hanging cases we cannot swap the node in case of success
+            //self._tree.borrow_mut().swap_node(node.clone())?;
             return Ok(false);
         }
 
-        self.branch.push(node);
+        self.branch.push(node.id);
+        // TODO: oddly as in other hanging cases we cannot swap the node in case of success
+        //self._tree.borrow_mut().swap_node(node.clone())?;
         Ok(true)
     }
 
@@ -1984,13 +1988,15 @@ impl PreDict {
                 break;
             }
             let i = depth as usize;
+            let var_name = self._tree.borrow().borrow_node(self.branch[i])?.var_name.clone();
+            let children = self._tree.borrow().borrow_node(self.branch[i])?.children.clone();
 
             if self.route[i].is_none() {
                 // start with 0th child
                 self.route[i] = Some(0);
 
                 // reached leaf
-                if self.branch[i].children.is_empty() {
+                if children.is_empty() {
                     /* TODO: add optional logging
                     self._debug("    reached leaf, returning it")
                     */
@@ -2018,30 +2024,27 @@ impl PreDict {
                     continue;
                 }
             };
-            if route_idx + 1 > self.branch[i].children.len() {
+            if route_idx + 1 > children.len() {
                 depth -= 1;
                 continue;
             }
 
             // the original parsed node is preserved as the pre-dict modifies a clone
             // for the purpose of traversal and dictionary getters
-            let child = self._tree.borrow().clone_node(
-                self.branch[i].children[route_idx]
-            )?;
+            let child = self._tree.borrow().clone_node(children[route_idx])?;
             if !self.update_from_node(child)? {
                 continue;
             }
-            let parent = &mut self.branch[i];
             if self.defaults {
-                let var_name_str = parent.var_name.iter()
+                let var_name_str = var_name.iter()
                     .map(|l| l.to_string())
                     .collect::<Vec<_>>().join(".");
-                let has_default_child = parent.children.iter()
+                let has_default_child = children.iter()
                     .any(|c| self._tree.borrow().get_node(*c)
                     .map(|n| n.default)
                     .unwrap_or(false));
                 let is_current_child_default = self._tree.borrow()
-                    .borrow_node(parent.children[route_idx])
+                    .borrow_node(children[route_idx])
                     .map(|n| n.default)
                     .unwrap_or(false);
                 if !self.expand_defaults.contains(&var_name_str)
@@ -2112,11 +2115,11 @@ impl PreDict {
             }
             // update the pre-dict with differently filtered current node
             if let Some(ref mut pre_dict) = pre_dicts[j] {
-                let node = &self.branch[depth];
-                if !pre_dict.branch.contains(node) {
+                let tree = self._tree.borrow();
+                if !pre_dict.branch.contains(&self.branch[depth]) {
                     // current join/only
                     let step = &joins[j];
-                    let mut node = self.branch[depth].clone();
+                    let mut node = tree.clone_node(self.branch[depth])?;
                     node.add_content(step.filename.clone(), step.linenum, step.content_type.clone());
                     if !pre_dict.update_from_node(node)? {
                         return Ok(None);
@@ -2199,7 +2202,8 @@ impl PreDict {
         let mut joins = &mut self.joins[depth];
         // due to pre-dict cloning current pre-dict must only contain one join at the end
         if joins.is_none() {
-            let node = &mut self.branch[depth];
+            let mut tree = self._tree.borrow_mut();
+            let node = tree.borrow_node_mut(self.branch[depth])?;
 
             // find joins from node content and prepare only-filters
             let mut plain_content: Vec<ContentStep> = Vec::with_capacity(node.content.len());
@@ -2247,7 +2251,10 @@ impl PreDict {
             dn = self.get_dicts_joined()?;
             if dn.is_none() {
                 // consume all children for this node
-                self.route[depth] = Some(self.branch[depth].children.len());
+                let node_children_len = self._tree.borrow()
+                    .borrow_node(self.branch[depth])
+                    .map(|n| n.children.len())?;
+                self.route[depth] = Some(node_children_len);
             }
         }
         if dn.is_none() {
