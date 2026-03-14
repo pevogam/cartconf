@@ -209,7 +209,7 @@ class NodeTest(unittest.TestCase):
         conditional_node.add_content("<string>", 3, op2)
         content = [
             ("<string>", 1, op1),
-            ("<string>", 2, conditional_node)
+            ("<string>", 2, conditional_node.id)
         ]
         node.swap_content(content)
 
@@ -233,7 +233,7 @@ class NodeTest(unittest.TestCase):
         new_content, failed_filters, _ = node.process_content(ctx, labels)
         self.assertEqual(len(new_content), 2)
         self.assertEqual(new_content[0], ("<string>", 1, op1))
-        self.assertEqual(new_content[1], ("<string>", 2, conditional_node))
+        self.assertEqual(new_content[1], ("<string>", 2, conditional_node.id))
         self.assertEqual(failed_filters, [])
 
     def test_process_content_negative_condition_filter(self):
@@ -250,7 +250,7 @@ class NodeTest(unittest.TestCase):
         conditional_node.add_content("<string>", 3, op2)
         content = [
             ("<string>", 1, op1),
-            ("<string>", 2, conditional_node)
+            ("<string>", 2, conditional_node.id)
         ]
         node.swap_content(content)
 
@@ -293,7 +293,7 @@ class NodeTest(unittest.TestCase):
         conditional_node.add_content("<string>", 4, nested_only)
         content = [
             ("<string>", 1, op1),
-            ("<string>", 2, conditional_node)
+            ("<string>", 2, conditional_node.id)
         ]
         node.swap_content(content)
 

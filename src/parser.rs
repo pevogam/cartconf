@@ -147,7 +147,7 @@ impl Label {
 pub enum ContentType {
     Tokens(Tokens),
     Filters(Filters),
-    Node(Node),
+    Node(usize),
     String(String),
 }
 impl<'py> IntoPyObject<'py> for ContentType {
@@ -176,7 +176,7 @@ impl<'py> FromPyObject<'_, 'py> for ContentType {
         else if let Ok(filters) = object.extract::<Filters>() {
             Ok(ContentType::Filters(filters))
         }
-        else if let Ok(node) = object.extract::<Node>() {
+        else if let Ok(node) = object.extract::<usize>() {
             Ok(ContentType::Node(node))
         }
         else {
@@ -420,23 +420,36 @@ impl Node {
         let mut new_content: Vec<ContentStep> = Vec::new();
         let mut failed_filters: Vec<ContentStep> = Vec::new();
 
-        for step in &self.content {
+        for step in self.content.clone() {
             match &step.content_type {
                 // operator tokens are passed through unchanged
                 ContentType::Tokens(_) | ContentType::String(_) => {
-                    new_content.push(step.clone());
+                    new_content.push(step);
                 }
 
                 _ => {
+                    let mut condition_node : Option<&mut Node> = None;
                     // step is an OnlyFilter/NoFilter/Condition/NegativeCondition
                     let filter = match &step.content_type {
                         ContentType::Filters(f) => f,
+                        // node represents conditional block with its own content
                         ContentType::Node(n) => {
-                            match n.condition {
-                                Some(ref f) => f,
-                                None => return Err(PyTypeError::new_err(
-                                    format!("Empty conditional node in {:?}", step)
-                                ))
+                            // fetch the node and ensure it has a condition
+                            condition_node = AST.with(|ast| {
+                                let tree = ast.borrow();
+                                tree.get_node_mut(*n)
+                            });
+                            if let Some(ref node) = condition_node {
+                                if let Some(ref cond) = node.condition {
+                                    cond
+                                } else {
+                                    println!("Node:\n{:?}", node.dump(0, true));
+                                    return Err(PyTypeError::new_err(format!("Node {:?} has no condition", n)));
+                                }
+                            } else {
+                                //println!("Node ID {:?} not found in tree {:?}", n, self.tree.register.borrow().nodes);
+                                //continue
+                                return Err(PyTypeError::new_err(format!("No node {:?} was found", n)));
                             }
                         },
                         _ => return Err(PyTypeError::new_err(
@@ -445,46 +458,40 @@ impl Node {
                     };
                     if filter.requires_action(ctx, labels) {
                         // this filter requires action now
-                        match &step.content_type {
-                            // node represents conditional block with its own content
-                            ContentType::Node(n) => {
-                                /* TODO: add optional logging
-                                self._debug(
-                                    "    conditional block matches:" " %r (%s:%s)",
-                                    filter.line,
-                                    filename,
-                                    linenum,
-                                )
-                                */
-                                let mut cond_node = n.clone();
-                                // check and unpack the content inside this conditional node
-                                let (cond_content,
-                                    mut failed_cond_filters,
-                                    deeper_failed_filters) = cond_node
-                                        .process_content(ctx, labels)?;
-                                new_content.extend(cond_content);
-                                if !failed_cond_filters.is_empty() {
-                                    // record the entire conditional step as a failing filter
-                                    failed_filters.push(step.clone());
-                                    failed_cond_filters.extend(deeper_failed_filters.into_iter());
-                                    return Ok((new_content, failed_filters, failed_cond_filters));
-                                }
-                                // conditional block unpacked successfully
-                                continue;
-                            }
-                            // plain filters (only/no) fail to apply
-                            _ => {
-                                /* TODO: add optional logging
-                                self._debug(
-                                    "    filter did not pass: %r (%s:%s)",
-                                    filter.line,
-                                    filename,
-                                    linenum,
-                                )
-                                */
+                        if let Some(node) = condition_node {
+                            /* TODO: add optional logging
+                            self._debug(
+                                "    conditional block matches:" " %r (%s:%s)",
+                                filter.line,
+                                filename,
+                                linenum,
+                            )
+                            */
+                            // check and unpack the content inside this conditional node
+                            let (cond_content,
+                                mut failed_cond_filters,
+                                deeper_failed_filters) = node.process_content(ctx, labels)?;
+                            new_content.extend(cond_content);
+                            if !failed_cond_filters.is_empty() {
+                                // record the entire conditional step as a failing filter
                                 failed_filters.push(step.clone());
-                                return Ok((new_content, failed_filters, Vec::new()));
+                                failed_cond_filters.extend(deeper_failed_filters.into_iter());
+                                return Ok((new_content, failed_filters, failed_cond_filters));
                             }
+                            // conditional block unpacked successfully
+                            continue;
+                        // plain filters (only/no) fail to apply
+                        } else {
+                            /* TODO: add optional logging
+                            self._debug(
+                                "    filter did not pass: %r (%s:%s)",
+                                filter.line,
+                                filename,
+                                linenum,
+                            )
+                            */
+                            failed_filters.push(step.clone());
+                            return Ok((new_content, failed_filters, Vec::new()));
                         }
                     }
                     else if filter.is_irrelevant(ctx, labels) {
@@ -493,7 +500,7 @@ impl Node {
                     }
                     else {
                         // keep the filter and check it again later
-                        new_content.push(step.clone());
+                        new_content.push(step);
                     }
                 }
             }
@@ -795,11 +802,10 @@ impl Tree {
 
         // Apply the current dict and add the condition node as content
         self.apply_dict(lexer, dict)?;
-        let cond = self.borrow_node(cond_id)?.clone();
         self.borrow_root_mut()?.add_content(
             lexer.filename.clone(),
             lexer.linenum,
-            ContentType::Node(cond),
+            ContentType::Node(cond_id),
         );
 
         Ok(())
@@ -860,11 +866,10 @@ impl Tree {
 
         // Apply the current dict and add the condition node as content
         self.apply_dict(lexer, dict)?;
-        let cond = self.borrow_node(cond_id)?.clone();
         self.borrow_root_mut()?.add_content(
             lexer.filename.clone(),
             lexer.linenum,
-            ContentType::Node(cond),
+            ContentType::Node(cond_id),
         );
 
         Ok(())
@@ -2452,10 +2457,10 @@ mod tests {
         match &content[1].content_type {
             ContentType::Node(n) => {
                 // positive condition expected
-                if let Some(Filters::Condition { .. }) = n.condition {
+                if let Some(Filters::Condition { .. }) = tree.borrow_node(*n).unwrap().condition {
                     // ok
                 } else {
-                    panic!("Expected Condition, got {:?}", n.condition);
+                    panic!("Expected Condition, got {:?}", tree.borrow_node(*n).unwrap().condition);
                 }
             }
             other => panic!("Unexpected second content type: {:?}", other),
@@ -2485,10 +2490,10 @@ mod tests {
         match &content[1].content_type {
             ContentType::Node(n) => {
                 // negative condition expected
-                if let Some(Filters::NegativeCondition { .. }) = n.condition {
+                if let Some(Filters::NegativeCondition { .. }) = tree.borrow_node(*n).unwrap().condition {
                     // ok
                 } else {
-                    panic!("Expected NegativeCondition, got {:?}", n.condition);
+                    panic!("Expected NegativeCondition, got {:?}", tree.borrow_node(*n).unwrap().condition);
                 }
             }
             other => panic!("Unexpected second content type: {:?}", other),
