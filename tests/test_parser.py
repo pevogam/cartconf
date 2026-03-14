@@ -432,7 +432,7 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pd.dep, ["dep1"])
         self.assertEqual(pd.content, [("<file>", 1, op)])
         # route should have grown by one entry
-        self.assertEqual(pd.branch, [node])
+        self.assertEqual(pd.branch, [node.id])
         self.assertEqual(pd.route, [None])
 
         node2 = tree.clone_node(tree.new_node())
@@ -451,7 +451,7 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pd.dep, ["dep1", "n.dep2"])
         self.assertEqual(pd.content, [("<file>", 1, op), ("<file>", 2, op2)])
         # route should have grown by one entry
-        self.assertEqual(pd.branch, [node, node2])
+        self.assertEqual(pd.branch, [node.id, node2.id])
         self.assertEqual(pd.route, [None, None])
 
         # pre-dict can then be reverted to updated state from previous node
@@ -460,7 +460,7 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pd.shortname, [parser.Label("n")])
         self.assertEqual(pd.dep, ["dep1"])
         self.assertEqual(pd.content, [("<file>", 1, op)])
-        self.assertEqual(pd.branch, [node])
+        self.assertEqual(pd.branch, [node.id])
         self.assertIsNone(pd.route[-1])
 
     def test_update_from_node_failed(self):
@@ -484,7 +484,7 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pd.dep, ["dep1"])
         self.assertEqual(pd.final_content, [("<file>", 1, op)])
         # route should still grow
-        self.assertEqual(pd.branch, [node])
+        self.assertEqual(pd.branch, [node.id])
         self.assertEqual(pd.route, [None])
 
     def test_get_dict(self):
@@ -540,7 +540,7 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(d["key"], "value")
         cached_content = pre_dict.content
         self.assertEqual(len(cached_content), 3)
-        self.assertEqual(pre_dict.branch, [parent_node, node, child_node])
+        self.assertEqual(pre_dict.branch, [parent_node.id, node.id, child_node.id])
         self.assertEqual(pre_dict.route, [0, 0, 0])
         self.assertIsNone(pre_dict.get_dicts_plain())
 
@@ -703,9 +703,9 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pre_dict.join_dicts[-1][1]["name"], "test2")
         self.assertEqual(len(pre_dict.join_pre_dicts), 1)
         self.assertEqual(len(pre_dict.join_pre_dicts[-1]), 2)
-        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node.id)
         self.assertEqual(pre_dict.join_pre_dicts[-1][0].content[0], joins[0])
-        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node.id)
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
 
     def test_get_dicts_joined_deep(self):
@@ -750,9 +750,9 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pre_dict.join_dicts[-1][1]["name"], "b.test1")
         self.assertEqual(len(pre_dict.join_pre_dicts), 1)
         self.assertEqual(len(pre_dict.join_pre_dicts[-1]), 2)
-        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node.id)
         self.assertEqual(pre_dict.join_pre_dicts[-1][0].content[0], joins[0])
-        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node.id)
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
 
         d = pre_dict.get_dicts_joined()
@@ -771,9 +771,9 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pre_dict.join_dicts[-1][1]["name"], "b.test2")
         self.assertEqual(len(pre_dict.join_pre_dicts), 1)
         self.assertEqual(len(pre_dict.join_pre_dicts[-1]), 2)
-        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node.id)
         self.assertEqual(pre_dict.join_pre_dicts[-1][0].content[0], joins[0])
-        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node.id)
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
 
         d = pre_dict.get_dicts_joined()
@@ -792,9 +792,9 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pre_dict.join_dicts[-1][1]["name"], "b.test1")
         self.assertEqual(len(pre_dict.join_pre_dicts), 1)
         self.assertEqual(len(pre_dict.join_pre_dicts[-1]), 2)
-        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node.id)
         self.assertEqual(pre_dict.join_pre_dicts[-1][0].content[0], joins[0])
-        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node.id)
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
 
         d = pre_dict.get_dicts_joined()
@@ -812,9 +812,9 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pre_dict.join_dicts[-1][1]["name"], "b.test2")
         self.assertEqual(len(pre_dict.join_pre_dicts), 1)
         self.assertEqual(len(pre_dict.join_pre_dicts[-1]), 2)
-        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][0].branch[0], self.parser.node.id)
         self.assertEqual(pre_dict.join_pre_dicts[-1][0].content[0], joins[0])
-        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
+        self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node.id)
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
 
     def test_get_dicts(self):
