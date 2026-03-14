@@ -3,7 +3,6 @@ use std::cmp::min;
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
 use std::fmt::{Debug, Display};
-use std::rc::Rc;
 use std::cell::RefCell;
 
 use pyo3::prelude::*;
@@ -217,7 +216,7 @@ impl<'py> FromPyObject<'_, 'py> for ContentStep {
     }
 }
 
-#[pyclass(unsendable)]
+#[pyclass]
 #[derive(Debug, Clone)]
 pub struct Node {
     #[pyo3(get, set)]
@@ -242,7 +241,7 @@ pub struct Node {
     pub default: bool,
     #[pyo3(get)]
     pub id: usize,
-    children: VecDeque<Rc<RefCell<Node>>>,
+    children: VecDeque<usize>,
 }
 
 impl PartialEq for Node {
@@ -316,15 +315,22 @@ impl Node {
     }
 
     pub fn get_children(&self) -> Vec<Node> {
-        self.children.iter().map(|child| child.borrow().clone()).collect()
+        AST.with(|ast| {
+            let tree = ast.borrow();
+            self.children
+                .iter()
+                .filter_map(|c| tree.get_node(*c))
+                .cloned()
+                .collect()
+        })
     }
 
-    pub fn prepend_child(&mut self, node: Node) {
-        self.children.push_front(Rc::new(RefCell::new(node)));
+    pub fn prepend_child(&mut self, id: usize) {
+        self.children.push_front(id);
     }
 
-    pub fn append_child(&mut self, node: Node) {
-        self.children.push_back(Rc::new(RefCell::new(node)));
+    pub fn append_child(&mut self, id: usize) {
+        self.children.push_back(id);
     }
 
     pub fn get_content(&self) -> Vec<ContentStep> {
@@ -394,9 +400,14 @@ impl Node {
             format!("{:indent$}failed cases: {:?}", "", self.failed_cases, indent = indent),
         ];
         if recurse {
-            for child in &self.children {
-                dump_lines.push(child.borrow().dump(indent + 3, recurse));
-            }
+            AST.with(|ast| {
+                let tree = ast.borrow();
+                for c in &self.children {
+                    if let Ok(child) = tree.borrow_node(*c) {
+                        dump_lines.push(child.dump(indent + 3, recurse));
+                    };
+                }
+            });
         }
         dump_lines.join("\n")
     }
@@ -1065,8 +1076,8 @@ impl Tree {
         ];
 
         let node4_id = self.new_node()?;
-        let root = self.borrow_root_mut()?.clone();
-        let root_labels = root.labels.clone();
+        let root_id = self.root;
+        let root_labels = self.borrow_root_mut()?.labels.clone();
 
         loop {
             lexer.set_prev_indent(variant_indent);
@@ -1148,7 +1159,7 @@ impl Tree {
 
             // Create and parse the variant node
             let node2 = self.borrow_new_node_mut()?;
-            node2.append_child(root.clone());
+            node2.append_child(root_id);
             node2.update_labels(root_labels.clone());
             let node2_id = node2.id;
 
@@ -1215,6 +1226,7 @@ impl Tree {
             node3.append_to_shortname = !is_default;
 
             // Clone node3 data ultimately consumed at a later point
+            let node3_id = node3.id;
             let node3_labels = node3.labels.clone();
             let node3_name = node3.name.clone();
             let node3_default = node3.default;
@@ -1243,10 +1255,6 @@ impl Tree {
                 ),
             );
 
-            // Clone node3 ultimately consumed at a later point
-            let node3 = node3.clone();
-            self.swap_node(node3.clone())?;
-
             // Update labels
             let node4 = self.borrow_node_mut(node4_id)?;
             node4.update_labels(node3_labels);
@@ -1254,9 +1262,9 @@ impl Tree {
 
             // Add node to children
             if node3_default && defaults {
-                node4.prepend_child(node3);
+                node4.prepend_child(node3_id);
             } else {
-                node4.append_child(node3);
+                node4.append_child(node3_id);
             }
         }
 
@@ -1275,7 +1283,7 @@ impl Tree {
     }
 }
 
-#[pyclass(unsendable)]
+#[pyclass]
 #[derive(Debug, Clone, Default)]
 pub struct Tree {
     #[pyo3(get)]
@@ -1660,7 +1668,7 @@ pub fn parse_file(
     Ok(tree)
 }
 
-#[pyclass(unsendable)]
+#[pyclass]
 #[derive(Debug, Clone)]
 pub struct PreDict {
     _ctx: Vec<Vec<Label>>,
@@ -2002,18 +2010,34 @@ impl PreDict {
 
             // the original parsed node is preserved as the pre-dict modifies a clone
             // for the purpose of traversal and dictionary getters
-            let child = self.branch[i].children[route_idx].borrow().clone();
+            let child = AST.with(|ast| {
+                let tree = ast.borrow();
+                tree.borrow_node(self.branch[i].children[route_idx]).cloned()
+            })?;
             if !self.update_from_node(child)? {
                 continue;
             }
             let parent = &mut self.branch[i];
             if self.defaults {
                 let var_name_str = parent.var_name.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(".");
+                let has_default_child = AST.with(|ast| {
+                    let tree = ast.borrow();
+                    parent.children.iter().any(|c| tree.get_node(*c)
+                        .map(|n| n.default)
+                        .unwrap_or(false))
+                });
+                let is_current_child_default = AST.with(|ast| {
+                    let tree = ast.borrow();
+                    tree.borrow_node(parent.children[route_idx])
+                        .map(|n| n.default)
+                        .unwrap_or(false)
+                });
                 if !self.expand_defaults.contains(&var_name_str)
-                    && parent.children.iter().any(|c| c.borrow().default)
-                    && !parent.children[route_idx].borrow().default {
-                        return Ok(None);
-                    }
+                    && has_default_child
+                    && !is_current_child_default
+                {
+                    return Ok(None);
+                }
             }
             let d = self.get_dicts(false, true)?;
             // completed children recursion is consumed until we run out of children
@@ -2273,6 +2297,7 @@ mod tests {
 
         // apply_include should parse the included file and return a node with a child named "test"
         tree.apply_include(&mut lexer, dict).expect("apply_include failed");
+        AST.with(|ast| *ast.borrow_mut() = tree.clone());
         let children = tree.borrow_root().unwrap().get_children();
         assert_eq!(children.len(), 1);
         let child = &children[0];
@@ -2531,6 +2556,7 @@ mod tests {
         }
 
         // grandparent node should have one child (the variant) whose name is "test"
+        AST.with(|ast| *ast.borrow_mut() = tree.clone());
         let grandparent_node = tree.borrow_root().unwrap();
         let parents = grandparent_node.get_children();
         assert_eq!(parents.len(), 1);
