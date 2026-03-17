@@ -380,12 +380,12 @@ failed cases: []
 class PreDictTest(unittest.TestCase):
 
     def setUp(self):
-        self.pre_dict = parser.PreDict()
         # use this for some preconditions speedup
         self.parser = parser.Parser()
+        self.pre_dict = parser.PreDict(self.parser.ast)
 
     def test_default_properties(self):
-        pd = parser.PreDict()
+        pd = parser.PreDict(self.parser.ast)
         self.assertEqual(pd.ctx, [])
         self.assertEqual(pd.content, [])
         self.assertEqual(pd.shortname, [])
@@ -399,6 +399,7 @@ class PreDictTest(unittest.TestCase):
         lab = parser.Label("a")
         op = parser.LSet("key", "value")
         pd = parser.PreDict(
+            self.parser.ast,
             ctx=[lab],
             content=[("<string>", 1, op)],
             shortname=[lab],
@@ -412,8 +413,8 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pd.route, [])
 
     def test_update_from_node_reset(self):
-        pd = parser.PreDict()
         tree = parser.Tree()
+        pd = parser.PreDict(tree)
 
         node = tree.clone_node(tree.new_node())
         node.name = [parser.Label("n")]
@@ -463,8 +464,8 @@ class PreDictTest(unittest.TestCase):
         self.assertIsNone(pd.route[-1])
 
     def test_update_from_node_failed(self):
-        pd = parser.PreDict()
         tree = parser.Tree()
+        pd = parser.PreDict(tree)
 
         node = tree.clone_node(tree.new_node())
         node.name = [parser.Label("n")]
@@ -490,6 +491,7 @@ class PreDictTest(unittest.TestCase):
         lab = parser.Label("a")
         op = parser.LSet("key", "value")
         pd = parser.PreDict(
+            self.parser.ast,
             ctx=[lab],
             content=[("<string>", 1, op)],
             shortname=[lab],
@@ -530,7 +532,7 @@ class PreDictTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.pre_dict.get_dicts_plain()
         # pre-dict cache stored after plain dictionary getter call
-        pre_dict = parser.PreDict()
+        pre_dict = parser.PreDict(self.parser.ast)
         pre_dict.update_from_node(self.parser.node)
         d = pre_dict.get_dicts_plain()
         self.assertEqual(d["name"], "test")
@@ -546,7 +548,7 @@ class PreDictTest(unittest.TestCase):
         d["key2"] = "value2"
         op = parser.LSet("key2", "value2")
         self.parser.filename = "testfile"
-        pre_dict = parser.PreDict(content=[(self.parser.filename, 3, op)])
+        pre_dict = parser.PreDict(self.parser.ast, content=[(self.parser.filename, 3, op)])
         pre_dict.update_from_node(self.parser.node)
         self.assertEqual(pre_dict.get_dicts_plain(), d)
         self.assertEqual(len(pre_dict.content), 4)
@@ -561,7 +563,7 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pre_dict.route, [1])
 
         # gets a dict from a sub-route when child node is initial node
-        pre_dict = parser.PreDict(content=[(self.parser.filename, 3, op)])
+        pre_dict = parser.PreDict(self.parser.ast, content=[(self.parser.filename, 3, op)])
         pre_dict.update_from_node(child_node)
         d0 = pre_dict.get_dicts_plain()
         self.assertEqual(d0["name"], "")
@@ -570,7 +572,7 @@ class PreDictTest(unittest.TestCase):
         self.assertIsNone(pre_dict.get_dicts_plain())
 
         # intermediate node expands the route again then completes for its depth
-        pre_dict = parser.PreDict(content=[(self.parser.filename, 3, op)])
+        pre_dict = parser.PreDict(self.parser.ast, content=[(self.parser.filename, 3, op)])
         pre_dict.update_from_node(node)
         self.assertEqual(pre_dict.get_dicts_plain(), d)
         self.assertEqual(pre_dict.route, [0, 0])
@@ -596,7 +598,7 @@ class PreDictTest(unittest.TestCase):
                 - b:
                     kb = vb
         """)
-        pre_dict = parser.PreDict()
+        pre_dict = parser.PreDict(self.parser.ast)
         pre_dict.update_from_node(self.parser.node)
 
         d = pre_dict.get_dicts_plain()
@@ -655,7 +657,7 @@ class PreDictTest(unittest.TestCase):
                 - b:
                     kb = vb
         """)
-        pre_dict = parser.PreDict()
+        pre_dict = parser.PreDict(self.parser.ast)
         pre_dict.update_from_node(self.parser.node)
 
         # skip a.test1
@@ -679,7 +681,7 @@ class PreDictTest(unittest.TestCase):
         self.parser.filename = "testfile"
         joins = [(self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("test1")]]], "test1")),
                  (self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("test2")]]], "test2"))]
-        pre_dict = parser.PreDict()
+        pre_dict = parser.PreDict(self.parser.ast)
         with self.assertRaises(RuntimeError):
             self.pre_dict.get_dicts_joined()
 
@@ -726,7 +728,7 @@ class PreDictTest(unittest.TestCase):
         self.parser.filename = "testfile"
         joins = [(self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("a")]]], "test1")),
                  (self.parser.filename, 1, parser.OnlyFilter([[[parser.Label("b")]]], "test2"))]
-        pre_dict = parser.PreDict()
+        pre_dict = parser.PreDict(self.parser.ast)
         pre_dict.update_from_node(self.parser.node)
         # the python-rust barrier requires copying or working on copies so replace entirely
         pre_dict.joins = [joins]
@@ -836,7 +838,7 @@ class PreDictTest(unittest.TestCase):
                     kb = vb
                     join test1 test2
         """)
-        pre_dict = parser.PreDict()
+        pre_dict = parser.PreDict(self.parser.ast)
         with self.assertRaises(RuntimeError):
             self.pre_dict.get_dicts()
 
@@ -899,6 +901,7 @@ class PreDictTest(unittest.TestCase):
         # case of redundant filter to be removed from pre-dict content
         filter = parser.OnlyFilter([[[parser.Label("test1")]]], "test1")
         pre_dict = parser.PreDict(
+            self.parser.ast,
             content=[
                 (self.parser.filename, 4, op2),
                 (self.parser.filename, 5, filter),
@@ -937,7 +940,7 @@ class PreDictTest(unittest.TestCase):
                     join test1 test2
             join a b
         """)
-        pre_dict = parser.PreDict()
+        pre_dict = parser.PreDict(self.parser.ast)
         pre_dict.update_from_node(self.parser.node)
 
         d = pre_dict.get_dicts(dropsufs=True)

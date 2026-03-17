@@ -129,7 +129,7 @@ class Parser(object):
 
         :returns: (recursive) dictionary generator
         """
-        pre_dict = PreDict(defaults=self.defaults)
+        pre_dict = PreDict(self.ast, defaults=self.defaults)
         if not pre_dict.update_from_node(self.ast.clone_node(self.ast.root)):
             # the python-rust barrier requires copying or working on copies so replace entirely
             self.ast.swap_node(pre_dict.branch[-1])
