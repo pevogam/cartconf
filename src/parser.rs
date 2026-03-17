@@ -1679,7 +1679,7 @@ impl Tree {
     }
 }
 
-#[pyclass]
+#[pyclass(unsendable)]
 #[derive(Debug, Clone)]
 pub struct PreDict {
     _ctx: Vec<Vec<Label>>,
@@ -1689,6 +1689,8 @@ pub struct PreDict {
     _ctx_content: Vec<Vec<ContentStep>>,
 
     _dep: Vec<Vec<String>>,
+
+    _tree: RefCell<Tree>,
 
     // traversal state
     #[pyo3(get)]
@@ -1717,7 +1719,7 @@ pub struct PreDict {
 
 impl Default for PreDict {
     fn default() -> Self {
-        Self::new(None, None, None, None, None, None)
+        Self::new(Tree::default(), None, None, None, None, None, None)
     }
 }
 
@@ -1756,8 +1758,9 @@ impl PreDict {
     }
 
     #[new]
-    #[pyo3(signature = (ctx=None, content=None, shortname=None, dep=None, defaults=None, expand_defaults=None))]
+    #[pyo3(signature = (tree, ctx=None, content=None, shortname=None, dep=None, defaults=None, expand_defaults=None))]
     fn new(
+        tree: Tree,
         ctx: Option<Vec<Label>>,
         content: Option<Vec<ContentStep>>,
         shortname: Option<Vec<Label>>,
@@ -1778,6 +1781,7 @@ impl PreDict {
             _content,
             _ctx_content,
             _dep,
+            _tree: RefCell::new(tree),
             branch: Vec::new(),
             route: Vec::new(),
             joins: Vec::new(),
@@ -1810,6 +1814,7 @@ impl PreDict {
         let shortname = self.shortname();
         let dep = self.dep();
         let mut new = PreDict::new(
+            Tree::default(),
             Some(ctx),
             Some(content),
             Some(shortname),
@@ -1817,6 +1822,7 @@ impl PreDict {
             Some(self.defaults),
             Some(self.expand_defaults.clone()),
         );
+        new._tree = self._tree.clone();
         new._ctx_content[0] = ctx_content;
         new
     }
@@ -1895,11 +1901,9 @@ impl PreDict {
         self._content.push(internal_content);
 
         // process external (previous) content against current context
-        let mut content_node = AST.with(|ast| {
-            ast.borrow_mut()
-                .borrow_new_node_mut()
-                .map(|node| node.clone())
-        })?;
+        let mut content_node = self._tree.borrow_mut()
+            .borrow_new_node_mut()
+            .map(|node| node.clone())?;
         content_node.swap_content(content);
         let (external_content, failed_external, mut failed_external_cond) =
             content_node.process_content(&ctx_flat, &labels)?;
@@ -2021,28 +2025,25 @@ impl PreDict {
 
             // the original parsed node is preserved as the pre-dict modifies a clone
             // for the purpose of traversal and dictionary getters
-            let child = AST.with(|ast| {
-                let tree = ast.borrow();
-                tree.borrow_node(self.branch[i].children[route_idx]).cloned()
-            })?;
+            let child = self._tree.borrow().clone_node(
+                self.branch[i].children[route_idx]
+            )?;
             if !self.update_from_node(child)? {
                 continue;
             }
             let parent = &mut self.branch[i];
             if self.defaults {
-                let var_name_str = parent.var_name.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(".");
-                let has_default_child = AST.with(|ast| {
-                    let tree = ast.borrow();
-                    parent.children.iter().any(|c| tree.get_node(*c)
-                        .map(|n| n.default)
-                        .unwrap_or(false))
-                });
-                let is_current_child_default = AST.with(|ast| {
-                    let tree = ast.borrow();
-                    tree.borrow_node(parent.children[route_idx])
-                        .map(|n| n.default)
-                        .unwrap_or(false)
-                });
+                let var_name_str = parent.var_name.iter()
+                    .map(|l| l.to_string())
+                    .collect::<Vec<_>>().join(".");
+                let has_default_child = parent.children.iter()
+                    .any(|c| self._tree.borrow().get_node(*c)
+                    .map(|n| n.default)
+                    .unwrap_or(false));
+                let is_current_child_default = self._tree.borrow()
+                    .borrow_node(parent.children[route_idx])
+                    .map(|n| n.default)
+                    .unwrap_or(false);
                 if !self.expand_defaults.contains(&var_name_str)
                     && has_default_child
                     && !is_current_child_default
