@@ -1511,10 +1511,6 @@ pub struct Tree {
     nodes: Vec<Node>,
 }
 
-thread_local! {
-    static AST: RefCell<Tree> = RefCell::new(Tree::default());
-}
-
 #[pymethods]
 impl Tree {
     #[new]
@@ -1614,7 +1610,6 @@ impl Tree {
         let mut new_lexer = Lexer::new(Some(&cfgstr), None)?;
         self.borrow_root_mut()?.filename = new_lexer.filename.clone();
         self.parse(&mut new_lexer, prev_indent, defaults, expand_defaults)?;
-        AST.with(|ast| *ast.borrow_mut() = self.clone());
         Ok(())
     }
 
@@ -1629,7 +1624,6 @@ impl Tree {
         let mut new_lexer = Lexer::new(None, Some(&cfgfile))?;
         self.borrow_root_mut()?.filename = cfgfile;
         self.parse(&mut new_lexer, prev_indent, defaults, expand_defaults)?;
-        AST.with(|ast| *ast.borrow_mut() = self.clone());
         Ok(())
     }
 }
@@ -2309,7 +2303,6 @@ mod tests {
 
         // apply_include should parse the included file and return a node with a child named "test"
         tree.apply_include(&mut lexer, dict).expect("apply_include failed");
-        AST.with(|ast| *ast.borrow_mut() = tree.clone());
         let children = tree.get_node_children(tree.root).unwrap();
         assert_eq!(children.len(), 1);
         let child = &children[0];
@@ -2568,7 +2561,6 @@ mod tests {
         }
 
         // grandparent node should have one child (the variant) whose name is "test"
-        AST.with(|ast| *ast.borrow_mut() = tree.clone());
         let parents = tree.get_node_children(tree.root).unwrap();
         assert_eq!(parents.len(), 1);
         let parent_node = &parents[0];
