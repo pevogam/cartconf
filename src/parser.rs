@@ -1899,9 +1899,9 @@ impl PreDict {
         self._content.push(internal_content);
 
         // process external (previous) content against current context
-        let mut content_node = self._tree.borrow_mut()
-            .borrow_new_node_mut()
-            .map(|node| node.clone())?;
+        let mut tree = self._tree.borrow_mut();
+        // investigate diff number of nodes first, something is fishy
+        let content_node = tree.borrow_new_node_mut()?;
         content_node.swap_content(content);
         let (external_content, failed_external, mut failed_external_cond) =
             content_node.process_content(&ctx_flat, &labels)?;
