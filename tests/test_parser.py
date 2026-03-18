@@ -106,7 +106,6 @@ class NodeTest(unittest.TestCase):
         self.assertEqual(node.filename, "")
         self.assertEqual(node.dep, [])
         self.assertEqual(node.get_content(), [])
-        self.assertEqual(node.get_children(), [])
         self.assertEqual(node.labels, [])
         self.assertFalse(node.append_to_shortname)
         self.assertEqual(node.get_failed_cases(), [])
@@ -339,19 +338,42 @@ class NodeTest(unittest.TestCase):
         failed_labels = [parser.Label("fail")]
         node.add_failed_case(failed_labels, [("<string>", 1, "str")], [], 5)
         dump_str = node.dump(2)
-        expected_str = "  name: [test_name]\n  variable name: [test_var_name]\n  content: [ContentStep { filename: \"test_content\", linenum: 0, content_type: Tokens(LString(\"test_content\")) }]\n  failed cases: [([fail], [ContentStep { filename: \"<string>\", linenum: 1, content_type: String(\"str\") }], [])]"
+        expected_str = "  id: 0\n  name: [test_name]\n  variable name: [test_var_name]\n  content: [ContentStep { filename: \"test_content\", linenum: 0, content_type: Tokens(LString(\"test_content\")) }]\n  failed cases: [([fail], [ContentStep { filename: \"<string>\", linenum: 1, content_type: String(\"str\") }], [])]"
         self.assertEqual(expected_str, dump_str)
 
-    def _test_dump_with_recurse(self):
-        # TODO: the fact we have to use tree here indicates this goes beyond the node scope
-        # TODO: now we even have to parse string to set the static AST - move recursive dump to tree
+
+class TreeTest(unittest.TestCase):
+
+    def test_dump(self):
         tree = parser.Tree()
-        parent_node = tree.clone_node(tree.new_node())
         child_node = tree.clone_node(tree.new_node())
         child_node.name = [parser.Label("child_name")]
+        tree.swap_node(child_node)
+        parent_node = tree.clone_node(tree.new_node())
+        parent_node.name = [parser.Label("parent_name")]
         parent_node.append_child(child_node.id)
-        dump_str = parent_node.dump(0, recurse=True)
-        expected_str = "name: []\nvariable name: []\ncontent: []\nfailed cases: []\n   name: [child_name]\n   variable name: []\n   content: []\n   failed cases: []"
+        tree.swap_node(parent_node)
+        root_node = tree.clone_node(tree.root)
+        root_node.append_child(parent_node.id)
+        tree.swap_node(root_node)
+        dump_str = tree.dump(0)
+        expected_str = """root: 0
+nodes: 3
+id: 0
+name: []
+variable name: []
+content: []
+failed cases: []
+   id: 2
+   name: [parent_name]
+   variable name: []
+   content: []
+   failed cases: []
+      id: 1
+      name: [child_name]
+      variable name: []
+      content: []
+      failed cases: []"""
         self.assertEqual(expected_str, dump_str)
 
 
@@ -500,9 +522,10 @@ class PreDictTest(unittest.TestCase):
 
     def test_get_dicts_plain(self):
         self.parser.parse_string("variants:\n  - test:\n    key = value\n")
+        tree = self.parser.ast
         parent_node = self.parser.node
-        node = parent_node.get_children()[0]
-        child_node = node.get_children()[0]
+        node = tree.get_node_children(parent_node.id)[0]
+        child_node = tree.get_node_children(node.id)[0]
 
         with self.assertRaises(RuntimeError):
             self.pre_dict.get_dicts_plain()
@@ -1219,24 +1242,28 @@ class ParserTest(unittest.TestCase):
             temp_file.flush()
             temp_file_name = temp_file.name
             self.parser.parse_file(temp_file_name)
-        self.assertEqual(self.parser.node.name, [])
-        self.assertEqual(self.parser.node.get_content(), [])
-        self.assertEqual(len(self.parser.node.get_children()), 1)
-        self.assertEqual(self.parser.node.get_children()[0].name,
+        node = self.parser.node
+        self.assertEqual(node.name, [])
+        self.assertEqual(node.get_content(), [])
+        node_children = self.parser.ast.get_node_children(node.id)
+        self.assertEqual(len(node_children), 1)
+        self.assertEqual(node_children[0].name,
                          [parser.Label("test")])
-        for c in self.parser.node.get_children()[0].get_content():
+        for c in node_children[0].get_content():
             self.assertEqual(c[0], temp_file_name)
         self.assertEqual(self.parser.filename, temp_file_name)
 
     def test_parse_string(self):
         test_string = "variants:\n  - test:\n"
         self.parser.parse_string(test_string)
-        self.assertEqual(self.parser.node.name, [])
-        self.assertEqual(self.parser.node.get_content(), [])
-        self.assertEqual(len(self.parser.node.get_children()), 1)
-        self.assertEqual(self.parser.node.get_children()[0].name,
+        node = self.parser.node
+        self.assertEqual(node.name, [])
+        self.assertEqual(node.get_content(), [])
+        node_children = self.parser.ast.get_node_children(node.id)
+        self.assertEqual(len(node_children), 1)
+        self.assertEqual(node_children[0].name,
                          [parser.Label("test")])
-        for content_stage in self.parser.node.get_children()[0].get_content():
+        for content_stage in node_children[0].get_content():
             self.assertEqual(content_stage[0], "<string>")
         self.assertIsNone(self.parser.filename)
 
