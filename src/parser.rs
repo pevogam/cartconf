@@ -320,17 +320,6 @@ impl Node {
         }
     }
 
-    pub fn get_children(&self) -> Vec<Node> {
-        AST.with(|ast| {
-            let tree = ast.borrow();
-            self.children
-                .iter()
-                .filter_map(|c| tree.get_node(*c))
-                .cloned()
-                .collect()
-        })
-    }
-
     pub fn prepend_child(&mut self, id: usize) {
         self.children.push_front(id);
     }
@@ -397,24 +386,15 @@ impl Node {
         self.failed_case_might_pass(idx, ctx, &labels, &content)
     }
 
-    #[pyo3(signature = (indent, recurse=false))]
-    pub fn dump(&self, indent: usize, recurse: bool) -> String {
-        let mut dump_lines = vec![
+    #[pyo3(signature = (indent))]
+    pub fn dump(&self, indent: usize) -> String {
+        let dump_lines = [
+            format!("{:indent$}id: {:?}", "", self.id, indent = indent),
             format!("{:indent$}name: {:?}", "", self.name, indent = indent),
             format!("{:indent$}variable name: {:?}", "", self.var_name, indent = indent),
             format!("{:indent$}content: {:?}", "", self.content, indent = indent),
             format!("{:indent$}failed cases: {:?}", "", self.failed_cases, indent = indent),
         ];
-        if recurse {
-            AST.with(|ast| {
-                let tree = ast.borrow();
-                for c in &self.children {
-                    if let Ok(child) = tree.borrow_node(*c) {
-                        dump_lines.push(child.dump(indent + 3, recurse));
-                    };
-                }
-            });
-        }
         dump_lines.join("\n")
     }
 }
@@ -1554,6 +1534,38 @@ impl Tree {
         self.nodes.len()
     }
 
+    pub fn get_node_children(&self, id: usize) -> PyResult<Vec<Node>> {
+        Ok(self.borrow_node(id)?.children
+            .iter()
+            .filter_map(|c| self.get_node(*c))
+            .cloned()
+            .collect())
+    }
+
+    #[pyo3(signature = (indent))]
+    pub fn dump(&self, indent: usize) -> PyResult<String> {
+        let mut dump_lines = vec![
+            format!("{:indent$}root: {}", "", self.root, indent = indent),
+            format!("{:indent$}nodes: {}", "", self.nodes.len(), indent = indent),
+        ];
+
+        // Stack-based tree traversal: (node_id, current_indent)
+        let mut stack: Vec<(usize, usize)> = Vec::new();
+        stack.push((self.root, indent));
+
+        while let Some((node_id, current_indent)) = stack.pop() {
+            let node = self.borrow_node(node_id)?;
+            dump_lines.push(node.dump(current_indent));
+
+            // Add children to stack in reverse order for correct traversal
+            for child_id in node.children.iter().rev() {
+                stack.push((*child_id, current_indent + 3));
+            }
+        }
+
+        Ok(dump_lines.join("\n"))
+    }
+
     pub fn add_node(&mut self, node: Node) -> PyResult<()> {
         if node.id != self.get_size() {
             return Err(PyValueError::new_err(
@@ -2303,7 +2315,7 @@ mod tests {
         // apply_include should parse the included file and return a node with a child named "test"
         tree.apply_include(&mut lexer, dict).expect("apply_include failed");
         AST.with(|ast| *ast.borrow_mut() = tree.clone());
-        let children = tree.borrow_root().unwrap().get_children();
+        let children = tree.get_node_children(tree.root).unwrap();
         assert_eq!(children.len(), 1);
         let child = &children[0];
         assert_eq!(child.name.len(), 1);
@@ -2562,8 +2574,7 @@ mod tests {
 
         // grandparent node should have one child (the variant) whose name is "test"
         AST.with(|ast| *ast.borrow_mut() = tree.clone());
-        let grandparent_node = tree.borrow_root().unwrap();
-        let parents = grandparent_node.get_children();
+        let parents = tree.get_node_children(tree.root).unwrap();
         assert_eq!(parents.len(), 1);
         let parent_node = &parents[0];
         assert_eq!(parent_node.name.len(), 1);
@@ -2571,7 +2582,7 @@ mod tests {
         assert_eq!(parent_node.name[0].name, "test".to_string());
 
         // child should include the original grand child as its child
-        let children = parent_node.get_children();
+        let children = tree.get_node_children(parent_node.id).unwrap();
         assert_eq!(children.len(), 1);
         assert_eq!(children[0], node);
     }
