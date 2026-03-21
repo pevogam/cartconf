@@ -1507,7 +1507,7 @@ impl Tree {
 #[derive(Debug, Clone, Default)]
 pub struct Tree {
     #[pyo3(get)]
-    root: usize,
+    pub root: usize,
     nodes: Vec<Node>,
 }
 
@@ -1825,12 +1825,14 @@ impl PreDict {
         new
     }
 
-    #[pyo3(signature = (node))]
-    pub fn update_from_node(&mut self, mut node: Node) -> PyResult<bool> {
+    pub fn update_from_node(&mut self, id: usize) -> PyResult<bool> {
         /* TODO: add optional logging
         if self.debug:    #Print dict on which is working now.
             print(node.dump(0))
         */
+        // TODO: it seems we cannot borrow self._tree at this point
+        let mut tree = self._tree.borrow_mut();
+        let node = tree.borrow_node_mut(id)?;
 
         let ctx = node.name.clone();
         let labels = node.labels.clone();
@@ -2027,10 +2029,7 @@ impl PreDict {
                 continue;
             }
 
-            // the original parsed node is preserved as the pre-dict modifies a clone
-            // for the purpose of traversal and dictionary getters
-            let child = self._tree.borrow().clone_node(children[route_idx])?;
-            if !self.update_from_node(child)? {
+            if !self.update_from_node(children[route_idx])? {
                 continue;
             }
             if self.defaults {
@@ -2119,7 +2118,7 @@ impl PreDict {
                     let step = &joins[j];
                     let mut node = tree.clone_node(self.branch[depth])?;
                     node.add_content(step.filename.clone(), step.linenum, step.content_type.clone());
-                    if !pre_dict.update_from_node(node)? {
+                    if !pre_dict.update_from_node(node.id)? {
                         return Ok(None);
                     }
                 }

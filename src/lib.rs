@@ -48,7 +48,7 @@ fn parse_dicts(
         )?;
     }
     let mut pre_dict = PreDict::default();
-    if !pre_dict.update_from_node(tree.borrow_root_mut()?.clone())? {
+    if !pre_dict.update_from_node(tree.root)? {
         return Err(PyErr::new::<parser::ParserError, _>((
             "Failed to generate PreDict from Node".to_string(),
             "",
