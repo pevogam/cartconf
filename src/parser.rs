@@ -413,7 +413,7 @@ impl Node {
     4. Optionally also return conditional failed filters if present.
     */
     pub fn process_content(
-        &mut self,
+        &self,
         ctx: &Vec<Label>,
         labels: &Vec<Label>
     ) -> PyResult<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
@@ -456,7 +456,7 @@ impl Node {
                                     linenum,
                                 )
                                 */
-                                let mut cond_node = n.clone();
+                                let cond_node = n.clone();
                                 // check and unpack the content inside this conditional node
                                 let (cond_content,
                                     mut failed_cond_filters,
