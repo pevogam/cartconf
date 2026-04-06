@@ -13,10 +13,16 @@ readme = "README.rst"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "cartconf"
-crate-type = ["cdylib"]
+path = "src/lib.rs"
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "cartconf"
+path = "src/main.rs"
 
 [dependencies]
 regex = "1.7"
 tempfile = "3.23.0"
 hashbrown = "0.16.1"
 pyo3 = { version = "0.28.3", features = ["hashbrown"] }
+clap = { version = "4.5", features = ["derive"] }
