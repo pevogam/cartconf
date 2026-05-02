@@ -1526,6 +1526,10 @@ impl Tree {
         Ok(tree)
     }
 
+    fn __copy__(&self) -> Tree {
+        self.clone()
+    }
+
     fn get_size(&self) -> usize {
         self.nodes.len()
     }
