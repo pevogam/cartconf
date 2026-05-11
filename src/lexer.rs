@@ -315,7 +315,15 @@ impl Lexer {
                     return Ok(tokens);
                 }
                 '<' | '+' | '?' | '~' => {
-                    if line[..self.pos].contains(" ") {
+                    let should_push = if c == '?' {
+                        // for ? check if followed by =, +, or < to handle three-char operators
+                        line[..self.pos].contains(" ") ||
+                        (self.pos + 1 < len && matches!(chars[self.pos + 1], '=' | '+' | '<'))
+                    } else {
+                        line[..self.pos].contains(" ") ||
+                        (self.pos + 1 < len && chars[self.pos + 1] == '=')
+                    };
+                    if should_push {
                         self.oper_buffer.push(c);
                         self.pos += 1;
                     } else {

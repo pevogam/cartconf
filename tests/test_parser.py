@@ -1836,6 +1836,8 @@ class ParserTest(unittest.TestCase):
                     var += a
                     var <= b
                     system = 2
+                    random = 1
+                    t_s = 0
                     variable-name-with-dashes = sampletext
                     ddd = tests variant is ${tests}
                     dashes = show ${variable-name-with-dashes}
@@ -1843,8 +1845,12 @@ class ParserTest(unittest.TestCase):
                     s.* ?= ${tests}ahoj4
                     s.* ?+= c
                     s.* ?<= d
-                    s(_.*)? ?= b1
-                    s(_.*)? ?= b2(c=d)
+                    r.*?=${tests}e
+                    r.*?+=f
+                    r.*?<=g
+                    t(_.*)? ?= ${t_s}b1
+                    t(_.*)? ?= b2(c=d)${t_s}
+                    t(_.*)??=${t_s}b3
                     system2.allowed: s = t
                     system += 4
                     var += "test"
@@ -1863,6 +1869,8 @@ class ParserTest(unittest.TestCase):
                  'name': '(tests=system1)',
                  'shortname': 'system1',
                  'system': 'dsystem1ahoj4c4',
+                 'random': 'gsystem1ef',
+                 't_s': 'b2(c=d)0b1b3',
                  'tests': 'system1',
                  'var': 'b2atest',
                  '1st': '1',
@@ -1886,6 +1894,8 @@ class ParserTest(unittest.TestCase):
                     foo ~= ${arg1}
                 - lazy_set_with_double_token:
                     foo ~= ~= foo
+                - lazy_set_no_space:
+                    foo~=food
                 - dummy_set:
             foo ~= qux
             """,
@@ -1932,6 +1942,22 @@ class ParserTest(unittest.TestCase):
                  'foo': '~= foo',
                  'name': 'lazy_set_with_double_token.empty_content',
                  'shortname': 'lazy_set_with_double_token.empty_content'},
+                {'_name_map_file': {'<string>': 'lazy_set_no_space.base_content'},
+                 '_short_name_map_file': {'<string>': 'lazy_set_no_space.base_content'},
+                 'arg1': '~balabala',
+                 'dep': [],
+                 'foo': 'bar',
+                 'name': 'lazy_set_no_space.base_content',
+                 'shortname': 'lazy_set_no_space.base_content'},
+                {'_name_map_file': {'<string>': 'lazy_set_no_space.empty_content'},
+                 '_short_name_map_file': {'<string>': 'lazy_set_no_space.empty_content'},
+                 'arg1': '~balabala',
+                 'dep': [],
+                 'foo': 'qux',
+                 # TODO: wrong parsing
+                 'foo': 'food',
+                 'name': 'lazy_set_no_space.empty_content',
+                 'shortname': 'lazy_set_no_space.empty_content'},
                 {'_name_map_file': {'<string>': 'dummy_set.base_content'},
                  '_short_name_map_file': {'<string>': 'dummy_set.base_content'},
                  'arg1': '~balabala',
