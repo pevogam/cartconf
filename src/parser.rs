@@ -477,7 +477,7 @@ impl Node {
                                 if !failed_cond_filters.is_empty() {
                                     // record the entire conditional step as a failing filter
                                     failed_filters.push(step.clone());
-                                    failed_cond_filters.extend(deeper_failed_filters.into_iter());
+                                    failed_cond_filters.extend(deeper_failed_filters);
                                     return Ok((new_content, failed_filters, failed_cond_filters));
                                 }
                                 // conditional block unpacked successfully
