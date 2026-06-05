@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::cmp::min;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
+use hashbrown::HashMap;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::fmt::{Debug, Display};
@@ -12,6 +13,7 @@ use pyo3::exceptions::{PyException, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::types::{PyAny};
 
 use crate::tokens::{ParamKey, ParamVal};
+use crate::tokens::ParamKeyHashMapExt;
 use crate::tokens::Tokens;
 use crate::tokens::{drop_suffixes, apply_suffix_bounds};
 use crate::filters::Filters;
@@ -147,6 +149,10 @@ impl Label {
     }
 }
 
+// TODO: unfortunately the custom hashbrown introduces a larger hashmap that
+// leads to larger difference between the conditional node content and other variants
+// -> reconsider this once we make use of node arena or other non-Box<...> solutions
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, PartialEq, Clone)]
 pub enum ContentType {
     Tokens(Tokens),
@@ -652,7 +658,7 @@ impl Node {
             if pre_nonempty {
                 // try to get op.name and check if it's present in dict
                 let op_name = op_obj.name().unwrap_or_default();
-                if !op_name.is_empty() && d_nin_val && dict.contains_key(&op_name.into()) {
+                if !op_name.is_empty() && d_nin_val && dict.contains_key_str(op_name.as_str()) {
                     // apply and consume EOL
                     op_obj.apply_to_dict(&mut dict)?;
                     lexer.get_next_token(Some(vec![lendl]), None)?;
@@ -1769,9 +1775,9 @@ impl PreDict {
         let shortname = self.shortname().iter().map(|l| l.name.clone()).collect::<Vec<_>>().join(".");
         let dep = self.dep();
 
-        dict.insert("name".to_string().into(), name.into());
-        dict.insert("shortname".to_string().into(), shortname.into());
-        dict.insert("dep".to_string().into(), ParamVal::List(dep));
+        dict.insert_str("name", name.into());
+        dict.insert_str("shortname", shortname.into());
+        dict.insert_str("dep", ParamVal::List(dep));
 
         for step in self.final_content() {
             match step.content_type {
@@ -1953,11 +1959,11 @@ impl PreDict {
                 let mut shortname = String::new();
                 for di in dicts.iter().flatten() {
                     if name.is_empty() {
-                        name = di.get(&"name".to_string().into()).map(|v| Cow::from(v).into()).unwrap_or_default();
-                        shortname = di.get(&"shortname".to_string().into()).map(|v| Cow::from(v).into()).unwrap_or_default();
+                        name = di.get_str("name").map(|v| Cow::from(v).into()).unwrap_or_default();
+                        shortname = di.get_str("shortname").map(|v| Cow::from(v).into()).unwrap_or_default();
                     } else {
-                        let other_name: String = di.get(&"name".to_string().into()).map(|v| Cow::from(v).into()).unwrap_or_default();
-                        let other_short: String = di.get(&"shortname".to_string().into()).map(|v| Cow::from(v).into()).unwrap_or_default();
+                        let other_name: String = di.get_str("name").map(|v| Cow::from(v).into()).unwrap_or_default();
+                        let other_short: String = di.get_str("shortname").map(|v| Cow::from(v).into()).unwrap_or_default();
                         name = Node::join_names(&name, &other_name);
                         shortname = Node::join_names(&shortname, &other_short);
                     }
@@ -1966,8 +1972,8 @@ impl PreDict {
                         d.insert(k.clone(), v.clone());
                     }
                 }
-                d.insert("name".to_string().into(), name.into());
-                d.insert("shortname".to_string().into(), shortname.into());
+                d.insert_str("name", name.into());
+                d.insert_str("shortname", shortname.into());
                 return Ok(Some(d));
             }
 
@@ -2080,7 +2086,7 @@ mod tests {
         let mut node = Node::new();
         let lexer = Lexer::new(Some(""), None).expect("Failed to create lexer");
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-        dict.insert("key".to_string().into(), "value".to_string().into());
+        dict.insert_str("key", "value".to_string().into());
 
         // apply_dict should add an LApplyDict content step and clear dict
         node.apply_dict(&lexer, dict);
@@ -2090,7 +2096,7 @@ mod tests {
         // content type should be Tokens::LApplyDict and contains our key/value
         match &content[0].content_type {
             ContentType::Tokens(Tokens::LApplyDict(_, map)) => {
-                assert_eq!(map.get(&"key".to_string().into()), Some(&"value".to_string().into()));
+                assert_eq!(map.get_str("key"), Some(&"value".to_string().into()));
             }
             other => panic!("Unexpected content type: {:?}", other),
         }
@@ -2113,7 +2119,7 @@ mod tests {
 
         let mut node = Node::new();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-        dict.insert("key1".to_string().into(), "value1".to_string().into());
+        dict.insert_str("key1", "value1".to_string().into());
 
         // apply_include should parse the included file and return a node with a child named "test"
         let returned = node.apply_include(&mut lexer, dict).expect("apply_include failed");
@@ -2136,13 +2142,13 @@ mod tests {
 
         let mut node = Node::new();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-        dict.insert("key1".to_string().into(), "value1".to_string().into());
+        dict.insert_str("key1", "value1".to_string().into());
 
         // apply_operator should add key2 to dict directly (optimized path)
         dict = node.apply_operator(identifier, token, &mut lexer, dict).expect("apply_operator failed");
         // dict now should contain both key1 and key2, and node content should be empty
-        assert_eq!(dict.get(&"key1".to_string().into()), Some(&"value1".to_string().into()));
-        assert_eq!(dict.get(&"key2".to_string().into()), Some(&"value2".to_string().into()));
+        assert_eq!(dict.get_str("key1"), Some(&"value1".to_string().into()));
+        assert_eq!(dict.get_str("key2"), Some(&"value2".to_string().into()));
         let content = node.get_content();
         assert_eq!(content.len(), 0);
     }
@@ -2157,12 +2163,12 @@ mod tests {
 
         let mut node = Node::new();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-        dict.insert("key1".to_string().into(), "value1".to_string().into());
+        dict.insert_str("key1", "value1".to_string().into());
 
         dict = node.apply_operator(identifier, token, &mut lexer, dict).expect("apply_operator failed");
 
         // dict should be updated
-        assert_eq!(dict.get(&"key1".to_string().into()), Some(&"value1&value2".to_string().into()));
+        assert_eq!(dict.get_str("key1"), Some(&"value1&value2".to_string().into()));
         // node content should be empty
         let content = node.get_content();
         assert_eq!(content.len(), 0);
@@ -2178,7 +2184,7 @@ mod tests {
 
         let mut node = Node::new();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-        dict.insert("key1".to_string().into(), "value1".to_string().into());
+        dict.insert_str("key1", "value1".to_string().into());
 
         node.apply_operator(identifier, token, &mut lexer, dict).expect("apply_operator failed");
 
@@ -2188,7 +2194,7 @@ mod tests {
         // first should be an LApplyDict, second an LAppend
         match &content[0].content_type {
             ContentType::Tokens(Tokens::LApplyDict(_, map)) => {
-                assert_eq!(map.get(&"key1".to_string().into()), Some(&"value1".to_string().into()));
+                assert_eq!(map.get_str("key1"), Some(&"value1".to_string().into()));
             }
             other => panic!("Unexpected first content type: {:?}", other),
         }
@@ -2210,7 +2216,7 @@ mod tests {
 
         let mut node = Node::new();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-        dict.insert("key1".to_string().into(), "value1".to_string().into());
+        dict.insert_str("key1", "value1".to_string().into());
 
         node.apply_deletion(&mut lexer, dict).expect("apply_deletion failed");
 
@@ -2219,7 +2225,7 @@ mod tests {
         assert_eq!(content.len(), 2);
         match &content[0].content_type {
             ContentType::Tokens(Tokens::LApplyDict(_, map)) => {
-                assert_eq!(map.get(&"key1".to_string().into()), Some(&"value1".to_string().into()));
+                assert_eq!(map.get_str("key1"), Some(&"value1".to_string().into()));
             }
             other => panic!("Unexpected first content type: {:?}", other),
         }
@@ -2241,7 +2247,7 @@ mod tests {
 
         let mut node = Node::new();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-        dict.insert("key1".to_string().into(), "value1".to_string().into());
+        dict.insert_str("key1", "value1".to_string().into());
 
         node.apply_condition(identifier, token, &mut lexer, dict, 0).expect("apply_condition failed");
 
@@ -2274,7 +2280,7 @@ mod tests {
 
         let mut node = Node::new();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-        dict.insert("key1".to_string().into(), "value1".to_string().into());
+        dict.insert_str("key1", "value1".to_string().into());
 
         node.apply_notcondition(&mut lexer, dict, 0).expect("apply_notcondition failed");
 
@@ -2348,7 +2354,7 @@ mod tests {
 
         let mut node = Node::new();
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
-        dict.insert("key1".to_string().into(), "value1".to_string().into());
+        dict.insert_str("key1", "value1".to_string().into());
         let mut meta = HashMap::new();
 
         let grandparent_node = node.apply_variant(
@@ -2367,7 +2373,7 @@ mod tests {
         assert!(!content.is_empty());
         match &content[0].content_type {
             ContentType::Tokens(Tokens::LApplyDict(_, map)) => {
-                assert_eq!(map.get(&"key1".to_string().into()), Some(&"value1".to_string().into()));
+                assert_eq!(map.get_str("key1"), Some(&"value1".to_string().into()));
             }
             other => panic!("Unexpected parent content: {:?}", other),
         }

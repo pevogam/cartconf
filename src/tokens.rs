@@ -1,9 +1,11 @@
 use std::borrow::Cow;
 use std::cmp;
 use std::fmt;
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
+use std::hash::BuildHasher;
+use hashbrown::hash_map::{Entry, RawEntryMut};
+use hashbrown::HashMap;
 use std::sync::LazyLock;
+use std::hash::Hash;
 use regex::Regex;
 
 use pyo3::prelude::*;
@@ -96,6 +98,148 @@ impl<'py> FromPyObject<'_, 'py> for ParamKey {
         }
     }
 }
+
+/// A borrowed reference to a ParamKey for fast HashMap lookups.
+/// This type allows looking up HashMap<ParamKey, V> with &str or tuple references
+/// without allocating a full ParamKey enum first.
+#[derive(Eq, PartialEq, Hash)]
+pub enum ParamKeyRef<'a> {
+    String(&'a str),
+    Tuple(&'a [&'a str]),
+}
+
+impl<'a> PartialEq<ParamKey> for ParamKeyRef<'a> {
+    fn eq(&self, other: &ParamKey) -> bool {
+        match (self, other) {
+            (ParamKeyRef::String(s), ParamKey::String(other_s)) => s == other_s,
+            (ParamKeyRef::Tuple(t), ParamKey::Tuple(other_t)) => t == other_t,
+            _ => false,
+        }
+    }
+}
+
+impl<'a> PartialEq<ParamKeyRef<'a>> for ParamKey {
+    fn eq(&self, other: &ParamKeyRef<'a>) -> bool {
+        other == self
+    }
+}
+
+// TODO: the polytype parameter key support is complete but not fully utilized
+// until more parameter hashmap manipulations are needed on the rust side
+#[allow(dead_code)]
+/// Extension trait for fast HashMap lookups with heterogeneous keys
+/// Allows looking up HashMap<ParamKey, V> directly with &str, &mut str, or tuple references
+/// without allocating a full ParamKey enum first.
+pub trait ParamKeyHashMapExt<V> {
+    /// Get a value using a &str key (String variant lookup)
+    fn get_str(&self, key: &str) -> Option<&V>;
+    /// Get a mutable value using a &str key (String variant lookup)
+    fn get_str_mut(&mut self, key: &str) -> Option<&mut V>;
+    /// Get a value using a &Vec<String> tuple key (Tuple variant lookup)
+    fn get_tuple(&self, key: &[&str]) -> Option<&V>;
+    /// Get a mutable value using a &Vec<String> tuple key (Tuple variant lookup)
+    fn get_tuple_mut(&mut self, key: &[&str]) -> Option<&mut V>;
+    /// Check if a key exists using &str
+    fn contains_key_str(&self, key: &str) -> bool;
+    /// Check if a key exists using a tuple
+    fn contains_key_tuple(&self, key: &[&str]) -> bool;
+    /// Insert using &str key
+    fn insert_str(&mut self, key: &str, value: V) -> Option<V>;
+    /// Insert using a tuple key
+    fn insert_tuple(&mut self, key: &[&str], value: V) -> Option<V>;
+}
+
+impl<V> ParamKeyHashMapExt<V> for HashMap<ParamKey, V> {
+    fn get_str(&self, key: &str) -> Option<&V> {
+        // compute a hash for the query once (no allocation)
+        let hash = self.hasher().hash_one(ParamKeyRef::String(key));
+
+        // use raw_entry to lookup without allocating ParamKey
+        self.raw_entry().from_hash(hash, |k| {
+            matches!(k, ParamKey::String(s) if s == key)
+        }).map(|(_, v)| v)
+    }
+
+    fn get_str_mut(&mut self, key: &str) -> Option<&mut V> {
+        // compute a hash for the query once (no allocation)
+        let hash = self.hasher().hash_one(ParamKeyRef::String(key));
+
+        // use raw_entry to lookup without allocating ParamKey
+        if let RawEntryMut::Occupied(entry) = self.raw_entry_mut().from_hash(hash, |k| {
+            matches!(k, ParamKey::String(s) if s == key)
+        }) {
+            Some(entry.into_mut())
+        } else {
+            None
+        }
+    }
+
+    fn get_tuple(&self, key: &[&str]) -> Option<&V> {
+        // compute a hash for the query once (no allocation)
+        let hash = self.hasher().hash_one(ParamKeyRef::Tuple(key));
+
+        // use raw_entry to lookup without allocating ParamKey
+        self.raw_entry().from_hash(hash, |k| {
+            matches!(k, ParamKey::Tuple(v) if v.as_slice() == key)
+        }).map(|(_, v)| v)
+    }
+
+    fn get_tuple_mut(&mut self, key: &[&str]) -> Option<&mut V> {
+        // compute a hash for the query once (no allocation)
+        let hash = self.hasher().hash_one(ParamKeyRef::Tuple(key));
+
+        // use raw_entry to lookup without allocating ParamKey
+        if let RawEntryMut::Occupied(entry) = self.raw_entry_mut().from_hash(hash, |k| {
+            matches!(k, ParamKey::Tuple(v) if v.as_slice() == key)
+        }) {
+            Some(entry.into_mut())
+        } else {
+            None
+        }
+    }
+
+    fn contains_key_str(&self, key: &str) -> bool {
+        self.get_str(key).is_some()
+    }
+
+    fn contains_key_tuple(&self, key: &[&str]) -> bool {
+        self.get_tuple(key).is_some()
+    }
+
+    fn insert_str(&mut self, key: &str, value: V) -> Option<V> {
+        // compute a hash for the query once (no allocation)
+        let hash = self.hasher().hash_one(ParamKeyRef::String(key));
+
+        match self.raw_entry_mut().from_hash(hash, |k| {
+            matches!(k, ParamKey::String(s) if s == key)
+        }) {
+            RawEntryMut::Occupied(mut entry) => Some(entry.insert(value)),
+            RawEntryMut::Vacant(entry) => {
+                entry.insert(ParamKey::String(key.to_string()), value);
+                None
+            }
+        }
+    }
+
+    fn insert_tuple(&mut self, key: &[&str], value: V) -> Option<V> {
+        // compute a hash for the query once (no allocation)
+        let hash = self.hasher().hash_one(ParamKeyRef::Tuple(key));
+
+        match self.raw_entry_mut().from_hash(hash, |k| {
+            matches!(k, ParamKey::Tuple(v) if v.as_slice() == key)
+        }) {
+            RawEntryMut::Occupied(mut entry) => Some(entry.insert(value)),
+            RawEntryMut::Vacant(entry) => {
+                entry.insert(
+                    ParamKey::Tuple(key.iter().map(|s| s.to_string()).collect()),
+                    value,
+                );
+                None
+            }
+        }
+    }
+}
+
 #[derive(PartialEq, Clone)]
 pub enum ParamVal {
     String(String),
@@ -679,28 +823,28 @@ pub fn apply_suffix_bounds(dict: &mut HashMap<ParamKey, ParamVal>) {
                 // Skip tuple keys as they are generated from suffixes and should not be processed for bounds
             }
             ParamKey::String(ref key_str) if key_str.ends_with("_max") => {
-                let tmp_key = key_str.trim_end_matches("_max").to_string();
-                if !dict.contains_key(&ParamKey::String(tmp_key.clone())) ||
+                let tmp_key = key_str.trim_end_matches("_max");
+                if !dict.contains_key_str(tmp_key) ||
                     compare_data_size(
-                        &dict[&ParamKey::String(tmp_key.clone())].to_string(),
-                        &dict[&key].to_string()
+                        &dict.get_str(tmp_key).expect("no key").to_string(),
+                        &dict.get_str(&key.to_string()).expect("no key").to_string()
                     ) > cmp::Ordering::Equal {
-                    dict.insert(ParamKey::String(tmp_key), dict[&key].clone());
+                    dict.insert_str(tmp_key, dict.get(&key).expect("no key").clone());
                 }
             }
             ParamKey::String(ref key_str) if key_str.ends_with("_min") => {
-                let tmp_key = key_str.trim_end_matches("_min").to_string();
-                if !dict.contains_key(&ParamKey::String(tmp_key.clone())) ||
+                let tmp_key = key_str.trim_end_matches("_min");
+                if !dict.contains_key_str(tmp_key) ||
                     compare_data_size(
-                        &dict[&ParamKey::String(tmp_key.clone())].to_string(),
-                        &dict[&key].to_string()
+                        &dict.get_str(tmp_key).expect("no key").to_string(),
+                        &dict.get_str(&key.to_string()).expect("no key").to_string()
                     ) < cmp::Ordering::Equal {
-                    dict.insert(ParamKey::String(tmp_key), dict[&key].clone());
+                    dict.insert_str(tmp_key, dict.get(&key).expect("no key").clone());
                 }
             }
             ParamKey::String(ref key_str) if key_str.ends_with("_fixed") => {
-                let tmp_key = key_str.trim_end_matches("_fixed").to_string();
-                dict.insert(ParamKey::String(tmp_key), dict[&key].clone());
+                let tmp_key = key_str.trim_end_matches("_fixed");
+                dict.insert_str(tmp_key, dict.get(&key).expect("no key").clone());
             }
             _ => {}
         }
@@ -712,17 +856,14 @@ pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyRe
         .iter()
         .filter_map(|(key, value)| {
             match key {
-                ParamKey::String(key_str) => {
-                    Some((key_str.clone().into(), value.clone()))
-                }
+                ParamKey::String(_) => Some((key.clone(), value.clone())),
                 ParamKey::Tuple(key_vec) => {
-                    let gen_key_str = key_vec.first()?.clone();
-                    let gen_key = ParamKey::String(gen_key_str.clone());
+                    let gen_key_str = key_vec.first()?.as_str();
                     let mut can_drop_all_suffixes = true;
 
                     if skipdups {
                         let value_str = Cow::from(value);
-                        if let Some(gen_value) = dict.get(&gen_key) {
+                        if let Some(gen_value) = dict.get_str(gen_key_str) {
                             let gen_value_str = Cow::from(gen_value);
                             if gen_value_str == value_str {
                                 return None; // Skip duplicate suffixes
@@ -738,7 +879,7 @@ pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyRe
                                     match other_key {
                                         ParamKey::Tuple(other_vec) => {
                                             other_vec.first()
-                                                .filter(|k| *k == &gen_key_str)
+                                                .filter(|k| *k == gen_key_str)
                                                 .map(|_| Cow::from(other_value))
                                         }
                                         _ => None,
@@ -749,7 +890,7 @@ pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyRe
                     }
 
                     let new_key = if skipdups && can_drop_all_suffixes {
-                        gen_key_str
+                        gen_key_str.to_string()
                     } else {
                         let mut suffix_parts = key_vec[1..].to_vec();
                         suffix_parts.reverse();
@@ -776,13 +917,16 @@ pub fn substitution(value: String, dict: &HashMap<ParamKey, ParamVal>) -> PyResu
     }
     let mut start = 0;
     let mut result = String::with_capacity(value.len());
-
-    let d = drop_suffixes(dict, true)?;
+    // only initialize and drop suffixes of the dict is we actually have matches to substitute
+    let mut d: Option<HashMap<ParamKey, ParamVal>> = None;
 
     while let Some(captures) = MATCH_SUBSTITUTE.captures(&value[start..]) {
         if let Some(matched) = captures.get(0) {
             let key = captures.get(1).map_or("", |m| m.as_str());
-            if let Some(val) = d.get(&key.to_string().into()) {
+            if d.is_none() {
+                d = Some(drop_suffixes(dict, true)?);
+            }
+            if let Some(val) = d.as_ref().unwrap_or(&HashMap::new()).get_str(key) {
                 result.push_str(&value[start..start + matched.start()]);
                 result.push_str(&val.to_string());
                 start += matched.end();
@@ -798,7 +942,7 @@ pub fn substitution(value: String, dict: &HashMap<ParamKey, ParamVal>) -> PyResu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     #[test]
     fn test_display() {
@@ -827,6 +971,44 @@ mod tests {
         // inequality
         assert!(t1 != t3);
         assert!(t2 != t3);
+    }
+
+    #[test]
+    fn test_param_key_hashmap_ext_api() {
+        let mut dict: HashMap<ParamKey, ParamVal> = [
+            (ParamKey::String("key1".to_string()), ParamVal::String("value1".to_string())),
+            (ParamKey::String("key2".to_string()), ParamVal::String("value2".to_string())),
+            (ParamKey::Tuple(vec!["key1".to_string(), "_s1".to_string()]), ParamVal::String("value11".to_string())),
+            (ParamKey::Tuple(vec!["key2".to_string(), "_s1".to_string()]), ParamVal::String("value22".to_string())),
+        ].iter().cloned().collect();
+        assert_eq!(dict.get_str("key1"), Some(&"value1".to_string().into()), "get_str should find string key without suffix");
+        assert_eq!(dict.get_str_mut("key2"), Some(&mut "value2".to_string().into()), "get_str_mut should find string key without suffix");
+        assert_eq!(dict.get_tuple(&["key1", "_s1"]), Some(&"value11".to_string().into()), "get_tuple should find tuple key with suffix");
+        assert_eq!(dict.get_tuple_mut(&["key2", "_s1"]), Some(&mut "value22".to_string().into()), "get_tuple_mut should find tuple key with suffix");
+        assert!(dict.contains_key_str("key1"), "contains_key_str should find string key without suffix");
+        assert!(dict.contains_key_str("key2"), "contains_key_str should find string key without suffix");
+        assert!(dict.contains_key_tuple(&["key1", "_s1"]), "contains_key_tuple should find tuple key with suffix");
+        assert!(dict.contains_key_tuple(&["key2", "_s1"]), "contains_key_tuple should find tuple key with suffix");
+        assert_eq!(
+            dict.insert_str("key2", "value02".to_string().into()),
+            Some(ParamVal::String("value2".to_string())),
+            "insert_str should insert previous string key without suffix"
+        );
+        assert_eq!(
+            dict.insert_tuple(&["key2", "_s1"], "value022".to_string().into()),
+            Some(ParamVal::String("value22".to_string())),
+            "insert_tuple should insert previous tuple key with suffix"
+        );
+        assert_eq!(
+            dict.insert_str("key3", "value3".to_string().into()),
+            None,
+            "insert_str should insert new string key without suffix"
+        );
+        assert_eq!(
+            dict.insert_tuple(&["key3", "_s1"], "value33".to_string().into()),
+            None,
+            "insert_tuple should insert new tuple key with suffix"
+        );
     }
 
     #[test]
@@ -866,16 +1048,16 @@ mod tests {
             (ParamKey::String("speed".to_string()), ParamVal::String("50M".to_string())),
         ].iter().cloned().collect();
         apply_suffix_bounds(&mut d);
-        assert_eq!(d.get(&ParamKey::String("size".to_string())), Some(&ParamVal::String("2G".to_string())));
-        assert_eq!(d.get(&ParamKey::String("speed".to_string())), Some(&ParamVal::String("100M".to_string())));
+        assert_eq!(d.get_str("size"), Some(&ParamVal::String("2G".to_string())));
+        assert_eq!(d.get_str("speed"), Some(&ParamVal::String("100M".to_string())));
 
-        d.insert(ParamKey::String("size".to_string()), ParamVal::String("0.5G".to_string()));
+        d.insert_str("size", ParamVal::String("0.5G".to_string()));
         apply_suffix_bounds(&mut d);
-        assert_eq!(d.get(&ParamKey::String("size".to_string())), Some(&ParamVal::String("1G".to_string())));
+        assert_eq!(d.get_str("size"), Some(&ParamVal::String("1G".to_string())));
 
-        d.insert(ParamKey::String("size".to_string()), ParamVal::String("1.5G".to_string()));
+        d.insert_str("size", ParamVal::String("1.5G".to_string()));
         apply_suffix_bounds(&mut d);
-        assert_eq!(d.get(&ParamKey::String("size".to_string())), Some(&ParamVal::String("1.5G".to_string())));
+        assert_eq!(d.get_str("size"), Some(&ParamVal::String("1.5G".to_string())));
     }
 
     #[test]
@@ -941,8 +1123,8 @@ mod tests {
             (ParamKey::String("key2".to_string()), ParamVal::String("value2".to_string())),
         ].iter().cloned().collect();
         let result = drop_suffixes(&dict, true).unwrap();
-        assert_eq!(result.get(&"key1".to_string().into()), Some(&"value1".to_string().into()), "key1 is preserved");
-        assert_eq!(result.get(&"key2".to_string().into()), Some(&"value2".to_string().into()), "key2 is preserved");
+        assert_eq!(result.get_str("key1"), Some(&"value1".to_string().into()), "key1 is preserved");
+        assert_eq!(result.get_str("key2"), Some(&"value2".to_string().into()), "key2 is preserved");
     }
 
     #[test]
@@ -955,13 +1137,13 @@ mod tests {
             (ParamKey::Tuple(vec!["key3".to_string(), "_sX".to_string()]), ParamVal::String("value3".to_string())),
         ].iter().cloned().collect();
         let result = drop_suffixes(&dict, true).unwrap();
-        assert_eq!(result.get(&"key1".to_string().into()), Some(&"value1".to_string().into()), "single general key remains");
-        assert_eq!(result.get(&"key1_s1".to_string().into()), None, "duplicate suffix is skipped");
-        assert_eq!(result.get(&"key1_s2".to_string().into()), None, "duplicate suffix is skipped");
-        assert_eq!(result.get(&"key2".to_string().into()), None, "no general key is created for different suffix values");
-        assert_eq!(result.get(&"key2_s1".to_string().into()), Some(&"value2".to_string().into()), "nonduplicate suffix is preserved");
-        assert_eq!(result.get(&"key2_s2".to_string().into()), Some(&"value22".to_string().into()), "nonduplicate suffix is preserved");
-        assert_eq!(result.get(&"key3".to_string().into()), Some(&ParamVal::String("value3".to_string())), "single suffix is converted to general key");
+        assert_eq!(result.get_str("key1"), Some(&"value1".to_string().into()), "single general key remains");
+        assert_eq!(result.get_str("key1_s1"), None, "duplicate suffix is skipped");
+        assert_eq!(result.get_str("key1_s2"), None, "duplicate suffix is skipped");
+        assert_eq!(result.get_str("key2"), None, "no general key is created for different suffix values");
+        assert_eq!(result.get_str("key2_s1"), Some(&"value2".to_string().into()), "nonduplicate suffix is preserved");
+        assert_eq!(result.get_str("key2_s2"), Some(&"value22".to_string().into()), "nonduplicate suffix is preserved");
+        assert_eq!(result.get_str("key3"), Some(&ParamVal::String("value3".to_string())), "single suffix is converted to general key");
     }
 
     #[test]
@@ -973,23 +1155,23 @@ mod tests {
         ].iter().cloned().collect();
 
         // Add mixed entries (general keys and multi-suffix tuple)
-        dict.insert(ParamKey::String("key1".to_string()), ParamVal::String("value1".to_string()));
+        dict.insert_str("key1", ParamVal::String("value1".to_string()));
         dict.insert(ParamKey::Tuple(vec!["key1".to_string(), "_sY".to_string(), "_sZ".to_string()]), ParamVal::String("value1".to_string()));
-        dict.insert(ParamKey::String("key2".to_string()), ParamVal::String("value2".to_string()));
+        dict.insert_str("key2", ParamVal::String("value2".to_string()));
         dict.insert(ParamKey::Tuple(vec!["key2".to_string(), "_sY".to_string(), "_sZ".to_string()]), ParamVal::String("value222".to_string()));
-        dict.insert(ParamKey::String("key4".to_string()), ParamVal::String("value4".to_string()));
+        dict.insert_str("key4", ParamVal::String("value4".to_string()));
         dict.insert(ParamKey::Tuple(vec!["key5".to_string(), "_sY".to_string(), "_sZ".to_string()]), ParamVal::String("value5".to_string()));
 
         let result = drop_suffixes(&dict, true).unwrap();
-        assert_eq!(result.get(&"key1".to_string().into()), Some(&ParamVal::String("value1".to_string())), "single general key remains");
-        assert_eq!(result.get(&"key1_s2".to_string().into()), None, "duplicate suffix is skipped");
-        assert_eq!(result.get(&"key1_sZ_sY".to_string().into()), None, "duplicate double suffix is skipped");
-        assert_eq!(result.get(&"key2".to_string().into()), Some(&ParamVal::String("value2".to_string())), "general key is preserved");
-        assert_eq!(result.get(&"key2_s2".to_string().into()), Some(&ParamVal::String("value22".to_string())), "single suffix is preserved together with general key");
-        assert_eq!(result.get(&"key2_sZ_sY".to_string().into()), Some(&ParamVal::String("value222".to_string())), "duplicate double suffix is preserved together with general key");
-        assert_eq!(result.get(&"key3".to_string().into()), Some(&ParamVal::String("value3".to_string())), "single suffix is converted to general key");
-        assert_eq!(result.get(&"key4".to_string().into()), Some(&ParamVal::String("value4".to_string())), "single general key is preserved");
-        assert_eq!(result.get(&"key5".to_string().into()), Some(&ParamVal::String("value5".to_string())), "single general key is preserved");
+        assert_eq!(result.get_str("key1"), Some(&ParamVal::String("value1".to_string())), "single general key remains");
+        assert_eq!(result.get_str("key1_s2"), None, "duplicate suffix is skipped");
+        assert_eq!(result.get_str("key1_sZ_sY"), None, "duplicate double suffix is skipped");
+        assert_eq!(result.get_str("key2"), Some(&ParamVal::String("value2".to_string())), "general key is preserved");
+        assert_eq!(result.get_str("key2_s2"), Some(&ParamVal::String("value22".to_string())), "single suffix is preserved together with general key");
+        assert_eq!(result.get_str("key2_sZ_sY"), Some(&ParamVal::String("value222".to_string())), "duplicate double suffix is preserved together with general key");
+        assert_eq!(result.get_str("key3"), Some(&ParamVal::String("value3".to_string())), "single suffix is converted to general key");
+        assert_eq!(result.get_str("key4"), Some(&ParamVal::String("value4".to_string())), "single general key is preserved");
+        assert_eq!(result.get_str("key5"), Some(&ParamVal::String("value5".to_string())), "single general key is preserved");
     }
 
     #[test]
@@ -998,11 +1180,11 @@ mod tests {
             (ParamKey::Tuple(vec!["key1".to_string(), "_s1".to_string()]), ParamVal::String("value1".to_string())),
             (ParamKey::Tuple(vec!["key1".to_string(), "_s2".to_string()]), ParamVal::String("value1".to_string())),
         ].iter().cloned().collect();
-        dict.insert(ParamKey::String("key1".to_string()), ParamVal::String("value1".to_string()));
+        dict.insert_str("key1", ParamVal::String("value1".to_string()));
         let result = drop_suffixes(&dict, false).unwrap();
-        assert_eq!(result.get(&"key1".to_string().into()), Some(&ParamVal::String("value1".to_string())), "general key is preserved");
-        assert_eq!(result.get(&"key1_s1".to_string().into()), Some(&ParamVal::String("value1".to_string())), "duplicate suffix is preserved");
-        assert_eq!(result.get(&"key1_s2".to_string().into()), Some(&ParamVal::String("value1".to_string())), "duplicate suffix is preserved");
+        assert_eq!(result.get_str("key1"), Some(&ParamVal::String("value1".to_string())), "general key is preserved");
+        assert_eq!(result.get_str("key1_s1"), Some(&ParamVal::String("value1".to_string())), "duplicate suffix is preserved");
+        assert_eq!(result.get_str("key1_s2"), Some(&ParamVal::String("value1".to_string())), "duplicate suffix is preserved");
     }
 
     #[test]
@@ -1011,12 +1193,12 @@ mod tests {
             (ParamKey::Tuple(vec!["key1".to_string(), "_s1".to_string()]), ParamVal::String("value1".to_string())),
         ].iter().cloned().collect();
         for key in RESERVED_KEYS.iter() {
-            dict.insert(ParamKey::String(key.to_string()), ParamVal::String("reserved_value".to_string()));
+            dict.insert_str(key, ParamVal::String("reserved_value".to_string()));
         }
         let result = drop_suffixes(&dict, true).unwrap();
-        assert_eq!(result.get(&"key1".to_string().into()), Some(&ParamVal::String("value1".to_string())), "suffixed key is reduced as usual");
+        assert_eq!(result.get_str("key1"), Some(&ParamVal::String("value1".to_string())), "suffixed key is reduced as usual");
         for key in RESERVED_KEYS.iter() {
-            assert_eq!(result.get(&key.to_string().into()), Some(&ParamVal::String("reserved_value".to_string())), "reserved key is preserved");
+            assert_eq!(result.get_str(key), Some(&ParamVal::String("reserved_value".to_string())), "reserved key is preserved");
         }
     }
 }
