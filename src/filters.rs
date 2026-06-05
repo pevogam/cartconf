@@ -8,7 +8,7 @@ use crate::parser::Label;
 use crate::parser::ParserError;
 
 // Define an enum for the different types of filters
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Filters {
     /// Basic filter: stores a nested list of filter expressions.

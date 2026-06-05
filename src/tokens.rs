@@ -339,7 +339,7 @@ impl<'py> FromPyObject<'_, 'py> for ParamVal {
 }
 
 // Define an enum for the different types of tokens
-#[pyclass(eq)]
+#[pyclass(from_py_object,eq)]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Tokens {
     LIndent(isize),

@@ -40,7 +40,7 @@ impl ParserError {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Eq)]
 pub struct Label {
     #[pyo3(get, set)]
@@ -226,7 +226,7 @@ impl<'py> FromPyObject<'_, 'py> for ContentStep {
     }
 }
 
-#[pyclass(unsendable)]
+#[pyclass(from_py_object,unsendable)]
 #[derive(Debug, Clone)]
 pub struct Node {
     #[pyo3(get, set)]
@@ -1514,7 +1514,7 @@ pub fn parse_file(
     parse(&mut new_lexer, node, prev_indent, defaults, expand_defaults)
 }
 
-#[pyclass(unsendable)]
+#[pyclass(from_py_object,unsendable)]
 #[derive(Debug, Clone)]
 pub struct PreDict {
     _ctx: Vec<Vec<Label>>,
