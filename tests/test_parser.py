@@ -856,6 +856,9 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(len(pre_dict.joins), 1)
         self.assertIsNone(pre_dict.joins[0])
 
+    def test_get_dicts_zero(self):
+        self.assertEqual(list(self.parser.get_dicts()), [])
+
     def test_get_dicts_single(self):
         self.parser.parse_string("variants:\n  - test1:\n    key1 = value1\n")
         op2 = parser.LSet("key2", "value2")

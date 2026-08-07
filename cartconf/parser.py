@@ -130,6 +130,8 @@ class Parser(object):
 
         :returns: (recursive) dictionary generator
         """
+        if not self.node.get_children() and not self.node.get_content():
+            return
         pre_dict = PreDict(defaults=self.defaults)
         if not pre_dict.update_from_node(self.node):
             # the python-rust barrier requires copying or working on copies so replace entirely
