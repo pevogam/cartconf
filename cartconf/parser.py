@@ -51,6 +51,10 @@ class Parser(object):
         self.defaults = defaults
         self.expand_defaults = expand_defaults or []
 
+        self.only_filters = []
+        self.no_filters = []
+        self.assignments = []
+
         self.filename = filename
         if self.filename:
             self.parse_file(self.filename)
@@ -96,6 +100,7 @@ class Parser(object):
         :param variant: variant name to filter with
         """
         string = "only %s" % variant
+        self.only_filters.append(string)
         self.parse_string(string)
 
     def no_filter(self, variant: str) -> None:
@@ -107,6 +112,7 @@ class Parser(object):
         :param variant: variant name to filter with
         """
         string = "no %s" % variant
+        self.no_filters.append(string)
         self.parse_string(string)
 
     def assign(self, key: str, value: str) -> None:
@@ -119,6 +125,7 @@ class Parser(object):
         :param value: value to assign
         """
         string = "%s = %s" % (key, value)
+        self.assignments.append(string)
         self.parse_string(string)
 
     def get_dicts_gen(
