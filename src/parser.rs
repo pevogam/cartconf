@@ -1534,14 +1534,7 @@ impl PreDict {
 
     #[getter]
     fn final_content(&self) -> Vec<ContentStep> {
-        let mut res: Vec<ContentStep> = Vec::new();
-        if let Some(last) = self._content.last() {
-            res.extend(last.clone());
-        }
-        if let Some(last) = self._ctx_content.last() {
-            res.extend(last.clone());
-        }
-        res
+        self.iter_final_content().cloned().collect()
     }
 
     #[getter]
@@ -1644,19 +1637,19 @@ impl PreDict {
     pub fn get_dict(&self) -> PyResult<HashMap<ParamKey, ParamVal>> {
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
 
-        let name = self.ctx().iter().map(|l| l.long_name.clone()).collect::<Vec<_>>().join(".");
-        let shortname = self.shortname().iter().map(|l| l.name.clone()).collect::<Vec<_>>().join(".");
+        let name = self._ctx.iter().flatten().map(|l| l.long_name.as_str()).collect::<Vec<_>>().join(".");
+        let shortname = self._shortname.iter().flatten().map(|l| l.name.as_str()).collect::<Vec<_>>().join(".");
         let dep = self.dep();
 
         dict.insert_str("name", name.into());
         dict.insert_str("shortname", shortname.into());
         dict.insert_str("dep", ParamVal::List(dep));
 
-        for step in self.final_content() {
-            match step.content_type {
+        for step in self.iter_final_content() {
+            match &step.content_type {
                 ContentType::Tokens(t) => {
                     // ignore inapplicable token types by ignoring the status
-                    let _ = t.apply_to_dict(&mut dict);
+                    let _ = t.clone().apply_to_dict(&mut dict);
                 }
                 _ => {
                     return Err(PyErr::new::<PyRuntimeError, _>("Unexpected content type"));
@@ -1948,6 +1941,11 @@ impl PreDict {
 
 
 impl PreDict {
+    fn iter_final_content(&self) -> impl Iterator<Item = &ContentStep> {
+        self._content.last().into_iter().flatten()
+            .chain(self._ctx_content.last().into_iter().flatten())
+    }
+
     fn check_failed_case<'a>(
         failed_case: &FailedCase,
         ctx: &[Label],
@@ -2076,9 +2074,8 @@ impl PreDict {
         failed_internal.append(&mut failed_internal_cond);
 
         // process external (previous) content against current context
-        let content = self.final_content();
         let (external_content, failed_external, mut failed_external_cond) =
-            Node::process_content_steps(&content, &ctx_flat, labels)?;
+            Node::process_content_steps(self.iter_final_content(), &ctx_flat, labels)?;
         // NOTE: the failed filters should go into the failed internal filters
         // because we don't expect them to come from outside this node, even if
         // the condition itself was external
