@@ -755,6 +755,32 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
 
+    def test_get_dicts_joined_with_initial_state(self):
+        for nested in (False, True):
+            with self.subTest(nested=nested):
+                parsed = parser.Parser()
+                config = "trace = start\nvariants:\n    - a:\n    - b:\n"
+                if nested:
+                    config += "variants:\n    - parent:\n        join a b\n"
+                else:
+                    config += "join a b\n"
+                parsed.parse_string(config)
+                pre_dict = parser.PreDict(
+                    ctx=[parser.Label("seed")],
+                    shortname=[parser.Label("s")],
+                    dep=["seed_dep"],
+                    content=[("<seed>", 1, parser.LAppend("trace", " seed"))],
+                )
+                self.assertTrue(pre_dict.update_from_tree(parsed.ast))
+
+                d = pre_dict.get_dicts()
+                prefix = "parent." if nested else ""
+                self.assertEqual(d["name"], "seed." + prefix + "a.b")
+                self.assertEqual(d["shortname"], "s." + prefix + "a.b")
+                self.assertEqual(d["dep"], ["seed_dep"])
+                self.assertEqual(d["trace"], "start seed")
+                self.assertIsNone(pre_dict.get_dicts())
+
     def test_get_dicts_joined_deep(self):
         self.parser.parse_string("""
             k1 = v0

@@ -1593,21 +1593,10 @@ impl PreDict {
     }
 
     fn shallow_copy(&self) -> PreDict {
-        let ctx = self.ctx();
-        let content = self._content.last().cloned().unwrap_or_default();
-        let ctx_content = self._ctx_content.last().cloned().unwrap_or_default();
-        let shortname = self.shortname();
-        let dep = self.dep();
-        let mut new = PreDict::new(
-            Some(ctx),
-            Some(content),
-            Some(shortname),
-            Some(dep),
-            Some(self.defaults),
-            Some(self.expand_defaults.clone()),
-        );
-        new._ctx_content[0] = ctx_content;
-        new
+        Self::from_frames(
+            &self._ctx, &self._content, &self._ctx_content, &self._shortname,
+            &self._dep, self.defaults, &self.expand_defaults,
+        )
     }
 
     #[pyo3(name = "update_from_node", signature = (node))]
@@ -1751,8 +1740,6 @@ impl PreDict {
             return Err(PyErr::new::<PyRuntimeError, _>("Pre-dictionary needs at least one node"));
         }
         let depth = self.branch.len() - 1;
-        let mut sub_pre_dict = self.clone();
-        sub_pre_dict.reset_from_last_node();
 
         // TODO: this doesn't panic on out of bounds or uninitialized joins but is bulky to use
         // also in all other vector depth or width access cases - use anyhow or find a better way 
@@ -1784,9 +1771,14 @@ impl PreDict {
                 continue;
             }
 
-            // initialize join pre-dict with a shallow copy of a node-reset pre-dict clone
+            // Initialize new join pre-dict from parent frames including the initial frame before
+            // any node. Copy only the processed state needed to seed an independent traversal.
             if pre_dicts[j].is_none() {
-                pre_dicts[j] = Some(sub_pre_dict.shallow_copy());
+                pre_dicts[j] = Some(Self::from_frames(
+                    &self._ctx[..depth + 1], &self._content[..depth + 1],
+                    &self._ctx_content[..depth + 1], &self._shortname[..depth + 1],
+                    &self._dep[..depth + 1], self.defaults, &self.expand_defaults,
+                ));
             }
             // update the pre-dict with differently filtered current node
             if let Some(ref mut pre_dict) = pre_dicts[j] {
@@ -1990,6 +1982,27 @@ impl PreDict {
         }
 
         true
+    }
+
+    fn from_frames(
+        ctx: &[Vec<Label>],
+        content: &[Vec<ContentStep>],
+        ctx_content: &[Vec<ContentStep>],
+        shortname: &[Vec<Label>],
+        dep: &[Vec<String>],
+        defaults: bool,
+        expand_defaults: &[String],
+    ) -> Self {
+        let mut new = Self::new(
+            Some(ctx.iter().flatten().cloned().collect()),
+            Some(content.last().cloned().unwrap_or_default()),
+            Some(shortname.iter().flatten().cloned().collect()),
+            Some(dep.iter().flatten().cloned().collect()),
+            Some(defaults),
+            Some(expand_defaults.to_vec()),
+        );
+        new._ctx_content[0] = ctx_content.last().cloned().unwrap_or_default();
+        new
     }
 
     pub fn update_from_node(&mut self, node: Rc<Node>, effective_content: Option<Vec<ContentStep>>) -> PyResult<bool> {
