@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
 import unittest
+import copy
 import os
 import gzip
 import sys
@@ -95,6 +96,92 @@ class LabelTest(unittest.TestCase):
         self.assertEqual(hash_name(label3.long_name), hash_name(label4.long_name))
 
         self.assertGreater(hash_name(label3.long_name), hash_name(label3.name))
+
+
+class TreeTest(unittest.TestCase):
+
+    def test_snapshot_isolation(self):
+        base = parser.Parser()
+        base.parse_string("variants:\n    - a:\n    - b:\n")
+        snapshot = base.ast
+        expected = list(base.get_dicts_gen())
+        left, right = copy.copy(base), copy.copy(base)
+        self.assertIs(left.ast, snapshot)
+        self.assertIs(right.ast, snapshot)
+
+        left.parse_string("only a\nleft = 1\n")
+        right.parse_string("only b\nright = 2\n")
+        self.assertIsNot(left.ast, snapshot)
+        self.assertIsNot(right.ast, snapshot)
+        self.assertEqual(list(base.get_dicts_gen()), expected)
+        self.assertEqual(len(list(left.get_dicts_gen())), 1)
+        self.assertEqual(len(list(right.get_dicts_gen())), 1)
+        self.assertNotIn("right", next(left.get_dicts_gen()))
+        self.assertNotIn("left", next(right.get_dicts_gen()))
+
+        detached = snapshot.node
+        detached.add_content("<string>", 1, parser.LSet("leaked", "1"))
+        with self.assertRaises(AttributeError):
+            snapshot.node = detached
+        with self.assertRaises(AttributeError):
+            base.node = detached
+
+    def test_interleaved_traversals_and_parsing(self):
+        parsed = parser.Parser()
+        parsed.parse_string("""
+            variants:
+                - test1:
+                    value = one
+                    suffix _s1
+                - test2:
+                    value = two
+                    suffix _s2
+            variants:
+                - a:
+                    suffix _sa
+                - b:
+                    suffix _sb
+                    join test1 test2
+            join a b
+        """)
+        snapshot = parsed.ast
+        before = parsed.node.dump(0, True)
+        expected = list(parsed.get_dicts_gen())
+        self.assertEqual([d["name"] for d in expected],
+                         ["a.test1.b.test1.test2", "a.test2.b.test1.test2"])
+        first, second = parsed.get_dicts_gen(), parsed.get_dicts_gen()
+        self.assertEqual(next(first), expected[0])
+        self.assertEqual(next(second), expected[0])
+        # extending a parser must not change either traversal already in progress
+        parsed.parse_string("new_param = later\n")
+        self.assertEqual(list(second), expected[1:])
+        self.assertEqual(list(first), expected[1:])
+        self.assertEqual(snapshot.node.dump(0, True), before)
+        restored = parser.Parser()
+        restored.ast = snapshot
+        self.assertEqual(list(restored.get_dicts_gen()), expected)
+        self.assertTrue(all(d["new_param"] == "later" for d in parsed.get_dicts_gen()))
+
+    def test_snapshot_isolation_after_failed_traversals(self):
+        parsed = parser.Parser()
+        parsed.parse_string("variants:\n    - a:\n    - b:\n")
+        snapshot = parsed.ast
+        before = snapshot.node.dump(0, True)
+        expected = list(parsed.get_dicts_gen())
+
+        failed = copy.copy(parsed)
+        self.assertIs(failed.ast, snapshot)
+        failed.parse_string("only missing\n")
+        failed_snapshot = failed.ast
+        self.assertIsNot(failed_snapshot, snapshot)
+        failed_before = failed_snapshot.node.dump(0, True)
+        for _ in range(2):
+            self.assertEqual(list(failed.get_dicts_gen()), [])
+            self.assertIs(failed.ast, failed_snapshot)
+            self.assertEqual(failed_snapshot.node.dump(0, True), failed_before)
+            self.assertIs(parsed.ast, snapshot)
+            self.assertEqual(snapshot.node.dump(0, True), before)
+            self.assertEqual(list(parsed.get_dicts_gen()), expected)
 
 
 class NodeTest(unittest.TestCase):

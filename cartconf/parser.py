@@ -20,12 +20,16 @@ Lexer = lexer.Lexer
 ParserError = parser.ParserError
 Label = parser.Label
 Node = parser.Node
+Tree = parser.Tree
 PreDict = parser.PreDict
-parse_string = parser.parse_string
-parse_file = parser.parse_file
 
 
 class Parser(object):
+
+    @property
+    def node(self):
+        """Return a detached root for inspecting the parsed snapshot."""
+        return self.ast.node
 
     def __init__(
         self,
@@ -42,7 +46,7 @@ class Parser(object):
         :param expand_defaults: list of default variants to expand
         :param debug: whether to enable debug logging
         """
-        self.node = Node()
+        self.ast = Tree()
         self.debug = debug
         self.defaults = defaults
         self.expand_defaults = expand_defaults or []
@@ -64,10 +68,8 @@ class Parser(object):
 
         :param cfgfile: configuration file path to parse
         """
-        self.node.filename = cfgfile
-        self.node = parse_file(
+        self.ast = self.ast.parse_file(
             cfgfile,
-            self.node,
             defaults=self.defaults,
             expand_defaults=self.expand_defaults,
         )
@@ -79,10 +81,8 @@ class Parser(object):
 
         :param cfgstr: configuration string to parse
         """
-        self.node.filename = Reader(content="").filename
-        self.node = parse_string(
+        self.ast = self.ast.parse_string(
             cfgstr,
-            self.node,
             defaults=self.defaults,
             expand_defaults=self.expand_defaults,
         )
@@ -130,10 +130,10 @@ class Parser(object):
 
         :returns: (recursive) dictionary generator
         """
-        if not self.node.get_children() and not self.node.get_content():
+        if self.ast.is_empty():
             return
         pre_dict = PreDict(defaults=self.defaults)
-        if not pre_dict.update_from_node(self.node):
+        if not pre_dict.update_from_tree(self.ast):
             return
         while True:
             # Since get_dicts() is recursive generator, it can invoke itself

@@ -1426,6 +1426,45 @@ pub fn parse_file(
     parse(&mut new_lexer, node, prev_indent, defaults, expand_defaults)
 }
 
+#[pyclass(from_py_object, frozen, unsendable)]
+#[derive(Debug, Clone)]
+pub struct Tree {
+    root: Rc<Node>,
+}
+
+#[pymethods]
+impl Tree {
+    #[new]
+    #[pyo3(signature = (node=None))]
+    fn new(node: Option<Node>) -> Self {
+        Self { root: Rc::new(node.unwrap_or_default()) }
+    }
+
+    /// Return a detached root for the legacy Node inspection API.
+    #[getter]
+    fn node(&self) -> Node {
+        self.root.as_ref().clone()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.root.children.is_empty() && self.root.content.is_empty()
+    }
+
+    #[pyo3(signature = (cfgstr, defaults=false, expand_defaults=None))]
+    fn parse_string(&self, cfgstr: String, defaults: bool, expand_defaults: Option<Vec<String>>) -> PyResult<Self> {
+        let mut node = self.root.as_ref().clone();
+        node.filename = "<string>".to_string();
+        Ok(Self { root: Rc::new(parse_string(cfgstr, node, -1, defaults, expand_defaults)?) })
+    }
+
+    #[pyo3(signature = (cfgfile, defaults=false, expand_defaults=None))]
+    fn parse_file(&self, cfgfile: String, defaults: bool, expand_defaults: Option<Vec<String>>) -> PyResult<Self> {
+        let mut node = self.root.as_ref().clone();
+        node.filename = cfgfile.clone();
+        Ok(Self { root: Rc::new(parse_file(cfgfile, node, -1, defaults, expand_defaults)?) })
+    }
+}
+
 type FailedCase = (Vec<Label>, Vec<ContentStep>, Vec<ContentStep>);
 
 #[pyclass(from_py_object,unsendable)]
@@ -1581,6 +1620,10 @@ impl PreDict {
     #[pyo3(name = "update_from_node", signature = (node))]
     pub fn update_from_node_py(&mut self, node: Node) -> PyResult<bool> {
         self.update_from_node(Rc::new(node), None)
+    }
+
+    fn update_from_tree(&mut self, ast: &Tree) -> PyResult<bool> {
+        self.update_from_node(Rc::clone(&ast.root), None)
     }
 
     fn reset_from_last_node(&mut self) {
@@ -2407,5 +2450,26 @@ mod tests {
         let dict = passing.get_dicts(false, true).unwrap().unwrap();
         assert_eq!(dict.get_str("name"), Some(&ParamVal::String("test2".to_string())));
         assert!(passing.failed_cases.is_empty());
+    }
+
+    #[test]
+    fn test_tree_traversal_and_further_parsing() {
+        let ast = Tree::new(None).parse_string(
+            "variants:\n    - a:\n    - b:\n".to_string(), false, None,
+        ).unwrap();
+        let mut pre_dict = PreDict::default();
+        assert!(pre_dict.update_from_tree(&ast).unwrap());
+        assert!(Rc::ptr_eq(&ast.root, &pre_dict.branch[0]));
+        assert!(pre_dict.get_dicts(false, true).unwrap().is_some());
+        for pair in pre_dict.branch.windows(2) {
+            assert!(pair[0].children.iter().any(|child| Rc::ptr_eq(child, &pair[1])));
+        }
+        let copied = pre_dict.clone();
+        for (original, shared) in pre_dict.branch.iter().zip(&copied.branch) {
+            assert!(Rc::ptr_eq(original, shared));
+        }
+        let extended = ast.parse_string("extra = value\n".to_string(), false, None).unwrap();
+        assert!(!Rc::ptr_eq(&ast.root, &extended.root));
+        assert!(Rc::ptr_eq(&ast.root.children[0], &extended.root.children[0]));
     }
 }
