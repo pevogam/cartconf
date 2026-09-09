@@ -6,7 +6,6 @@ use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::fmt::{Debug, Display};
 use std::rc::Rc;
-use std::cell::RefCell;
 
 use pyo3::prelude::*;
 use pyo3::exceptions::{PyException, PyRuntimeError, PyTypeError, PyValueError};
@@ -149,15 +148,11 @@ impl Label {
     }
 }
 
-// TODO: unfortunately the custom hashbrown introduces a larger hashmap that
-// leads to larger difference between the conditional node content and other variants
-// -> reconsider this once we make use of node arena or other non-Box<...> solutions
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, PartialEq, Clone)]
 pub enum ContentType {
     Tokens(Tokens),
     Filters(Filters),
-    Node(Node),
+    Node(Rc<Node>),
     String(String),
 }
 impl<'py> IntoPyObject<'py> for ContentType {
@@ -171,7 +166,7 @@ impl<'py> IntoPyObject<'py> for ContentType {
         match self {
             ContentType::Tokens(s) => s.into_bound_py_any(py),
             ContentType::Filters(s) => s.into_bound_py_any(py),
-            ContentType::Node(s) => s.into_bound_py_any(py),
+            ContentType::Node(s) => s.as_ref().clone().into_bound_py_any(py),
             ContentType::String(s) => s.into_bound_py_any(py),
         }
     }
@@ -187,7 +182,7 @@ impl<'py> FromPyObject<'_, 'py> for ContentType {
             Ok(ContentType::Filters(filters))
         }
         else if let Ok(node) = object.extract::<Node>() {
-            Ok(ContentType::Node(node))
+            Ok(ContentType::Node(Rc::new(node)))
         }
         else {
             let s: String = object.extract()?;
@@ -251,7 +246,7 @@ pub struct Node {
     pub default: bool,
     #[pyo3(get)]
     pub id: u64,
-    children: VecDeque<Rc<RefCell<Node>>>,
+    children: VecDeque<Rc<Node>>,
 }
 
 impl PartialEq for Node {
@@ -324,15 +319,15 @@ impl Node {
     }
 
     pub fn get_children(&self) -> Vec<Node> {
-        self.children.iter().map(|child| child.borrow().clone()).collect()
+        self.children.iter().map(|child| child.as_ref().clone()).collect()
     }
 
     pub fn prepend_child(&mut self, node: Node) {
-        self.children.push_front(Rc::new(RefCell::new(node)));
+        self.children.push_front(Rc::new(node));
     }
 
     pub fn append_child(&mut self, node: Node) {
-        self.children.push_back(Rc::new(RefCell::new(node)));
+        self.children.push_back(Rc::new(node));
     }
 
     pub fn get_content(&self) -> Vec<ContentStep> {
@@ -349,7 +344,7 @@ impl Node {
 
     #[pyo3(name = "process_content")]
     pub fn process_content_py(
-        &mut self,
+        &self,
         ctx: Vec<Label>,
         labels: Vec<Label>
     ) -> PyResult<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
@@ -403,7 +398,7 @@ impl Node {
         ];
         if recurse {
             for child in &self.children {
-                dump_lines.push(child.borrow().dump(indent + 3, recurse));
+                dump_lines.push(child.dump(indent + 3, recurse));
             }
         }
         dump_lines.join("\n")
@@ -430,14 +425,22 @@ impl Node {
     4. Optionally also return conditional failed filters if present.
     */
     pub fn process_content(
-        &mut self,
-        ctx: &Vec<Label>,
-        labels: &Vec<Label>
+        &self,
+        ctx: &[Label],
+        labels: &[Label]
+    ) -> PyResult<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
+        Self::process_content_steps(&self.content, ctx, labels)
+    }
+
+    fn process_content_steps<'a>(
+        content: impl IntoIterator<Item = &'a ContentStep>,
+        ctx: &[Label],
+        labels: &[Label],
     ) -> PyResult<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
         let mut new_content: Vec<ContentStep> = Vec::new();
         let mut failed_filters: Vec<ContentStep> = Vec::new();
 
-        for step in &self.content {
+        for step in content {
             match &step.content_type {
                 // operator tokens are passed through unchanged
                 ContentType::Tokens(_) | ContentType::String(_) => {
@@ -473,11 +476,10 @@ impl Node {
                                     linenum,
                                 )
                                 */
-                                let mut cond_node = n.clone();
                                 // check and unpack the content inside this conditional node
                                 let (cond_content,
                                     mut failed_cond_filters,
-                                    deeper_failed_filters) = cond_node
+                                    deeper_failed_filters) = n
                                         .process_content(ctx, labels)?;
                                 new_content.extend(cond_content);
                                 if !failed_cond_filters.is_empty() {
@@ -805,7 +807,7 @@ impl Node {
         self.add_content(
             lexer.filename.clone(),
             lexer.linenum,
-            ContentType::Node(cond),
+            ContentType::Node(Rc::new(cond)),
         );
 
         Ok(())
@@ -865,7 +867,7 @@ impl Node {
         self.add_content(
             lexer.filename.clone(),
             lexer.linenum,
-            ContentType::Node(cond),
+            ContentType::Node(Rc::new(cond)),
         );
 
         Ok(())
@@ -1852,7 +1854,7 @@ impl PreDict {
 
             // the original parsed node is preserved as the pre-dict modifies a clone
             // for the purpose of traversal and dictionary getters
-            let child = self.branch[i].children[route_idx].borrow().clone();
+            let child = self.branch[i].children[route_idx].as_ref().clone();
             if !self.update_from_node(child)? {
                 continue;
             }
@@ -1860,8 +1862,8 @@ impl PreDict {
             if self.defaults {
                 let var_name_str = parent.var_name.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(".");
                 if !self.expand_defaults.contains(&var_name_str)
-                    && parent.children.iter().any(|c| c.borrow().default)
-                    && !parent.children[route_idx].borrow().default {
+                    && parent.children.iter().any(|c| c.default)
+                    && !parent.children[route_idx].default {
                         return Ok(None);
                     }
             }
