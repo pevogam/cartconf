@@ -109,7 +109,6 @@ class NodeTest(unittest.TestCase):
         self.assertEqual(node.get_children(), [])
         self.assertEqual(node.labels, [])
         self.assertFalse(node.append_to_shortname)
-        self.assertEqual(node.get_failed_cases(), [])
         self.assertFalse(node.default)
 
     def test_process_content_operators(self):
@@ -325,15 +324,13 @@ class NodeTest(unittest.TestCase):
     def test_dump(self):
         node = parser.Node()
         empty_dumped_str = node.dump(0)
-        self.assertRegex(empty_dumped_str, r"name:.*\nvariable name:.*\ncontent:.*\nfailed cases:.*")
+        self.assertRegex(empty_dumped_str, r"name:.*\nvariable name:.*\ncontent:.*")
 
         node.name = [parser.Label("test_name")]
         node.var_name = [parser.Label("test_var_name")]
         node.add_content("test_content", 0, parser.LString("test_content"))
-        failed_labels = [parser.Label("fail")]
-        node.add_failed_case(failed_labels, [("<string>", 1, "str")], [], 5)
         dump_str = node.dump(2)
-        expected_str = "  name: [test_name]\n  variable name: [test_var_name]\n  content: [ContentStep { filename: \"test_content\", linenum: 0, content_type: Tokens(LString(\"test_content\")) }]\n  failed cases: [([fail], [ContentStep { filename: \"<string>\", linenum: 1, content_type: String(\"str\") }], [])]"
+        expected_str = "  name: [test_name]\n  variable name: [test_var_name]\n  content: [ContentStep { filename: \"test_content\", linenum: 0, content_type: Tokens(LString(\"test_content\")) }]"
         self.assertEqual(expected_str, dump_str)
 
     def test_dump_with_recurse(self):
@@ -342,7 +339,7 @@ class NodeTest(unittest.TestCase):
         child_node.name = [parser.Label("child_name")]
         parent_node.append_child(child_node)
         dump_str = parent_node.dump(0, recurse=True)
-        expected_str = "name: []\nvariable name: []\ncontent: []\nfailed cases: []\n   name: [child_name]\n   variable name: []\n   content: []\n   failed cases: []"
+        expected_str = "name: []\nvariable name: []\ncontent: []\n   name: [child_name]\n   variable name: []\n   content: []"
         self.assertEqual(expected_str, dump_str)
 
 
@@ -1240,17 +1237,14 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(dicts[0]["key"], "value")
 
     def test_get_dicts_gen_failed(self):
-        """Failed filters return empty dictionary with partial pre-dict."""
+        """Failed filters return no dictionary and node is never affected."""
         self.parser.parse_string("variants:\n  - test1:\n    key1 = value1\nonly test2\n")
-        filter = parser.OnlyFilter([[[parser.Label("test2")]]], "test2")
-        node = self.parser.node
+        node_id = self.parser.node.id
+        before = self.parser.node.dump(0, True)
         with self.assertRaises(StopIteration):
             next(self.parser.get_dicts_gen())
-        self.assertEqual(self.parser.node.id, node.id)
-        self.assertEqual(
-            self.parser.node.get_failed_cases(),
-            [([], [], [("<string>", 4 , filter)])],
-        )
+        self.assertEqual(self.parser.node.id, node_id)
+        self.assertEqual(self.parser.node.dump(0, True), before)
 
         self.parser.parse_string("""
             k1 = v0

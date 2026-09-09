@@ -235,7 +235,6 @@ pub struct Node {
     #[pyo3(get, set)]
     pub dep: Vec<Vec<Vec<Label>>>,
     pub content: Vec<ContentStep>,
-    pub failed_cases: VecDeque<(Vec<Label>, Vec<ContentStep>, Vec<ContentStep>)>,
     #[pyo3(get, set)]
     pub append_to_shortname: bool,
 
@@ -271,7 +270,6 @@ impl Node {
             filename: String::new(),
             dep: Vec::new(),
             content: Vec::new(),
-            failed_cases: VecDeque::new(),
             append_to_shortname: false,
             condition: None,
             default: false,
@@ -351,50 +349,12 @@ impl Node {
         self.process_content(&ctx, &labels)
     }
 
-    #[allow(clippy::type_complexity)]
-    pub fn get_failed_cases(&self) -> Vec<(Vec<Label>, Vec<ContentStep>, Vec<ContentStep>)> {
-        self.failed_cases.clone().into()
-    }
-
-    pub fn add_failed_case(
-        &mut self,
-        ctx: Vec<Label>,
-        external_filters: Vec<ContentStep>,
-        internal_filters: Vec<ContentStep>,
-        capacity: usize,
-    ) {
-        self.failed_cases.push_front((ctx, external_filters, internal_filters));
-        if self.failed_cases.len() > capacity {
-            _ = self.failed_cases.pop_back()
-        }
-    }
-
-    pub fn prioritize_failed_case(
-        &mut self,
-        idx: usize,
-    ) {
-        let failed_case = self.failed_cases.remove(idx);
-        if let Some(f) = failed_case { self.failed_cases.push_front(f) }
-    }
-
-    #[pyo3(name = "failed_case_might_pass")]
-    pub fn failed_case_might_pass_py(
-        &self,
-        idx: usize,
-        ctx: Vec<Label>,
-        labels: Vec<Label>,
-        content: Vec<ContentStep>
-    ) -> bool {
-        self.failed_case_might_pass(idx, ctx, &labels, &content)
-    }
-
     #[pyo3(signature = (indent, recurse=false))]
     pub fn dump(&self, indent: usize, recurse: bool) -> String {
         let mut dump_lines = vec![
             format!("{:indent$}name: {:?}", "", self.name, indent = indent),
             format!("{:indent$}variable name: {:?}", "", self.var_name, indent = indent),
             format!("{:indent$}content: {:?}", "", self.content, indent = indent),
-            format!("{:indent$}failed cases: {:?}", "", self.failed_cases, indent = indent),
         ];
         if recurse {
             for child in &self.children {
@@ -519,56 +479,6 @@ impl Node {
         }
 
         Ok((new_content, failed_filters, Vec::new()))
-    }
-
-    pub fn failed_case_might_pass(
-        &self,
-        idx: usize,
-        ctx: Vec<Label>,
-        labels: &[Label],
-        content: &[ContentStep]
-    ) -> bool {
-        let node_content = &self.content;
-        let all_content: Vec<&ContentStep> = content.iter().chain(node_content).collect();
-        let failed_case = match self.failed_cases.get(idx) {
-            Some(f) => f,
-            None => { return false; }
-        };
-        let (failed_ctx, failed_external_filters, failed_internal_filters) = failed_case;
-
-        // might pass if any filter (external or internal) is missing from all_content
-        let in_all_content = |step: &ContentStep| all_content.contains(&step);
-        if failed_external_filters.iter().any(|t| !in_all_content(t))
-            || failed_internal_filters.iter().any(|t| !in_all_content(t))
-        {
-            return true;
-        }
-
-        // cannot pass if at least one external filter cannot pass
-        for ContentStep {content_type, ..} in failed_external_filters {
-            if let ContentType::Filters(external_filter) = content_type
-                && !external_filter.might_pass(failed_ctx, &ctx, labels) {
-                    return false;
-                }
-        }
-
-        // might pass if any internal filter is missing only from the node content
-        if failed_internal_filters
-            .iter()
-            .any(|t| !node_content.contains(t))
-        {
-            return true;
-        }
-
-        // cannot pass if at least one internal filter cannot pass
-        for ContentStep {content_type, ..} in failed_internal_filters {
-            if let ContentType::Filters(internal_filter) = content_type
-                && !internal_filter.might_pass(failed_ctx, &ctx, labels) {
-                    return false;
-                }
-        }
-
-        true
     }
 }
 impl Node {
@@ -1516,6 +1426,8 @@ pub fn parse_file(
     parse(&mut new_lexer, node, prev_indent, defaults, expand_defaults)
 }
 
+type FailedCase = (Vec<Label>, Vec<ContentStep>, Vec<ContentStep>);
+
 #[pyclass(from_py_object,unsendable)]
 #[derive(Debug, Clone)]
 pub struct PreDict {
@@ -1528,8 +1440,9 @@ pub struct PreDict {
     _dep: Vec<Vec<String>>,
 
     // traversal state
-    #[pyo3(get)]
-    pub branch: Vec<Node>,
+    branch: Vec<Rc<Node>>,
+    processed_content: Vec<Option<Vec<ContentStep>>>,
+    failed_cases: HashMap<u64, VecDeque<FailedCase>>,
     #[pyo3(get)]
     pub route: Vec<Option<usize>>,
     #[pyo3(get, set)]
@@ -1560,6 +1473,11 @@ impl Default for PreDict {
 
 #[pymethods]
 impl PreDict {
+    #[getter]
+    fn branch(&self) -> Vec<Node> {
+        self.branch.iter().map(|node| node.as_ref().clone()).collect()
+    }
+
     #[getter]
     fn ctx(&self) -> Vec<Label> {
         self._ctx.iter().flatten().cloned().collect()
@@ -1616,6 +1534,8 @@ impl PreDict {
             _ctx_content,
             _dep,
             branch: Vec::new(),
+            processed_content: Vec::new(),
+            failed_cases: HashMap::new(),
             route: Vec::new(),
             joins: Vec::new(),
             join_dicts: Vec::new(),
@@ -1658,106 +1578,14 @@ impl PreDict {
         new
     }
 
-    #[pyo3(signature = (node))]
-    pub fn update_from_node(&mut self, mut node: Node) -> PyResult<bool> {
-        /* TODO: add optional logging
-        if self.debug:    #Print dict on which is working now.
-            print(node.dump(0))
-        */
-
-        let ctx = node.name.clone();
-        let labels = node.labels.clone();
-        let shortname = if node.append_to_shortname {
-            node.name.clone()
-        } else {
-            Vec::new()
-        };
-
-        // build dep strings using current flattened ctx and node.dep
-        let ctx_flat: Vec<Label> = self.ctx();
-        let mut dep: Vec<String> = Vec::new();
-        for d in &node.dep {
-            for dd in d {
-                let mut parts: Vec<String> = Vec::new();
-                parts.extend(ctx_flat.iter().map(|label| label.to_string()));
-                parts.extend(dd.iter().map(|label| label.to_string()));
-                dep.push(parts.join("."));
-            }
-        }
-
-        /* TODO: add optional logging
-        if node.name:
-            self._debug("checking out %r", name)
-        */
-        
-        // check previously failed filters
-        for i in 0..node.failed_cases.len() {
-            let mut probe_ctx = ctx_flat.clone();
-            probe_ctx.extend(ctx.clone());
-            if !node.failed_case_might_pass(i, probe_ctx, &labels, &self.content()) {
-                /* TODO: add optional logging
-                self._debug(
-                    "\n*    this subtree has failed before %s\n"
-                    "         content: %s\n"
-                    "         failcase:%s\n",
-                    name,
-                    self.content + node.get_content(),
-                    failed_case,
-                )
-                */
-                node.prioritize_failed_case(i);
-                return Ok(false);
-            }
-        }
-
-        self._ctx.push(ctx);
-        self._shortname.push(shortname);
-        self._dep.push(dep);
-
-        // push state machine stacks
-        self.route.push(None);
-        self.joins.push(None);
-        self.join_dicts.push(None);
-        self.join_pre_dicts.push(None);
-
-        // recompute flattened ctx (includes the newly added ctx)
-        let ctx_flat = self.ctx();
-        // capture external content (final content) before node is pushed
-        let content = self.final_content();
-
-        // process internal content for the node
-        let (internal_content, mut failed_internal, mut failed_internal_cond) =
-            node.process_content(&ctx_flat, &labels)?;
-        failed_internal.append(&mut failed_internal_cond);
-        self._content.push(internal_content);
-
-        // process external (previous) content against current context
-        let mut content_node = Node::new();
-        content_node.swap_content(content);
-        let (external_content, failed_external, mut failed_external_cond) =
-            content_node.process_content(&ctx_flat, &labels)?;
-        // NOTE: the failed filters should go into the failed internal filters
-        // because we don't expect them to come from outside this node, even if
-        // the condition itself was external
-        failed_internal.append(&mut failed_external_cond);
-        self._ctx_content.push(external_content);
-
-        // register failed case and return false if failed filters
-        if !failed_internal.is_empty() || !failed_external.is_empty() {
-            node.add_failed_case(ctx_flat.clone(), failed_external, failed_internal, self.num_failed_cases);
-            /* TODO: add optional logging
-            self._debug("Failed_cases %s", node.failed_cases)
-            */
-            self.branch.push(node);
-            return Ok(false);
-        }
-
-        self.branch.push(node);
-        Ok(true)
+    #[pyo3(name = "update_from_node", signature = (node))]
+    pub fn update_from_node_py(&mut self, node: Node) -> PyResult<bool> {
+        self.update_from_node(Rc::new(node), None)
     }
 
     fn reset_from_last_node(&mut self) {
         self.branch.pop();
+        self.processed_content.pop();
         self.route.pop();
         self.joins.pop();
         self.join_dicts.pop();
@@ -1852,13 +1680,11 @@ impl PreDict {
                 continue;
             }
 
-            // the original parsed node is preserved as the pre-dict modifies a clone
-            // for the purpose of traversal and dictionary getters
-            let child = self.branch[i].children[route_idx].as_ref().clone();
-            if !self.update_from_node(child)? {
+            let child = Rc::clone(&self.branch[i].children[route_idx]);
+            if !self.update_from_node(child, None)? {
                 continue;
             }
-            let parent = &mut self.branch[i];
+            let parent = &self.branch[i];
             if self.defaults {
                 let var_name_str = parent.var_name.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(".");
                 if !self.expand_defaults.contains(&var_name_str)
@@ -1932,9 +1758,9 @@ impl PreDict {
                 if !pre_dict.branch.contains(node) {
                     // current join/only
                     let step = &joins[j];
-                    let mut node = self.branch[depth].clone();
-                    node.add_content(step.filename.clone(), step.linenum, step.content_type.clone());
-                    if !pre_dict.update_from_node(node)? {
+                    let mut content = self.processed_content[depth].as_ref().unwrap_or(&node.content).clone();
+                    content.push(step.clone());
+                    if !pre_dict.update_from_node(Rc::clone(node), Some(content))? {
                         return Ok(None);
                     }
                 }
@@ -2015,17 +1841,17 @@ impl PreDict {
         let mut joins = &mut self.joins[depth];
         // due to pre-dict cloning current pre-dict must only contain one join at the end
         if joins.is_none() {
-            let node = &mut self.branch[depth];
+            let node = &self.branch[depth];
 
             // find joins from node content and prepare only-filters
             let mut plain_content: Vec<ContentStep> = Vec::with_capacity(node.content.len());
             let mut new_joins: Vec<ContentStep> = Vec::with_capacity(node.content.len());
-            for t in node.get_content() {
+            for t in self.processed_content[depth].as_ref().unwrap_or(&node.content).iter().cloned() {
                 match t.content_type {
                     ContentType::Filters(Filters::JoinFilter {filter, line }) => {
                         // accumulate join steps
                         new_joins.push(ContentStep {
-                            filename: t.filename.clone(),
+                            filename: t.filename,
                             linenum: t.linenum,
                             content_type: ContentType::Filters(
                                 Filters::JoinFilter { filter, line }
@@ -2052,8 +1878,8 @@ impl PreDict {
                 self.joins[depth] = Some(onlys.clone());
                 self.join_dicts[depth] = Some(vec![None; onlys.len()]);
                 self.join_pre_dicts[depth] = Some(vec![None; onlys.len()]);
-                // provide join-free content to processed node
-                node.swap_content(plain_content);
+                // keep join-free content in this traversal, preserving the actual node
+                self.processed_content[depth] = Some(plain_content);
                 joins = &mut self.joins[depth];
             }
         }
@@ -2075,6 +1901,165 @@ impl PreDict {
         Ok(dn)
     }
 
+}
+
+
+impl PreDict {
+    fn check_failed_case<'a>(
+        failed_case: &FailedCase,
+        ctx: &[Label],
+        labels: &[Label],
+        content: impl Iterator<Item = &'a ContentStep> + Clone,
+        node_content: &[ContentStep],
+    ) -> bool {
+        let (failed_ctx, failed_external_filters, failed_internal_filters) = failed_case;
+
+        // might pass if any filter (external or internal) is missing from all content
+        let in_all_content = |step: &ContentStep| {
+            content.clone().any(|candidate| candidate == step) || node_content.contains(step)
+        };
+        if failed_external_filters.iter().any(|t| !in_all_content(t))
+            || failed_internal_filters.iter().any(|t| !in_all_content(t))
+        {
+            return true;
+        }
+
+        // cannot pass if at least one external filter cannot pass
+        for ContentStep {content_type, ..} in failed_external_filters {
+            if let ContentType::Filters(external_filter) = content_type
+                && !external_filter.might_pass(failed_ctx, ctx, labels) {
+                    return false;
+                }
+        }
+
+        // might pass if any internal filter is missing only from the node content
+        if failed_internal_filters
+            .iter()
+            .any(|t| !node_content.contains(t))
+        {
+            return true;
+        }
+
+        // cannot pass if at least one internal filter cannot pass
+        for ContentStep {content_type, ..} in failed_internal_filters {
+            if let ContentType::Filters(internal_filter) = content_type
+                && !internal_filter.might_pass(failed_ctx, ctx, labels) {
+                    return false;
+                }
+        }
+
+        true
+    }
+
+    pub fn update_from_node(&mut self, node: Rc<Node>, effective_content: Option<Vec<ContentStep>>) -> PyResult<bool> {
+        /* TODO: add optional logging
+        if self.debug:    #Print dict on which is working now.
+            print(node.dump(0))
+        */
+
+        let ctx = node.name.clone();
+        let labels = &node.labels;
+        let shortname = if node.append_to_shortname {
+            node.name.clone()
+        } else {
+            Vec::new()
+        };
+
+        // build dep strings using current flattened ctx and node.dep
+        let mut ctx_flat: Vec<Label> = self.ctx();
+        let mut dep: Vec<String> = Vec::new();
+        for d in &node.dep {
+            for dd in d {
+                let mut parts: Vec<String> = Vec::new();
+                parts.extend(ctx_flat.iter().map(|label| label.to_string()));
+                parts.extend(dd.iter().map(|label| label.to_string()));
+                dep.push(parts.join("."));
+            }
+        }
+
+        /* TODO: add optional logging
+        if node.name:
+            self._debug("checking out %r", name)
+        */
+
+        ctx_flat.extend_from_slice(&ctx);
+
+        let node_content = effective_content.as_deref().unwrap_or(&node.content);
+        let failed = self.failed_cases.get(&node.id).and_then(|cases| {
+            cases.iter().position(|case| {
+               /* TODO: add optional logging
+                self._debug(
+                    "\n*    this subtree has failed before %s\n"
+                    "         content: %s\n"
+                    "         failcase:%s\n",
+                    name,
+                    self.content + node.get_content(),
+                    failed_case,
+                )
+                */
+                !Self::check_failed_case(
+                    case, &ctx_flat, labels, self._content.iter().flatten(), node_content,
+                )
+            })
+        });
+        // prioritize any first detected failed case
+        if let Some(i) = failed {
+            let cases = self.failed_cases.get_mut(&node.id).unwrap();
+            let case = cases.remove(i).unwrap();
+            cases.push_front(case);
+        }
+
+        self._ctx.push(ctx);
+        self._shortname.push(shortname);
+        self._dep.push(dep);
+
+        // push state machine stacks
+        self.route.push(None);
+        self.joins.push(None);
+        self.join_dicts.push(None);
+        self.join_pre_dicts.push(None);
+        if failed.is_some() {
+            // keep the failed frame so its parent advances before trying another child
+            self._content.push(Vec::new());
+            self._ctx_content.push(Vec::new());
+            self.branch.push(node);
+            self.processed_content.push(effective_content);
+            return Ok(false);
+        }
+
+        // process internal content for the node
+        let (internal_content, mut failed_internal, mut failed_internal_cond) =
+            Node::process_content_steps(node_content, &ctx_flat, labels)?;
+        failed_internal.append(&mut failed_internal_cond);
+
+        // process external (previous) content against current context
+        let content = self.final_content();
+        let (external_content, failed_external, mut failed_external_cond) =
+            Node::process_content_steps(&content, &ctx_flat, labels)?;
+        // NOTE: the failed filters should go into the failed internal filters
+        // because we don't expect them to come from outside this node, even if
+        // the condition itself was external
+        failed_internal.append(&mut failed_external_cond);
+        self._content.push(internal_content);
+        self._ctx_content.push(external_content);
+
+        // register failed case and return false if failed filters
+        if !failed_internal.is_empty() || !failed_external.is_empty() {
+            let cases = self.failed_cases.entry(node.id).or_default();
+            cases.push_front((ctx_flat, failed_external, failed_internal));
+            cases.truncate(self.num_failed_cases);
+            /* TODO: add optional logging
+            self._debug("Failed_cases %s", cases)
+            */
+            self.branch.push(node);
+            self.processed_content.push(effective_content);
+            return Ok(false);
+        }
+
+        self.branch.push(node);
+        self.processed_content.push(effective_content);
+        Ok(true)
+    }
 }
 
 #[cfg(test)]
@@ -2392,5 +2377,35 @@ mod tests {
         let children = parent_node.get_children();
         assert_eq!(children.len(), 1);
         assert_eq!(children[0], node);
+    }
+
+    #[test]
+    fn test_pre_dict_failed_case_reuse() {
+        let node = Rc::new(parse_string(
+            "only test2\n".to_string(), Node::new(), -1, false, None,
+        ).unwrap());
+        let mut failed = PreDict::default();
+        assert!(!failed.update_from_node(Rc::clone(&node), None).unwrap());
+        assert_eq!(failed.failed_cases[&node.id], VecDeque::from([
+            (Vec::new(), Vec::new(), vec![node.content.last().unwrap().clone()]),
+        ]));
+
+        // revisiting the same failure reuses its record and still pushes a frame
+        failed.reset_from_last_node();
+        assert!(!failed.update_from_node(Rc::clone(&node), None).unwrap());
+        assert_eq!(failed.failed_cases[&node.id].len(), 1);
+        assert_eq!(failed.branch.len(), 1);
+        assert_eq!(failed.route, vec![None]);
+
+        // another evaluator can accept the same node with a different context
+        let mut passing = PreDict::new(
+            Some(vec![Label::new("test2".to_string(), None)]),
+            None, None, None, None, None,
+        );
+        assert!(passing.failed_cases.is_empty());
+        assert!(passing.update_from_node(node, None).unwrap());
+        let dict = passing.get_dicts(false, true).unwrap().unwrap();
+        assert_eq!(dict.get_str("name"), Some(&ParamVal::String("test2".to_string())));
+        assert!(passing.failed_cases.is_empty());
     }
 }

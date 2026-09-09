@@ -1,4 +1,5 @@
 use hashbrown::HashMap;
+use std::rc::Rc;
 use pyo3::prelude::*;
 
 mod tokens;
@@ -49,7 +50,7 @@ fn parse_dicts(
         )?;
     }
     let mut pre_dict = PreDict::default();
-    if !pre_dict.update_from_node(node)? {
+    if !pre_dict.update_from_node(Rc::new(node), None)? {
         return Err(PyErr::new::<parser::ParserError, _>((
             "Failed to generate PreDict from Node".to_string(),
             "",

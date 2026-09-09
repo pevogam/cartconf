@@ -134,8 +134,6 @@ class Parser(object):
             return
         pre_dict = PreDict(defaults=self.defaults)
         if not pre_dict.update_from_node(self.node):
-            # the python-rust barrier requires copying or working on copies so replace entirely
-            self.node = pre_dict.branch[-1]
             return
         while True:
             # Since get_dicts() is recursive generator, it can invoke itself
