@@ -1444,6 +1444,10 @@ impl Tree {
         Self { root: Rc::new(node.unwrap_or_default()), nodes: Rc::default() }
     }
 
+    fn __copy__(&self) -> Tree {
+        self.clone()
+    }
+
     #[getter(root)]
     fn root_id(&self) -> u64 {
         self.root.id
@@ -2546,7 +2550,8 @@ mod tests {
         for node in [&ast.root, &ast.root.children[0], &ast.root.children[1], conditional] {
             assert!(std::ptr::eq(ast.borrow_node(node.id).unwrap(), node.as_ref()));
         }
-        let copied = ast.clone();
+        let copied = ast.__copy__();
+        assert!(Rc::ptr_eq(&ast.root, &copied.root));
         assert!(Rc::ptr_eq(&ast.nodes, &copied.nodes));
         let extended = ast.parse_string("extra = value\n".to_string(), false, None).unwrap();
         assert!(extended.nodes.get().is_none());

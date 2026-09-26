@@ -28,6 +28,8 @@ machine:
   ``get_node_children(id)`` returns detached children in traversal order, and
   ``dump(indent)`` displays the tree with node IDs. Sibling variants share their
   common parent syntax, avoiding a separate copy of that node for each variant.
+  ``copy.copy(tree)`` creates another snapshot handle sharing the immutable
+  syntax and inspection index; parsing either handle returns an independent tree.
 
 * ``PreDict`` is a stateful dictionary evaluator. Its branch holds shared nodes;
   traversal frames accumulate context, content, names and dependencies.

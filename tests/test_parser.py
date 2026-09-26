@@ -100,6 +100,19 @@ class LabelTest(unittest.TestCase):
 
 class TreeTest(unittest.TestCase):
 
+    def test_copy(self):
+        snapshot = parser.Tree().parse_string("variants:\n    - a:\n    - b:\n")
+        copied = copy.copy(snapshot)
+        self.assertIsNot(copied, snapshot)
+        self.assertEqual(copied.root, snapshot.root)
+        self.assertEqual(copied.dump(0), snapshot.dump(0))
+        extended = copied.parse_string("only a\nvalue = copied\n")
+        original, modified = parser.Parser(), parser.Parser()
+        original.ast, modified.ast = snapshot, extended
+        self.assertEqual([d["name"] for d in original.get_dicts_gen()], ["a", "b"])
+        self.assertEqual([d["name"] for d in modified.get_dicts_gen()], ["a"])
+        self.assertEqual(copied.dump(0), snapshot.dump(0))
+
     def test_children_and_dump(self):
         root, parent, child = parser.Node(), parser.Node(), parser.Node()
         parent.name = [parser.Label("parent")]
