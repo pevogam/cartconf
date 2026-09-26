@@ -3,6 +3,47 @@ Cartesian configuration format file parser
 
 Cartesian product variantization of parameters.
 
+Main Rust structures for parsing
+--------------------------------
+
+Parsed syntax and dictionary generation are represented by separate structures,
+the former represented by an immutable AST while the latter by traversal state
+machine:
+
+* ``Node`` describes a variant or conditional block: names and labels,
+  dependencies, content steps and links to further nodes. Child and conditional
+  nodes use shared ``Rc<Node>`` handles; content processing reads their syntax
+  without mutating it. Detached nodes remain editable for construction and
+  inspection. Nodes carry no traversal state or failure history.
+
+* ``Tree`` holds the root of an immutable abstract syntax tree (AST). Its
+  ``parse_file()`` and ``parse_string()`` methods return a new snapshot, copying
+  the root and sharing existing descendants. Retaining a tree therefore
+  preserves a configuration independently of later parsing.
+
+* ``PreDict`` is a stateful dictionary evaluator. Its branch holds shared nodes;
+  traversal frames accumulate context, content, names and dependencies.
+  ``update_from_tree(snapshot)`` supplies a shared root for evaluation. Failure
+  records belong to the evaluator and are indexed by node ID: they survive
+  frame resets but are checked against the current filters and context before
+  pruning another visit.
+
+  Each join selection uses a separate evaluator seeded from processed parent
+  frames, including caller-supplied initial state, with fresh traversal and
+  failure history. Join expansion stores join-free instructions and the
+  selection's ``only`` filter in ``processed_content``, preserving the shared
+  nodes. Evaluation borrows content and label strings, copying retained
+  instructions and output values as needed.
+
+* ``Parser`` is the Python interface holding the current snapshot in ``ast``.
+  Parsing replaces that snapshot. Each active ``get_dicts_gen()`` iterator owns
+  a fresh ``PreDict`` and can interleave with others; further parsing leaves its
+  snapshot unchanged.
+
+There are additional structures for ``ContentStep``, ``Label`` and even ``Lexer``
+and ``Reader`` as well as low level enums for ``Tokens`` and ``Filters`` but the
+above focuses on the highest level interface.
+
 General syntax notes
 --------------------
 
