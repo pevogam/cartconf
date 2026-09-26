@@ -38,6 +38,11 @@ machine:
   frame resets but are checked against the current filters and context before
   pruning another visit.
 
+  ``update_from_tree(snapshot, node_id)`` starts from any indexed node without
+  copying its syntax; an unknown ID raises ``ValueError`` before changing the
+  evaluator. ``branch_ids`` exposes the current path without cloning nodes,
+  while ``branch`` retains the detached-node inspection API.
+
   Each join selection uses a separate evaluator seeded from processed parent
   frames, including caller-supplied initial state, with fresh traversal and
   failure history. Join expansion stores join-free instructions and the

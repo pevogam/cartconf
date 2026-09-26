@@ -530,6 +530,29 @@ class PreDictTest(unittest.TestCase):
         # use this for some preconditions speedup
         self.parser = parser.Parser()
 
+    def test_update_from_tree_node_id(self):
+        self.parser.parse_string("value = before\nvariants:\n    - a:\n    - b:\n"
+                                 "variants:\n    - x:\n    - y:\n")
+        snapshot = self.parser.ast
+        node = snapshot.get_node_children(snapshot.root)[0]
+        expected = [d for d in self.parser.get_dicts_gen() if d["name"].startswith("x.")]
+        pre_dict = parser.PreDict()
+        self.assertTrue(pre_dict.update_from_tree(snapshot, node_id=node.id))
+        self.assertEqual(pre_dict.branch_ids, [node.id])
+        self.assertEqual(pre_dict.get_dicts(), expected[0])
+        branch_ids, route = pre_dict.branch_ids, pre_dict.route
+        self.assertEqual(branch_ids, [n.id for n in pre_dict.branch])
+        with self.assertRaises(ValueError):
+            pre_dict.update_from_tree(snapshot, node_id=parser.Node().id)
+        self.assertEqual(pre_dict.branch_ids, branch_ids)
+        self.assertEqual(pre_dict.route, route)
+        pre_dict.branch_ids.clear()
+        self.assertEqual(pre_dict.branch_ids, branch_ids)
+        self.parser.parse_string("value = after\n")
+        del snapshot
+        self.assertEqual(pre_dict.get_dicts(), expected[1])
+        self.assertIsNone(pre_dict.get_dicts())
+
     def test_default_properties(self):
         pd = parser.PreDict()
         self.assertEqual(pd.ctx, [])
@@ -537,6 +560,7 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pd.shortname, [])
         self.assertEqual(pd.dep, [])
         self.assertEqual(pd.branch, [])
+        self.assertEqual(pd.branch_ids, [])
         self.assertEqual(pd.route, [])
         # str should include class name for debugging purposes
         self.assertIn(str(pd), "PreDict(ctx=[], content=[], shortname=[], dep=[])")

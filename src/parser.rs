@@ -1527,7 +1527,11 @@ impl Tree {
     }
 
     pub fn borrow_node(&self, id: u64) -> PyResult<&Node> {
-        self.index_nodes().get(&id).map(Rc::as_ref).ok_or_else(|| {
+        self.shared_node(id).map(Rc::as_ref)
+    }
+
+    fn shared_node(&self, id: u64) -> PyResult<&Rc<Node>> {
+        self.index_nodes().get(&id).ok_or_else(|| {
             PyValueError::new_err(format!("Node ID {} not available in this tree", id))
         })
     }
@@ -1583,6 +1587,11 @@ impl PreDict {
     #[getter]
     fn branch(&self) -> Vec<Node> {
         self.branch.iter().map(|node| node.as_ref().clone()).collect()
+    }
+
+    #[getter]
+    fn branch_ids(&self) -> Vec<u64> {
+        self.branch.iter().map(|node| node.id).collect()
     }
 
     #[getter]
@@ -1672,8 +1681,13 @@ impl PreDict {
         self.update_from_node(Rc::new(node), None)
     }
 
-    fn update_from_tree(&mut self, ast: &Tree) -> PyResult<bool> {
-        self.update_from_node(Rc::clone(&ast.root), None)
+    #[pyo3(signature = (ast, node_id=None))]
+    fn update_from_tree(&mut self, ast: &Tree, node_id: Option<u64>) -> PyResult<bool> {
+        let node = match node_id {
+            Some(id) => ast.shared_node(id)?,
+            None => &ast.root,
+        };
+        self.update_from_node(Rc::clone(node), None)
     }
 
     fn reset_from_last_node(&mut self) {
@@ -2537,7 +2551,7 @@ mod tests {
         ).unwrap();
         assert!(ast.nodes.get().is_none());
         let mut pre_dict = PreDict::default();
-        assert!(pre_dict.update_from_tree(&ast).unwrap());
+        assert!(pre_dict.update_from_tree(&ast, None).unwrap());
         assert!(pre_dict.get_dicts(false, true).unwrap().is_some());
         assert!(ast.nodes.get().is_none());
         assert_eq!(ast.get_size(), 5);
@@ -2559,12 +2573,27 @@ mod tests {
     }
 
     #[test]
+    fn test_tree_node_id_evaluation_shares_syntax() {
+        let ast = Tree::new(None).parse_string(
+            "variants:\n    - a:\n    - b:\n".to_string(), false, None,
+        ).unwrap();
+        let child = &ast.root.children[0];
+        let mut pre_dict = PreDict::default();
+        assert!(pre_dict.update_from_tree(&ast, Some(child.id)).unwrap());
+        assert!(Rc::ptr_eq(child, &pre_dict.branch[0]));
+        assert_eq!(pre_dict.branch_ids(), vec![child.id]);
+        let dict = pre_dict.get_dicts(false, true).unwrap().unwrap();
+        assert_eq!(dict.get_str("name"), Some(&ParamVal::String("a".to_string())));
+        assert!(pre_dict.get_dicts(false, true).unwrap().is_none());
+    }
+
+    #[test]
     fn test_tree_traversal_and_further_parsing() {
         let ast = Tree::new(None).parse_string(
             "variants:\n    - a:\n    - b:\n".to_string(), false, None,
         ).unwrap();
         let mut pre_dict = PreDict::default();
-        assert!(pre_dict.update_from_tree(&ast).unwrap());
+        assert!(pre_dict.update_from_tree(&ast, None).unwrap());
         assert!(Rc::ptr_eq(&ast.root, &pre_dict.branch[0]));
         assert!(pre_dict.get_dicts(false, true).unwrap().is_some());
         for pair in pre_dict.branch.windows(2) {
