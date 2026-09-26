@@ -957,6 +957,8 @@ impl Node {
             self.apply_dict(lexer, dict);
         }
 
+        let parent = Rc::new(self.clone());
+
         // Handle default variants
         let meta_default = meta.get_mut("default");
         let meta_default_values_empty = &mut Vec::new();
@@ -1051,7 +1053,7 @@ impl Node {
 
             // Create and parse the variant node
             let mut node2 = Node::new();
-            node2.append_child(self.clone());
+            node2.children.push_back(Rc::clone(&parent));
             node2.update_labels(self.labels.clone());
 
             if !variant_name.is_empty() {
@@ -1454,6 +1456,24 @@ impl Tree {
     /// Return a detached node from this snapshot by its ID.
     fn clone_node(&self, id: u64) -> PyResult<Node> {
         self.borrow_node(id).cloned()
+    }
+
+    fn get_node_children(&self, id: u64) -> PyResult<Vec<Node>> {
+        Ok(self.borrow_node(id)?.get_children())
+    }
+
+    fn dump(&self, indent: usize) -> String {
+        let mut lines = vec![
+            format!("{:indent$}root: {}", "", self.root.id, indent = indent),
+            format!("{:indent$}nodes: {}", "", self.get_size(), indent = indent),
+        ];
+        let mut pending = vec![(self.root.as_ref(), indent)];
+        while let Some((node, indent)) = pending.pop() {
+            lines.push(format!("{:indent$}id: {}", "", node.id, indent = indent));
+            lines.push(node.dump(indent, false));
+            pending.extend(node.children.iter().rev().map(|child| (child.as_ref(), indent + 3)));
+        }
+        lines.join("\n")
     }
 
     /// Return a detached root for the legacy Node inspection API.
@@ -2518,6 +2538,7 @@ mod tests {
         assert!(ast.nodes.get().is_none());
         assert_eq!(ast.get_size(), 5);
         let common = &ast.root.children[0].children[0];
+        assert!(Rc::ptr_eq(common, &ast.root.children[1].children[0]));
         let conditional = match &common.content.last().unwrap().content_type {
             ContentType::Node(node) => node,
             _ => panic!("expected conditional node"),

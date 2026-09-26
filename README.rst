@@ -25,6 +25,9 @@ machine:
   blocks. The index is built only when inspected and shares the existing nodes.
   IDs are not contiguous tree offsets; lookups belong to a particular snapshot,
   since later parsing may retain an ID while extending that node's content.
+  ``get_node_children(id)`` returns detached children in traversal order, and
+  ``dump(indent)`` displays the tree with node IDs. Sibling variants share their
+  common parent syntax, avoiding a separate copy of that node for each variant.
 
 * ``PreDict`` is a stateful dictionary evaluator. Its branch holds shared nodes;
   traversal frames accumulate context, content, names and dependencies.

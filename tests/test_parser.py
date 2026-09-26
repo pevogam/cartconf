@@ -100,6 +100,36 @@ class LabelTest(unittest.TestCase):
 
 class TreeTest(unittest.TestCase):
 
+    def test_children_and_dump(self):
+        root, parent, child = parser.Node(), parser.Node(), parser.Node()
+        parent.name = [parser.Label("parent")]
+        child.name = [parser.Label("child")]
+        parent.append_child(child)
+        root.append_child(parent)
+        tree = parser.Tree(root)
+        self.assertEqual(tree.get_node_children(tree.root), [parent])
+        self.assertEqual(tree.get_node_children(parent.id), [child])
+        self.assertEqual(tree.get_node_children(child.id), [])
+        detached = tree.get_node_children(parent.id)[0]
+        detached.name = [parser.Label("changed")]
+        self.assertEqual(tree.clone_node(child.id).name, [parser.Label("child")])
+        with self.assertRaises(ValueError):
+            tree.get_node_children(parser.Node().id)
+        self.assertEqual(tree.dump(2), f"""  root: {root.id}
+  nodes: 3
+  id: {root.id}
+  name: []
+  variable name: []
+  content: []
+     id: {parent.id}
+     name: [parent]
+     variable name: []
+     content: []
+        id: {child.id}
+        name: [child]
+        variable name: []
+        content: []""")
+
     def test_node_lookup(self):
         parsed = parser.Parser()
         parsed.parse_string("a:\n    !b:\n        value = selected\nvariants:\n    - a:\n    - b:\n")
