@@ -1582,6 +1582,28 @@ impl PreDict {
     }
 
     #[getter]
+    fn branch_ids(&self) -> Vec<u64> {
+        self.branch.iter().map(|node| node.id).collect()
+    }
+
+    fn get_failed_cases(&self, id: u64) -> Vec<FailedCase> {
+        self.failed_cases.get(&id).cloned().unwrap_or_default().into()
+    }
+
+    fn failed_case_might_pass(
+        &self,
+        id: u64,
+        idx: usize,
+        ctx: Vec<Label>,
+        labels: Vec<Label>,
+        content: Vec<ContentStep>,
+    ) -> bool {
+        self.failed_cases.get(&id).and_then(|cases| cases.get(idx)).is_some_and(|case| {
+            Self::check_failed_case(case, &ctx, &labels, self._content.iter().flatten(), &content)
+        })
+    }
+
+    #[getter]
     fn ctx(&self) -> Vec<Label> {
         self._ctx.iter().flatten().cloned().collect()
     }

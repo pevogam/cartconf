@@ -36,6 +36,13 @@ machine:
   frame resets but are checked against the current filters and context before
   pruning another visit.
 
+  ``branch_ids`` exposes the current path without cloning nodes.
+  ``get_failed_cases(id)`` returns detached failure records for inspection.
+  ``failed_case_might_pass(id, idx, ctx, labels, content)`` probes a cached
+  failure against a candidate context and node content using the evaluator's
+  current external content. These diagnostics leave syntax and failure history
+  unchanged; probing an unknown node or record index returns ``False``.
+
   Each join selection uses a separate evaluator seeded from processed parent
   frames, including caller-supplied initial state, with fresh traversal and
   failure history. Join expansion stores join-free instructions and the

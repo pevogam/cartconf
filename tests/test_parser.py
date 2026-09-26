@@ -517,6 +517,42 @@ class PreDictTest(unittest.TestCase):
         # use this for some preconditions speedup
         self.parser = parser.Parser()
 
+    def test_failed_case_inspection(self):
+        snapshot = parser.Tree().parse_string("only wanted\n")
+        node = snapshot.node
+        before = snapshot.dump(0)
+        failed = parser.PreDict()
+        self.assertEqual(failed.branch_ids, [])
+        self.assertEqual(failed.get_failed_cases(node.id), [])
+        self.assertFalse(failed.update_from_tree(snapshot))
+        self.assertEqual(failed.branch_ids, [node.id])
+        cases = failed.get_failed_cases(node.id)
+        self.assertEqual(cases, [([], [], [node.get_content()[-1]])])
+        self.assertFalse(failed.failed_case_might_pass(node.id, 0, [], [], node.get_content()))
+        self.assertTrue(failed.failed_case_might_pass(
+            node.id, 0, [parser.Label("wanted")], [], node.get_content()))
+        self.assertTrue(failed.failed_case_might_pass(node.id, 0, [], [], []))
+        self.assertFalse(failed.failed_case_might_pass(node.id, 1, [], [], []))
+        unknown_id = parser.Node().id
+        self.assertEqual(failed.get_failed_cases(unknown_id), [])
+        self.assertFalse(failed.failed_case_might_pass(unknown_id, 0, [], [], []))
+        self.assertEqual(failed.get_failed_cases(node.id), cases)
+
+        failed.reset_from_last_node()
+        self.assertEqual(failed.branch_ids, [])
+        self.assertFalse(failed.update_from_tree(snapshot))
+        self.assertEqual(failed.get_failed_cases(node.id), cases)
+        cases[0][2].clear()
+        self.assertEqual(len(failed.get_failed_cases(node.id)[0][2]), 1)
+        failed.branch_ids.clear()
+        self.assertEqual(failed.branch_ids, [node.id])
+
+        passing = parser.PreDict(ctx=[parser.Label("wanted")])
+        self.assertTrue(passing.update_from_tree(snapshot))
+        self.assertEqual(passing.get_dicts()["name"], "wanted")
+        self.assertEqual(passing.get_failed_cases(node.id), [])
+        self.assertEqual(snapshot.dump(0), before)
+
     def test_default_properties(self):
         pd = parser.PreDict()
         self.assertEqual(pd.ctx, [])
