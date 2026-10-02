@@ -1,7 +1,5 @@
-Cartesian configuration format file parser
-==========================================
-
-Cartesian product variantization of parameters.
+Cartesian product and coproduct variantization of test parameters
+=================================================================
 
 Installation
 ------------
