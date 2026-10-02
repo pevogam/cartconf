@@ -1,4 +1,5 @@
 use hashbrown::HashMap;
+use std::rc::Rc;
 use pyo3::prelude::*;
 
 mod tokens;
@@ -49,7 +50,7 @@ fn parse_dicts(
         )?;
     }
     let mut pre_dict = PreDict::default();
-    if !pre_dict.update_from_node(node)? {
+    if !pre_dict.update_from_node(Rc::new(node), None)? {
         return Err(PyErr::new::<parser::ParserError, _>((
             "Failed to generate PreDict from Node".to_string(),
             "",
@@ -82,6 +83,7 @@ fn cartconf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let parser_module = PyModule::new(m.py(), "parser")?;
     parser_module.add_class::<parser::Label>()?;
     parser_module.add_class::<parser::Node>()?;
+    parser_module.add_class::<parser::Tree>()?;
     parser_module.add_function(wrap_pyfunction!(parser::parse_string, m)?)?;
     parser_module.add_function(wrap_pyfunction!(parser::parse_file, m)?)?;
     parser_module.add_class::<parser::PreDict>()?;

@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
 import unittest
+import copy
 import os
 import gzip
 import sys
@@ -97,6 +98,92 @@ class LabelTest(unittest.TestCase):
         self.assertGreater(hash_name(label3.long_name), hash_name(label3.name))
 
 
+class TreeTest(unittest.TestCase):
+
+    def test_snapshot_isolation(self):
+        base = parser.Parser()
+        base.parse_string("variants:\n    - a:\n    - b:\n")
+        snapshot = base.ast
+        expected = list(base.get_dicts_gen())
+        left, right = copy.copy(base), copy.copy(base)
+        self.assertIs(left.ast, snapshot)
+        self.assertIs(right.ast, snapshot)
+
+        left.parse_string("only a\nleft = 1\n")
+        right.parse_string("only b\nright = 2\n")
+        self.assertIsNot(left.ast, snapshot)
+        self.assertIsNot(right.ast, snapshot)
+        self.assertEqual(list(base.get_dicts_gen()), expected)
+        self.assertEqual(len(list(left.get_dicts_gen())), 1)
+        self.assertEqual(len(list(right.get_dicts_gen())), 1)
+        self.assertNotIn("right", next(left.get_dicts_gen()))
+        self.assertNotIn("left", next(right.get_dicts_gen()))
+
+        detached = snapshot.node
+        detached.add_content("<string>", 1, parser.LSet("leaked", "1"))
+        with self.assertRaises(AttributeError):
+            snapshot.node = detached
+        with self.assertRaises(AttributeError):
+            base.node = detached
+
+    def test_interleaved_traversals_and_parsing(self):
+        parsed = parser.Parser()
+        parsed.parse_string("""
+            variants:
+                - test1:
+                    value = one
+                    suffix _s1
+                - test2:
+                    value = two
+                    suffix _s2
+            variants:
+                - a:
+                    suffix _sa
+                - b:
+                    suffix _sb
+                    join test1 test2
+            join a b
+        """)
+        snapshot = parsed.ast
+        before = parsed.node.dump(0, True)
+        expected = list(parsed.get_dicts_gen())
+        self.assertEqual([d["name"] for d in expected],
+                         ["a.test1.b.test1.test2", "a.test2.b.test1.test2"])
+        first, second = parsed.get_dicts_gen(), parsed.get_dicts_gen()
+        self.assertEqual(next(first), expected[0])
+        self.assertEqual(next(second), expected[0])
+        # extending a parser must not change either traversal already in progress
+        parsed.parse_string("new_param = later\n")
+        self.assertEqual(list(second), expected[1:])
+        self.assertEqual(list(first), expected[1:])
+        self.assertEqual(snapshot.node.dump(0, True), before)
+        restored = parser.Parser()
+        restored.ast = snapshot
+        self.assertEqual(list(restored.get_dicts_gen()), expected)
+        self.assertTrue(all(d["new_param"] == "later" for d in parsed.get_dicts_gen()))
+
+    def test_snapshot_isolation_after_failed_traversals(self):
+        parsed = parser.Parser()
+        parsed.parse_string("variants:\n    - a:\n    - b:\n")
+        snapshot = parsed.ast
+        before = snapshot.node.dump(0, True)
+        expected = list(parsed.get_dicts_gen())
+
+        failed = copy.copy(parsed)
+        self.assertIs(failed.ast, snapshot)
+        failed.parse_string("only missing\n")
+        failed_snapshot = failed.ast
+        self.assertIsNot(failed_snapshot, snapshot)
+        failed_before = failed_snapshot.node.dump(0, True)
+        for _ in range(2):
+            self.assertEqual(list(failed.get_dicts_gen()), [])
+            self.assertIs(failed.ast, failed_snapshot)
+            self.assertEqual(failed_snapshot.node.dump(0, True), failed_before)
+            self.assertIs(parsed.ast, snapshot)
+            self.assertEqual(snapshot.node.dump(0, True), before)
+            self.assertEqual(list(parsed.get_dicts_gen()), expected)
+
+
 class NodeTest(unittest.TestCase):
 
     def test_initialization(self):
@@ -109,7 +196,6 @@ class NodeTest(unittest.TestCase):
         self.assertEqual(node.get_children(), [])
         self.assertEqual(node.labels, [])
         self.assertFalse(node.append_to_shortname)
-        self.assertEqual(node.get_failed_cases(), [])
         self.assertFalse(node.default)
 
     def test_process_content_operators(self):
@@ -325,15 +411,13 @@ class NodeTest(unittest.TestCase):
     def test_dump(self):
         node = parser.Node()
         empty_dumped_str = node.dump(0)
-        self.assertRegex(empty_dumped_str, r"name:.*\nvariable name:.*\ncontent:.*\nfailed cases:.*")
+        self.assertRegex(empty_dumped_str, r"name:.*\nvariable name:.*\ncontent:.*")
 
         node.name = [parser.Label("test_name")]
         node.var_name = [parser.Label("test_var_name")]
         node.add_content("test_content", 0, parser.LString("test_content"))
-        failed_labels = [parser.Label("fail")]
-        node.add_failed_case(failed_labels, [("<string>", 1, "str")], [], 5)
         dump_str = node.dump(2)
-        expected_str = "  name: [test_name]\n  variable name: [test_var_name]\n  content: [ContentStep { filename: \"test_content\", linenum: 0, content_type: Tokens(LString(\"test_content\")) }]\n  failed cases: [([fail], [ContentStep { filename: \"<string>\", linenum: 1, content_type: String(\"str\") }], [])]"
+        expected_str = "  name: [test_name]\n  variable name: [test_var_name]\n  content: [ContentStep { filename: \"test_content\", linenum: 0, content_type: Tokens(LString(\"test_content\")) }]"
         self.assertEqual(expected_str, dump_str)
 
     def test_dump_with_recurse(self):
@@ -342,7 +426,7 @@ class NodeTest(unittest.TestCase):
         child_node.name = [parser.Label("child_name")]
         parent_node.append_child(child_node)
         dump_str = parent_node.dump(0, recurse=True)
-        expected_str = "name: []\nvariable name: []\ncontent: []\nfailed cases: []\n   name: [child_name]\n   variable name: []\n   content: []\n   failed cases: []"
+        expected_str = "name: []\nvariable name: []\ncontent: []\n   name: [child_name]\n   variable name: []\n   content: []"
         self.assertEqual(expected_str, dump_str)
 
 
@@ -670,6 +754,32 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(pre_dict.join_pre_dicts[-1][0].content[0], joins[0])
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].branch[0], self.parser.node)
         self.assertEqual(pre_dict.join_pre_dicts[-1][1].content[0], joins[1])
+
+    def test_get_dicts_joined_with_initial_state(self):
+        for nested in (False, True):
+            with self.subTest(nested=nested):
+                parsed = parser.Parser()
+                config = "trace = start\nvariants:\n    - a:\n    - b:\n"
+                if nested:
+                    config += "variants:\n    - parent:\n        join a b\n"
+                else:
+                    config += "join a b\n"
+                parsed.parse_string(config)
+                pre_dict = parser.PreDict(
+                    ctx=[parser.Label("seed")],
+                    shortname=[parser.Label("s")],
+                    dep=["seed_dep"],
+                    content=[("<seed>", 1, parser.LAppend("trace", " seed"))],
+                )
+                self.assertTrue(pre_dict.update_from_tree(parsed.ast))
+
+                d = pre_dict.get_dicts()
+                prefix = "parent." if nested else ""
+                self.assertEqual(d["name"], "seed." + prefix + "a.b")
+                self.assertEqual(d["shortname"], "s." + prefix + "a.b")
+                self.assertEqual(d["dep"], ["seed_dep"])
+                self.assertEqual(d["trace"], "start seed")
+                self.assertIsNone(pre_dict.get_dicts())
 
     def test_get_dicts_joined_deep(self):
         self.parser.parse_string("""
@@ -1240,17 +1350,14 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(dicts[0]["key"], "value")
 
     def test_get_dicts_gen_failed(self):
-        """Failed filters return empty dictionary with partial pre-dict."""
+        """Failed filters return no dictionary and node is never affected."""
         self.parser.parse_string("variants:\n  - test1:\n    key1 = value1\nonly test2\n")
-        filter = parser.OnlyFilter([[[parser.Label("test2")]]], "test2")
-        node = self.parser.node
+        node_id = self.parser.node.id
+        before = self.parser.node.dump(0, True)
         with self.assertRaises(StopIteration):
             next(self.parser.get_dicts_gen())
-        self.assertEqual(self.parser.node.id, node.id)
-        self.assertEqual(
-            self.parser.node.get_failed_cases(),
-            [([], [], [("<string>", 4 , filter)])],
-        )
+        self.assertEqual(self.parser.node.id, node_id)
+        self.assertEqual(self.parser.node.dump(0, True), before)
 
         self.parser.parse_string("""
             k1 = v0
