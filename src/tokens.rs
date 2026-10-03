@@ -1,4 +1,6 @@
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::cmp;
 use std::fmt;
 use std::hash::BuildHasher;
@@ -635,8 +637,7 @@ impl Tokens {
                 Ok(())
             }
             Tokens::LRegExpSet(name, value) => {
-                let exp = Regex::new(&format!(r"^{name}$"))
-                   .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
+                let exp = operator_regex(&name)?;
                 let substituted = substitution(value, dict)?;
                 let substituted_val = ParamVal::from(substituted);
                 for (key, val) in dict.iter_mut() {
@@ -648,8 +649,7 @@ impl Tokens {
                 Ok(())
             }
             Tokens::LRegExpAppend(name, value) => {
-                let exp = Regex::new(&format!(r"^{name}$"))
-                   .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
+                let exp = operator_regex(&name)?;
                 let substituted = substitution(value, dict)?;
                 for (key, val) in dict.iter_mut() {
                     let key_str = Cow::from(key);
@@ -660,8 +660,7 @@ impl Tokens {
                 Ok(())
             }
             Tokens::LRegExpPrepend(name, value) => {
-                let exp = Regex::new(&format!(r"^{name}$"))
-                   .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
+                let exp = operator_regex(&name)?;
                 let substituted = substitution(value, dict)?;
                 for (key, val) in dict.iter_mut() {
                     let key_str = Cow::from(key);
@@ -672,8 +671,7 @@ impl Tokens {
                 Ok(())
             }
             Tokens::LDel(name, _val) => {
-                let exp = Regex::new(&format!(r"^{name}$"))
-                    .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
+                let exp = operator_regex(&name)?;
                 dict.retain(|key, _value| {
                     let key_str = Cow::from(key);
                     RESERVED_KEYS.contains(&key_str.as_ref()) || !exp.is_match(&key_str)
@@ -919,6 +917,27 @@ pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyRe
     Ok(Cow::Owned(d_flat))
 }
 
+// Bound retained patterns per thread, without locking the evaluation path.
+thread_local! {
+    static OPERATOR_REGEXES: RefCell<HashMap<String, Rc<Regex>>> = RefCell::new(HashMap::new());
+}
+
+fn operator_regex(name: &str) -> PyResult<Rc<Regex>> {
+    OPERATOR_REGEXES.with_borrow_mut(|cache| {
+        if let Some(exp) = cache.get(name) {
+            return Ok(Rc::clone(exp));
+        }
+        // Compile on first use, preserving operator error timing and anchoring.
+        let exp = Rc::new(Regex::new(&format!(r"^{name}$"))
+            .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?);
+        if cache.len() >= 256 {
+            cache.clear();
+        }
+        cache.insert(name.to_string(), Rc::clone(&exp));
+        Ok(exp)
+    })
+}
+
 static MATCH_SUBSTITUTE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\$\{(.+?)\}")
     .expect("Invalid MATCH_SUBSTITUTE pattern")
@@ -956,6 +975,25 @@ pub fn substitution(value: String, dict: &HashMap<ParamKey, ParamVal>) -> PyResu
 mod tests {
     use super::*;
     use hashbrown::HashMap;
+
+    #[test]
+    fn test_repeated_regexp_operators() {
+        let pattern = "(key.*|name)".to_string();
+        for _ in 0..2 {
+            let mut dict = HashMap::new();
+            dict.insert_str("key1", "old".to_string().into());
+            dict.insert_str("name", "reserved".to_string().into());
+            Tokens::LRegExpSet(pattern.clone(), "value".to_string()).apply_to_dict(&mut dict).unwrap();
+            Tokens::LRegExpAppend(pattern.clone(), "_end".to_string()).apply_to_dict(&mut dict).unwrap();
+            Tokens::LRegExpPrepend(pattern.clone(), "start_".to_string()).apply_to_dict(&mut dict).unwrap();
+            assert_eq!(dict.get_str("key1"), Some(&"start_value_end".to_string().into()));
+            Tokens::LDel(pattern.clone(), String::new()).apply_to_dict(&mut dict).unwrap();
+            assert_eq!(dict.len(), 1);
+            assert_eq!(dict.get_str("name"), Some(&"reserved".to_string().into()));
+            assert!(Tokens::LDel("(".to_string(), String::new()).apply_to_dict(&mut dict).is_err());
+            assert_eq!(dict.len(), 1);
+        }
+    }
 
     #[test]
     fn test_display() {
