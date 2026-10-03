@@ -858,6 +858,24 @@ pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyRe
     if dict.keys().all(|key| matches!(key, ParamKey::String(_))) {
         return Ok(Cow::Borrowed(dict));
     }
+    // Compare each suffix group once, keeping the existing textual equality.
+    let mut suffix_values: HashMap<&str, Option<Cow<'_, str>>> = HashMap::new();
+    if skipdups {
+        for (key, value) in dict {
+            if let ParamKey::Tuple(parts) = key
+                && let Some(base) = parts.first()
+                && !dict.contains_key_str(base) {
+                    let value = Cow::from(value);
+                    suffix_values.entry(base.as_str())
+                        .and_modify(|first| {
+                            if first.as_ref().is_some_and(|first| first != &value) {
+                                *first = None;
+                            }
+                        })
+                        .or_insert(Some(value));
+                }
+        }
+    }
     let d_flat: HashMap<ParamKey, ParamVal> = dict
         .iter()
         .filter_map(|(key, value)| {
@@ -879,19 +897,8 @@ pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyRe
                         }
 
                         if can_drop_all_suffixes {
-                            can_drop_all_suffixes = dict
-                                .iter()
-                                .filter_map(|(other_key, other_value)| {
-                                    match other_key {
-                                        ParamKey::Tuple(other_vec) => {
-                                            other_vec.first()
-                                                .filter(|k| *k == gen_key_str)
-                                                .map(|_| Cow::from(other_value))
-                                        }
-                                        _ => None,
-                                    }
-                                })
-                                .all(|other_value_str| other_value_str == value_str);
+                            can_drop_all_suffixes = suffix_values
+                                .get(gen_key_str).is_some_and(Option::is_some);
                         }
                     }
 
@@ -1191,6 +1198,21 @@ mod tests {
         assert_eq!(result.get_str("key3"), Some(&ParamVal::String("value3".to_string())), "single suffix is converted to general key");
         assert_eq!(result.get_str("key4"), Some(&ParamVal::String("value4".to_string())), "single general key is preserved");
         assert_eq!(result.get_str("key5"), Some(&ParamVal::String("value5".to_string())), "single general key is preserved");
+    }
+
+    #[test]
+    fn test_drop_suffixes_compares_values_as_text() {
+        let dict: HashMap<ParamKey, ParamVal> = [
+            (ParamKey::String("plain".to_string()), ParamVal::List(vec!["a".to_string(), "b".to_string()])),
+            (ParamKey::Tuple(vec!["plain".to_string(), "_s1".to_string()]), ParamVal::String("ab".to_string())),
+            (ParamKey::Tuple(vec!["group".to_string(), "_s1".to_string()]), ParamVal::List(vec!["a".to_string(), "b".to_string()])),
+            (ParamKey::Tuple(vec!["group".to_string(), "_s2".to_string()]), ParamVal::String("ab".to_string())),
+            (ParamKey::Tuple(Vec::new()), ParamVal::String("ignored".to_string())),
+        ].into_iter().collect();
+        let result = drop_suffixes(&dict, true).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(Cow::from(result.get_str("plain").unwrap()), "ab");
+        assert_eq!(Cow::from(result.get_str("group").unwrap()), "ab");
     }
 
     #[test]
