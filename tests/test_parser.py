@@ -966,6 +966,43 @@ class PreDictTest(unittest.TestCase):
         self.assertEqual(len(pre_dict.joins), 1)
         self.assertIsNone(pre_dict.joins[0])
 
+    def test_copied_nested_join_continuation(self):
+        self.parser.parse_string("""
+            variants:
+                - x:
+                    value = x
+                    suffix _x
+                - y:
+                    value = y
+                    suffix _y
+            variants:
+                - a:
+                - b:
+                    join x y
+            join a b
+            variants:
+                - p:
+                - q:
+        """)
+        pre_dict = parser.PreDict()
+        self.assertTrue(pre_dict.update_from_tree(self.parser.ast))
+        self.assertEqual(pre_dict.get_dicts(dropsufs=True)["name"], "p.a.x.b.x.y")
+        copied = copy.copy(pre_dict)
+        remaining = list(iter(lambda: pre_dict.get_dicts(dropsufs=True), None))
+        self.assertEqual([d["name"] for d in remaining],
+                         ["p.a.y.b.x.y", "q.a.x.b.x.y", "q.a.y.b.x.y"])
+        self.assertEqual(list(iter(lambda: copied.get_dicts(dropsufs=True), None)), remaining)
+        self.assertIsNone(pre_dict.get_dicts())
+        self.assertIsNone(copied.get_dicts())
+
+    def test_get_dicts_joined_invalid_state(self):
+        self.parser.parse_string("variants:\n    - a:\n    - b:\njoin a b\n")
+        pre_dict = parser.PreDict()
+        pre_dict.update_from_tree(self.parser.ast)
+        pre_dict.joins = []
+        with self.assertRaises(ValueError):
+            pre_dict.get_dicts_joined()
+
     def test_get_dicts_zero(self):
         self.assertEqual(list(self.parser.get_dicts()), [])
 

@@ -128,7 +128,7 @@ class Parser(object):
         """
         Get dictionaries from a parser and given or its current node.
 
-        :returns: (recursive) dictionary generator
+        :returns: dictionary generator
         """
         if self.ast.is_empty():
             return
@@ -136,10 +136,7 @@ class Parser(object):
         if not pre_dict.update_from_tree(self.ast):
             return
         while True:
-            # Since get_dicts() is recursive generator, it can invoke itself
-            # and it can also be called outside to get dict generator.
-            # Use special dropsufs argument to mark the top-level generator,
-            # to be able to process all variables, do suffix stuff, drop dupes, etc.
+            # Flatten suffixes after the traversal has combined any join components.
             d = pre_dict.get_dicts(dropsufs=True, skipdups=skipdups)
             if d is None:
                 break
@@ -152,7 +149,7 @@ class Parser(object):
         """
         Get dictionaries from a parser and given or its current node (legacy).
 
-        :returns: (recursive) dictionary generator
+        :returns: dictionary generator
         """
         LOG.warning(
             "Using get_dicts() is deprecated, use get_dicts_gen() instead",

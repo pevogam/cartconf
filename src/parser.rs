@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::cmp::min;
 use std::collections::VecDeque;
 use hashbrown::HashMap;
 use std::hash::Hash;
@@ -1467,6 +1466,14 @@ impl Tree {
 
 type FailedCase = (Vec<Label>, Vec<ContentStep>, Vec<ContentStep>);
 
+// A join child is evaluated by the same driver as an ordinary branch.
+enum TraversalStep {
+    Join(usize, usize),
+    Dict(HashMap<ParamKey, ParamVal>),
+    Done,
+}
+
+
 #[pyclass(from_py_object,unsendable)]
 #[derive(Debug, Clone)]
 pub struct PreDict {
@@ -1481,6 +1488,7 @@ pub struct PreDict {
     // traversal state
     branch: Vec<Rc<Node>>,
     processed_content: Vec<Option<Vec<ContentStep>>>,
+    join_width: Vec<usize>,
     failed_cases: HashMap<u64, VecDeque<FailedCase>>,
     #[pyo3(get)]
     pub route: Vec<Option<usize>>,
@@ -1567,6 +1575,7 @@ impl PreDict {
             _dep,
             branch: Vec::new(),
             processed_content: Vec::new(),
+            join_width: Vec::new(),
             failed_cases: HashMap::new(),
             route: Vec::new(),
             joins: Vec::new(),
@@ -1611,6 +1620,7 @@ impl PreDict {
     fn reset_from_last_node(&mut self) {
         self.branch.pop();
         self.processed_content.pop();
+        self.join_width.pop();
         self.route.pop();
         self.joins.pop();
         self.join_dicts.pop();
@@ -1655,79 +1665,7 @@ impl PreDict {
     pre-dict with an initial node.
     */
     pub fn get_dicts_plain(&mut self) -> PyResult<Option<HashMap<ParamKey, ParamVal>>> {
-        if self.branch.is_empty() {
-            return Err(PyErr::new::<PyRuntimeError, _>("Pre-dictionary needs at least one node"));
-        }
-        let mut depth = (self.branch.len() - 1) as isize;
-
-        // recurse into children
-        loop {
-            if depth < 0 {
-                break;
-            }
-            let i = depth as usize;
-
-            if self.route[i].is_none() {
-                // start with 0th child
-                self.route[i] = Some(0);
-
-                // reached leaf
-                if self.branch[i].children.is_empty() {
-                    /* TODO: add optional logging
-                    self._debug("    reached leaf, returning it")
-                    */
-                    let mut d = self.get_dict()?;
-                    apply_suffix_bounds(&mut d);
-                    return Ok(Some(d));
-                }
-            // one for leaf down from final index
-            } else if i + 1 == self.route.len().saturating_sub(1) {
-                // move to next child
-                if let Some(ref mut r) = self.route[i] {
-                    *r += 1;
-                }
-                // remove all previous grand children and their effects on pre-dict
-                for _ in i + 1..self.route.len() {
-                    self.reset_from_last_node();
-                }
-            }
-
-            // if children pool exhausted or still no route
-            let route_idx = match self.route[i] {
-                Some(i) => i,
-                None => {
-                    depth -= 1;
-                    continue;
-                }
-            };
-            if route_idx + 1 > self.branch[i].children.len() {
-                depth -= 1;
-                continue;
-            }
-
-            let child = Rc::clone(&self.branch[i].children[route_idx]);
-            if !self.update_from_node(child, None)? {
-                continue;
-            }
-            let parent = &self.branch[i];
-            if self.defaults {
-                let var_name_str = parent.var_name.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(".");
-                if !self.expand_defaults.contains(&var_name_str)
-                    && parent.children.iter().any(|c| c.default)
-                    && !parent.children[route_idx].default {
-                        return Ok(None);
-                    }
-            }
-            let d = self.get_dicts(false, true)?;
-            // completed children recursion is consumed until we run out of children
-            if d.is_none() {
-                // handle earlier reset of the same pre-dict by a nested getter
-                depth = min(depth, (self.branch.len() - 1) as isize);
-                continue;
-            }
-            return Ok(d);
-        }
-        Ok(None)
+        self.next_dict(Some(self.branch.len().saturating_sub(1)), false)
     }
 
     /*
@@ -1736,107 +1674,7 @@ impl PreDict {
     Each `join' is the same as an `only' filter.
     */
     pub fn get_dicts_joined(&mut self) -> PyResult<Option<HashMap<ParamKey, ParamVal>>> {
-        if self.branch.is_empty() {
-            return Err(PyErr::new::<PyRuntimeError, _>("Pre-dictionary needs at least one node"));
-        }
-        let depth = self.branch.len() - 1;
-
-        // TODO: this doesn't panic on out of bounds or uninitialized joins but is bulky to use
-        // also in all other vector depth or width access cases - use anyhow or find a better way 
-        let joins = self.joins
-            .get_mut(depth)
-            .ok_or_else(|| PyErr::new::<PyValueError, _>(format!("Joins index out of bounds: {depth}")))?
-            .as_mut()
-            .ok_or_else(|| PyErr::new::<PyValueError, _>(format!("Joins not initialized at depth {depth}")))?;
-        let dicts = self.join_dicts
-            .get_mut(depth)
-            .ok_or_else(|| PyErr::new::<PyValueError, _>(format!("Join dicts index out of bounds: {depth}")))?
-            .as_mut()
-            .ok_or_else(|| PyErr::new::<PyValueError, _>(format!("Join dicts not initialized at depth {depth}")))?;
-        let pre_dicts = self.join_pre_dicts
-            .get_mut(depth)
-            .ok_or_else(|| PyErr::new::<PyValueError, _>(format!("Join pre-dicts index out of bounds: {depth}")))?
-            .as_mut()
-            .ok_or_else(|| PyErr::new::<PyValueError, _>(format!("Join pre-dicts not initialized at depth {depth}")))?;
-
-        // join requires greedy dictionary expansion for variants of the same node
-        let mut width: isize = 0;
-        loop {
-            if width < 0 {
-                break;
-            }
-            let j = width as usize;
-            if j < dicts.len().saturating_sub(1) && let Some(_) = &dicts[j + 1] {
-                width += 1;
-                continue;
-            }
-
-            // Initialize new join pre-dict from parent frames including the initial frame before
-            // any node. Copy only the processed state needed to seed an independent traversal.
-            if pre_dicts[j].is_none() {
-                pre_dicts[j] = Some(Self::from_frames(
-                    &self._ctx[..depth + 1], &self._content[..depth + 1],
-                    &self._ctx_content[..depth + 1], &self._shortname[..depth + 1],
-                    &self._dep[..depth + 1], self.defaults, &self.expand_defaults,
-                ));
-            }
-            // update the pre-dict with differently filtered current node
-            if let Some(ref mut pre_dict) = pre_dicts[j] {
-                let node = &self.branch[depth];
-                if !pre_dict.branch.contains(node) {
-                    // current join/only
-                    let step = &joins[j];
-                    let mut content = self.processed_content[depth].as_ref().unwrap_or(&node.content).clone();
-                    content.push(step.clone());
-                    if !pre_dict.update_from_node(Rc::clone(node), Some(content))? {
-                        return Ok(None);
-                    }
-                }
-                // compute dict for this width
-                let d = pre_dict.get_dicts(false, true)?;
-                dicts[j] = d;
-            }
-
-            if dicts[j].is_none() {
-                // remove all previous grand children and their effects on current pre-dict clone
-                if let Some(ref mut pre_dict) = pre_dicts[j] {
-                    for _ in (pre_dict.route.len().saturating_sub(1))..pre_dict.route.len() {
-                        pre_dict.reset_from_last_node();
-                    }
-                }
-                width -= 1;
-                continue;
-            }
-
-            // multiply current frame dict by all variants from before
-            if j == dicts.len() - 1 {
-                let mut d: HashMap<ParamKey, ParamVal> = HashMap::new();
-                let mut name = String::new();
-                let mut shortname = String::new();
-                for di in dicts.iter().flatten() {
-                    if name.is_empty() {
-                        name = di.get_str("name").map(|v| Cow::from(v).into()).unwrap_or_default();
-                        shortname = di.get_str("shortname").map(|v| Cow::from(v).into()).unwrap_or_default();
-                    } else {
-                        let other_name: String = di.get_str("name").map(|v| Cow::from(v).into()).unwrap_or_default();
-                        let other_short: String = di.get_str("shortname").map(|v| Cow::from(v).into()).unwrap_or_default();
-                        name = Node::join_names(&name, &other_name);
-                        shortname = Node::join_names(&shortname, &other_short);
-                    }
-                    // update combined map d with di entries
-                    for (k, v) in di {
-                        d.insert(k.clone(), v.clone());
-                    }
-                }
-                d.insert_str("name", name.into());
-                d.insert_str("shortname", shortname.into());
-                return Ok(Some(d));
-            }
-
-            width += 1;
-        }
-
-        Ok(None)
+        self.next_dict(None, true)
     }
 
     /*
@@ -1862,11 +1700,22 @@ impl PreDict {
     */
     #[pyo3(signature = (dropsufs=false, skipdups=true))]
     pub fn get_dicts(&mut self, dropsufs: bool, skipdups: bool) -> PyResult<Option<HashMap<ParamKey, ParamVal>>> {
-        if self.branch.is_empty() {
-            return Err(PyErr::new::<PyRuntimeError, _>("Pre-dictionary needs at least one node"));
+        let result = self.next_dict(None, false)?;
+        if dropsufs && let Some(d) = result {
+            return Ok(Some(match drop_suffixes(&d, skipdups)? {
+                Cow::Borrowed(_) => d,
+                Cow::Owned(flat) => flat,
+            }));
         }
-        let depth = self.branch.len() - 1;
-        let mut joins = &mut self.joins[depth];
+        Ok(result)
+    }
+
+}
+
+
+impl PreDict {
+    fn prepare_joins(&mut self, depth: usize) {
+        let joins = &self.joins[depth];
         let node = &self.branch[depth];
         let content = self.processed_content[depth].as_ref().unwrap_or(&node.content);
         // Only copy content when a join needs to specialize this traversal.
@@ -1911,34 +1760,169 @@ impl PreDict {
                 self.join_pre_dicts[depth] = Some(vec![None; onlys.len()]);
                 // keep join-free content in this traversal, preserving the actual node
                 self.processed_content[depth] = Some(plain_content);
-                joins = &mut self.joins[depth];
+                self.join_width[depth] = 0;
             }
         }
 
-        let mut dn: Option<HashMap<ParamKey, ParamVal>> = None;
-        if joins.is_some() {
-            dn = self.get_dicts_joined()?;
-            if dn.is_none() {
-                // consume all children for this node
-                self.route[depth] = Some(self.branch[depth].children.len());
-            }
-        }
-        if dn.is_none() {
-            dn = self.get_dicts_plain()?;
-        }
-        if dropsufs && let Some(d) = dn {
-            return Ok(Some(match drop_suffixes(&d, skipdups)? {
-                Cow::Borrowed(_) => d,
-                Cow::Owned(flat) => flat,
-            }));
-        }
-        Ok(dn)
     }
 
-}
+    fn joined_dict(&self, depth: usize) -> HashMap<ParamKey, ParamVal> {
+        let dicts = self.join_dicts[depth].as_ref().unwrap();
+        let mut d: HashMap<ParamKey, ParamVal> = HashMap::new();
+        let mut name = String::new();
+        let mut shortname = String::new();
+        for di in dicts.iter().flatten() {
+            if name.is_empty() {
+                name = di.get_str("name").map(|v| Cow::from(v).into()).unwrap_or_default();
+                shortname = di.get_str("shortname").map(|v| Cow::from(v).into()).unwrap_or_default();
+            } else {
+                let other_name: String = di.get_str("name").map(|v| Cow::from(v).into()).unwrap_or_default();
+                let other_short: String = di.get_str("shortname").map(|v| Cow::from(v).into()).unwrap_or_default();
+                name = Node::join_names(&name, &other_name);
+                shortname = Node::join_names(&shortname, &other_short);
+            }
+            // update combined map d with di entries
+            for (k, v) in di {
+                d.insert(k.clone(), v.clone());
+            }
+        }
+        d.insert_str("name", name.into());
+        d.insert_str("shortname", shortname.into());
+        d
+    }
 
+    // Advance a plain branch or request the next component of its active join.
+    fn advance(&mut self, plain_depth: Option<usize>, joined_only: bool) -> PyResult<TraversalStep> {
+        loop {
+            let depth = self.branch.len() - 1;
+            if plain_depth != Some(depth) {
+                if !joined_only && self.route[depth].is_none() {
+                    self.prepare_joins(depth);
+                }
+                if joined_only || self.joins[depth].is_some() {
+                    let joins = self.joins.get(depth).ok_or_else(||
+                        PyValueError::new_err(format!("Joins index out of bounds: {depth}")))?.as_ref().ok_or_else(||
+                        PyValueError::new_err(format!("Joins not initialized at depth {depth}")))?;
+                    let dicts = self.join_dicts.get(depth).ok_or_else(||
+                        PyValueError::new_err(format!("Join dicts index out of bounds: {depth}")))?.as_ref().ok_or_else(||
+                        PyValueError::new_err(format!("Join dicts not initialized at depth {depth}")))?;
+                    let pre_dicts = self.join_pre_dicts.get(depth).ok_or_else(||
+                        PyValueError::new_err(format!("Join pre-dicts index out of bounds: {depth}")))?.as_ref().ok_or_else(||
+                        PyValueError::new_err(format!("Join pre-dicts not initialized at depth {depth}")))?;
+                    if dicts.len() != joins.len() || pre_dicts.len() != joins.len() {
+                        return Err(PyValueError::new_err("Inconsistent join state"));
+                    }
+                    let width = self.join_width[depth];
+                    if width < joins.len() {
+                        return Ok(TraversalStep::Join(depth, width));
+                    }
+                    if joined_only {
+                        return Ok(TraversalStep::Done);
+                    }
+                    self.route[depth] = Some(self.branch[depth].children.len());
+                }
+            }
 
-impl PreDict {
+            if self.route[depth].is_none() {
+                self.route[depth] = Some(0);
+                if self.branch[depth].children.is_empty() {
+                    let mut dict = self.get_dict()?;
+                    apply_suffix_bounds(&mut dict);
+                    return Ok(TraversalStep::Dict(dict));
+                }
+            }
+            let child_index = self.route[depth].unwrap();
+            if child_index < self.branch[depth].children.len() {
+                let child = Rc::clone(&self.branch[depth].children[child_index]);
+                let updated = self.update_from_node(child, None)?;
+                let parent = &self.branch[depth];
+                let skip_default = self.defaults
+                    && !self.expand_defaults.contains(&parent.var_name.iter()
+                        .map(|l| l.to_string()).collect::<Vec<_>>().join("."))
+                    && parent.children.iter().any(|c| c.default)
+                    && !parent.children[child_index].default;
+                if !updated || skip_default {
+                    self.reset_from_last_node();
+                    self.route[depth] = Some(child_index + 1);
+                }
+                continue;
+            }
+            if depth == 0 {
+                return Ok(TraversalStep::Done);
+            }
+            self.reset_from_last_node();
+            *self.route[depth - 1].as_mut().unwrap() += 1;
+        }
+    }
+
+    fn next_dict(&mut self, plain_depth: Option<usize>, joined_only: bool) -> PyResult<Option<HashMap<ParamKey, ParamVal>>> {
+        if self.branch.is_empty() {
+            return Err(PyRuntimeError::new_err("Pre-dictionary needs at least one node"));
+        }
+        // Move active join evaluators onto a temporary stack; restore them before
+        // returning, including on errors. No AST or traversal state is cloned.
+        let mut stack: Vec<(PreDict, usize, usize)> = Vec::new();
+        let mut result = None;
+        loop {
+            if result.is_none() {
+                let at_root = stack.is_empty();
+                let current = stack.last_mut().map(|frame| &mut frame.0).unwrap_or(self);
+                match current.advance(if at_root { plain_depth } else { None }, at_root && joined_only) {
+                    Ok(TraversalStep::Join(depth, width)) => {
+                        let mut child = current.join_pre_dicts[depth].as_mut().unwrap()[width].take()
+                            .unwrap_or_else(|| Self::from_frames(
+                                &current._ctx[..depth + 1], &current._content[..depth + 1],
+                                &current._ctx_content[..depth + 1], &current._shortname[..depth + 1],
+                                &current._dep[..depth + 1], current.defaults, &current.expand_defaults,
+                            ));
+                        let node = &current.branch[depth];
+                        let initialized = if child.branch.contains(node) {
+                            Ok(true)
+                        } else {
+                            let mut content = current.processed_content[depth].as_ref().unwrap_or(&node.content).clone();
+                            content.push(current.joins[depth].as_ref().unwrap()[width].clone());
+                            child.update_from_node(Rc::clone(node), Some(content))
+                        };
+                        stack.push((child, depth, width));
+                        match initialized {
+                            Ok(true) => continue,
+                            Ok(false) => result = Some(Ok(None)),
+                            Err(err) => result = Some(Err(err)),
+                        }
+                    }
+                    Ok(TraversalStep::Dict(dict)) => result = Some(Ok(Some(dict))),
+                    Ok(TraversalStep::Done) => result = Some(Ok(None)),
+                    Err(err) => result = Some(Err(err)),
+                }
+            }
+            let completed = result.take().unwrap();
+            let Some((child, depth, width)) = stack.pop() else {
+                return completed;
+            };
+            let parent = stack.last_mut().map(|frame| &mut frame.0).unwrap_or(self);
+            parent.join_pre_dicts[depth].as_mut().unwrap()[width] = Some(child);
+            match completed {
+                Err(err) => result = Some(Err(err)),
+                Ok(dict) => {
+                    let exhausted = dict.is_none();
+                    let count = parent.joins[depth].as_ref().unwrap().len();
+                    parent.join_dicts[depth].as_mut().unwrap()[width] = dict;
+                    if exhausted {
+                        let child = parent.join_pre_dicts[depth].as_mut().unwrap()[width].as_mut().unwrap();
+                        if !child.branch.is_empty() {
+                            child.reset_from_last_node();
+                        }
+                        parent.join_width[depth] = if width == 0 { count } else { width - 1 };
+                    } else if width + 1 == count {
+                        result = Some(Ok(Some(parent.joined_dict(depth))));
+                    } else {
+                        parent.join_width[depth] = width + 1;
+                    }
+                }
+            }
+        }
+    }
+
     fn iter_final_content(&self) -> impl Iterator<Item = &ContentStep> {
         self._content.last().into_iter().flatten()
             .chain(self._ctx_content.last().into_iter().flatten())
@@ -2075,6 +2059,7 @@ impl PreDict {
 
         // push state machine stacks
         self.route.push(None);
+        self.join_width.push(0);
         self.joins.push(None);
         self.join_dicts.push(None);
         self.join_pre_dicts.push(None);
@@ -2436,6 +2421,24 @@ mod tests {
         let children = parent_node.get_children();
         assert_eq!(children.len(), 1);
         assert_eq!(children[0], node);
+    }
+
+    #[test]
+    fn test_join_state_survives_evaluation_error() {
+        let root = parse_string(
+            "variants:\n    - a:\n    - b:\njoin a b\n".to_string(),
+            Node::new(), -1, false, None,
+        ).unwrap();
+        let mut pre_dict = PreDict::new(None, Some(vec![ContentStep {
+            filename: "<seed>".to_string(),
+            linenum: 1,
+            content_type: ContentType::String("invalid dictionary content".to_string()),
+        }]), None, None, None, None);
+        assert!(pre_dict.update_from_node(Rc::new(root), None).unwrap());
+        assert!(pre_dict.get_dicts(false, true).is_err());
+        let child = pre_dict.join_pre_dicts[0].as_ref().unwrap()[0].as_ref().unwrap();
+        assert!(!child.branch.is_empty());
+        assert_eq!(pre_dict.join_dicts[0].as_ref().unwrap(), &[None, None]);
     }
 
     #[test]
