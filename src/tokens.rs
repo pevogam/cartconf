@@ -851,7 +851,10 @@ pub fn apply_suffix_bounds(dict: &mut HashMap<ParamKey, ParamVal>) {
     }
 }
 
-pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyResult<HashMap<ParamKey, ParamVal>> {
+pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyResult<Cow<'_, HashMap<ParamKey, ParamVal>>> {
+    if dict.keys().all(|key| matches!(key, ParamKey::String(_))) {
+        return Ok(Cow::Borrowed(dict));
+    }
     let d_flat: HashMap<ParamKey, ParamVal> = dict
         .iter()
         .filter_map(|(key, value)| {
@@ -903,7 +906,7 @@ pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyRe
         })
         .collect();
 
-    Ok(d_flat)
+    Ok(Cow::Owned(d_flat))
 }
 
 static MATCH_SUBSTITUTE: LazyLock<Regex> = LazyLock::new(|| {
@@ -917,8 +920,8 @@ pub fn substitution(value: String, dict: &HashMap<ParamKey, ParamVal>) -> PyResu
     }
     let mut start = 0;
     let mut result = String::with_capacity(value.len());
-    // only initialize and drop suffixes of the dict is we actually have matches to substitute
-    let mut d: Option<HashMap<ParamKey, ParamVal>> = None;
+    // Only flatten suffixes when needed; otherwise borrow the original dictionary.
+    let mut d: Option<Cow<'_, HashMap<ParamKey, ParamVal>>> = None;
 
     while let Some(captures) = MATCH_SUBSTITUTE.captures(&value[start..]) {
         if let Some(matched) = captures.get(0) {
@@ -926,7 +929,7 @@ pub fn substitution(value: String, dict: &HashMap<ParamKey, ParamVal>) -> PyResu
             if d.is_none() {
                 d = Some(drop_suffixes(dict, true)?);
             }
-            if let Some(val) = d.as_ref().unwrap_or(&HashMap::new()).get_str(key) {
+            if let Some(val) = d.as_deref().unwrap_or(dict).get_str(key) {
                 result.push_str(&value[start..start + matched.start()]);
                 result.push_str(&val.to_string());
                 start += matched.end();
@@ -1114,6 +1117,18 @@ mod tests {
         ].iter().cloned().collect();
         let result = substitution("This is ${key1} and ${key2_s1}.".to_string(), &dict).unwrap();
         assert_eq!(result, "This is value1 and value2.");
+    }
+
+    #[test]
+    fn test_substitution_with_mixed_keys() {
+        let dict: HashMap<ParamKey, ParamVal> = [
+            (ParamKey::String("key".to_string()), ParamVal::String("base".to_string())),
+            (ParamKey::Tuple(vec!["key".to_string(), "_s1".to_string()]), ParamVal::String("variant".to_string())),
+            (ParamKey::Tuple(vec!["other".to_string(), "_s1".to_string()]), ParamVal::String("shared".to_string())),
+            (ParamKey::Tuple(vec!["other".to_string(), "_s2".to_string()]), ParamVal::String("shared".to_string())),
+        ].iter().cloned().collect();
+        let result = substitution("${key} ${key_s1} ${other}".to_string(), &dict).unwrap();
+        assert_eq!(result, "base variant shared");
     }
 
     #[test]

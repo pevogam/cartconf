@@ -1927,7 +1927,10 @@ impl PreDict {
             dn = self.get_dicts_plain()?;
         }
         if dropsufs && let Some(d) = dn {
-            return Ok(Some(drop_suffixes(&d, skipdups)?));
+            return Ok(Some(match drop_suffixes(&d, skipdups)? {
+                Cow::Borrowed(_) => d,
+                Cow::Owned(flat) => flat,
+            }));
         }
         Ok(dn)
     }
