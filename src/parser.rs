@@ -1867,14 +1867,17 @@ impl PreDict {
         }
         let depth = self.branch.len() - 1;
         let mut joins = &mut self.joins[depth];
-        // due to pre-dict cloning current pre-dict must only contain one join at the end
-        if joins.is_none() {
-            let node = &self.branch[depth];
+        let node = &self.branch[depth];
+        let content = self.processed_content[depth].as_ref().unwrap_or(&node.content);
+        // Only copy content when a join needs to specialize this traversal.
+        if joins.is_none() && content.iter().any(|step| {
+            matches!(&step.content_type, ContentType::Filters(Filters::JoinFilter { .. }))
+        }) {
 
             // find joins from node content and prepare only-filters
             let mut plain_content: Vec<ContentStep> = Vec::with_capacity(node.content.len());
             let mut new_joins: Vec<ContentStep> = Vec::with_capacity(node.content.len());
-            for t in self.processed_content[depth].as_ref().unwrap_or(&node.content).iter().cloned() {
+            for t in content.iter().cloned() {
                 match t.content_type {
                     ContentType::Filters(Filters::JoinFilter {filter, line }) => {
                         // accumulate join steps
