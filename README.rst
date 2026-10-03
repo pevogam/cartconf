@@ -14,7 +14,7 @@ Currently we recommend simple local installation via pip
 Direct parser use
 -----------------
 
-Given the Cartesian configuration file `example.cfg`
+Given the Cartesian configuration file `example1.cfg`
 
 ::
 
@@ -51,7 +51,7 @@ This can be parsed using `cartconf` as
 
 ::
 
-    ./parse.py example.cfg
+    ./parse.py tests/example1.cfg "no qemu_kvm_centos"
 
 which will result in the following parameter dictionaries
 
@@ -66,7 +66,7 @@ which will result in the following parameter dictionaries
 Avocado varianter plugin use
 ----------------------------
 
-Given the Cartesian configuration file `example.cfg`
+Given the Cartesian configuration file `example2.cfg`
 
 ::
 
@@ -88,7 +88,7 @@ This can be parsed using the `cartconf` avocado varianter plugin as
 
 ::
 
-    avocado variants -C example.cfg -o aaa=bbb c=d --only a 1
+    avocado variants -C tests/example2.cfg -o aaa=bbb c=d --only a 1
 
 which will result in a job with the following test parameters
 

@@ -35,5 +35,7 @@ jobs:
 
       - name: Run integration tests
         run: |
-          ./parse.py -c tests/example.cfg "aaa=bbb" "c=d" "only a" "only 1"
-          ./.env/bin/avocado variants -C tests/example.cfg -o aaa=bbb c=d --only a 1
+          ./parse.py tests/example1.cfg "no qemu_kvm_centos"
+          ./.env/bin/avocado variants -C tests/example1.cfg --no qemu_kvm_centos
+          ./parse.py -c tests/example2.cfg "aaa=bbb" "c=d" "only a" "only 1"
+          ./.env/bin/avocado variants -C tests/example2.cfg -o aaa=bbb c=d --only a 1
