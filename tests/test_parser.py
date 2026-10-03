@@ -183,6 +183,24 @@ class TreeTest(unittest.TestCase):
             self.assertEqual(snapshot.node.dump(0, True), before)
             self.assertEqual(list(parsed.get_dicts_gen()), expected)
 
+    def test_many_filtered_siblings(self):
+        parsed = parser.Parser()
+        # Neither child can satisfy the conjunction, but the parent has both
+        # labels, so each rejected sibling must be entered before it fails.
+        rejected = """    - rejected%s:
+        variants:
+            - a:
+            - b:
+        only a..b
+"""
+        parsed.parse_string(
+            "variants:\n    - first:\n"
+            + "".join(rejected % i for i in range(15000))
+            + "    - last:\n"
+        )
+        self.assertEqual([d["name"] for d in parsed.get_dicts_gen()],
+                         ["first", "last"])
+
 
 class NodeTest(unittest.TestCase):
 
