@@ -817,7 +817,10 @@ fn compare_data_size(a: &str, b: &str) -> cmp::Ordering {
 }
 
 pub fn apply_suffix_bounds(dict: &mut HashMap<ParamKey, ParamVal>) {
-    for key in dict.keys().cloned().collect::<Vec<_>>() {
+    for key in dict.keys().filter(|key| {
+        matches!(key, ParamKey::String(name) if
+            name.ends_with("_max") || name.ends_with("_min") || name.ends_with("_fixed"))
+    }).cloned().collect::<Vec<_>>() {
         match key {
             ParamKey::Tuple(_) => {
                 // Skip tuple keys as they are generated from suffixes and should not be processed for bounds
@@ -1049,6 +1052,7 @@ mod tests {
             (ParamKey::String("size".to_string()), ParamVal::String("2.5G".to_string())),
             (ParamKey::String("speed_fixed".to_string()), ParamVal::String("100M".to_string())),
             (ParamKey::String("speed".to_string()), ParamVal::String("50M".to_string())),
+            (ParamKey::Tuple(vec!["size_max".to_string(), "_s1".to_string()]), ParamVal::String("0G".to_string())),
         ].iter().cloned().collect();
         apply_suffix_bounds(&mut d);
         assert_eq!(d.get_str("size"), Some(&ParamVal::String("2G".to_string())));
