@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::cmp::min;
 use std::collections::VecDeque;
 use hashbrown::HashMap;
 use std::hash::Hash;
@@ -1655,79 +1654,7 @@ impl PreDict {
     pre-dict with an initial node.
     */
     pub fn get_dicts_plain(&mut self) -> PyResult<Option<HashMap<ParamKey, ParamVal>>> {
-        if self.branch.is_empty() {
-            return Err(PyErr::new::<PyRuntimeError, _>("Pre-dictionary needs at least one node"));
-        }
-        let mut depth = (self.branch.len() - 1) as isize;
-
-        // recurse into children
-        loop {
-            if depth < 0 {
-                break;
-            }
-            let i = depth as usize;
-
-            if self.route[i].is_none() {
-                // start with 0th child
-                self.route[i] = Some(0);
-
-                // reached leaf
-                if self.branch[i].children.is_empty() {
-                    /* TODO: add optional logging
-                    self._debug("    reached leaf, returning it")
-                    */
-                    let mut d = self.get_dict()?;
-                    apply_suffix_bounds(&mut d);
-                    return Ok(Some(d));
-                }
-            // one for leaf down from final index
-            } else if i + 1 == self.route.len().saturating_sub(1) {
-                // move to next child
-                if let Some(ref mut r) = self.route[i] {
-                    *r += 1;
-                }
-                // remove all previous grand children and their effects on pre-dict
-                for _ in i + 1..self.route.len() {
-                    self.reset_from_last_node();
-                }
-            }
-
-            // if children pool exhausted or still no route
-            let route_idx = match self.route[i] {
-                Some(i) => i,
-                None => {
-                    depth -= 1;
-                    continue;
-                }
-            };
-            if route_idx + 1 > self.branch[i].children.len() {
-                depth -= 1;
-                continue;
-            }
-
-            let child = Rc::clone(&self.branch[i].children[route_idx]);
-            if !self.update_from_node(child, None)? {
-                continue;
-            }
-            let parent = &self.branch[i];
-            if self.defaults {
-                let var_name_str = parent.var_name.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(".");
-                if !self.expand_defaults.contains(&var_name_str)
-                    && parent.children.iter().any(|c| c.default)
-                    && !parent.children[route_idx].default {
-                        return Ok(None);
-                    }
-            }
-            let d = self.get_dicts(false, true)?;
-            // completed children recursion is consumed until we run out of children
-            if d.is_none() {
-                // handle earlier reset of the same pre-dict by a nested getter
-                depth = min(depth, (self.branch.len() - 1) as isize);
-                continue;
-            }
-            return Ok(d);
-        }
-        Ok(None)
+        self.get_dicts_plain_from(0)
     }
 
     /*
@@ -1862,6 +1789,89 @@ impl PreDict {
     */
     #[pyo3(signature = (dropsufs=false, skipdups=true))]
     pub fn get_dicts(&mut self, dropsufs: bool, skipdups: bool) -> PyResult<Option<HashMap<ParamKey, ParamVal>>> {
+        self.get_dicts_from(dropsufs, skipdups, 0)
+    }
+
+}
+
+
+impl PreDict {
+    fn get_dicts_plain_from(&mut self, min_depth: usize) -> PyResult<Option<HashMap<ParamKey, ParamVal>>> {
+        if self.branch.is_empty() {
+            return Err(PyErr::new::<PyRuntimeError, _>("Pre-dictionary needs at least one node"));
+        }
+        let mut depth = (self.branch.len() - 1) as isize;
+
+        // recurse into children
+        loop {
+            if depth < min_depth as isize {
+                break;
+            }
+            let i = depth as usize;
+
+            if self.route[i].is_none() {
+                // start with 0th child
+                self.route[i] = Some(0);
+
+                // reached leaf
+                if self.branch[i].children.is_empty() {
+                    /* TODO: add optional logging
+                    self._debug("    reached leaf, returning it")
+                    */
+                    let mut d = self.get_dict()?;
+                    apply_suffix_bounds(&mut d);
+                    return Ok(Some(d));
+                }
+            // one for leaf down from final index
+            } else if i + 1 == self.route.len().saturating_sub(1) {
+                // move to next child
+                if let Some(ref mut r) = self.route[i] {
+                    *r += 1;
+                }
+                // remove all previous grand children and their effects on pre-dict
+                for _ in i + 1..self.route.len() {
+                    self.reset_from_last_node();
+                }
+            }
+
+            // if children pool exhausted or still no route
+            let route_idx = match self.route[i] {
+                Some(i) => i,
+                None => {
+                    depth -= 1;
+                    continue;
+                }
+            };
+            if route_idx + 1 > self.branch[i].children.len() {
+                depth -= 1;
+                continue;
+            }
+
+            let child = Rc::clone(&self.branch[i].children[route_idx]);
+            if !self.update_from_node(child, None)? {
+                continue;
+            }
+            let parent = &self.branch[i];
+            if self.defaults {
+                let var_name_str = parent.var_name.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(".");
+                if !self.expand_defaults.contains(&var_name_str)
+                    && parent.children.iter().any(|c| c.default)
+                    && !parent.children[route_idx].default {
+                        return Ok(None);
+                    }
+            }
+            // A recursive call owns only this child, leaving siblings to this loop.
+            let d = self.get_dicts_from(false, true, i + 1)?;
+            // completed children recursion is consumed until we run out of children
+            if d.is_none() {
+                continue;
+            }
+            return Ok(d);
+        }
+        Ok(None)
+    }
+
+    fn get_dicts_from(&mut self, dropsufs: bool, skipdups: bool, min_depth: usize) -> PyResult<Option<HashMap<ParamKey, ParamVal>>> {
         if self.branch.is_empty() {
             return Err(PyErr::new::<PyRuntimeError, _>("Pre-dictionary needs at least one node"));
         }
@@ -1921,7 +1931,7 @@ impl PreDict {
             }
         }
         if dn.is_none() {
-            dn = self.get_dicts_plain()?;
+            dn = self.get_dicts_plain_from(min_depth)?;
         }
         if dropsufs && let Some(d) = dn {
             return Ok(Some(drop_suffixes(&d, skipdups)?));
@@ -1929,10 +1939,6 @@ impl PreDict {
         Ok(dn)
     }
 
-}
-
-
-impl PreDict {
     fn iter_final_content(&self) -> impl Iterator<Item = &ContentStep> {
         self._content.last().into_iter().flatten()
             .chain(self._ctx_content.last().into_iter().flatten())
