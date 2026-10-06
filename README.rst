@@ -143,6 +143,18 @@ machine:
   a fresh ``PreDict`` and can interleave with others; further parsing leaves its
   snapshot unchanged.
 
+  Its read-only ``steps`` tuple records successful top-level parsing calls as
+  ``("file", path)`` or ``("string", text)`` entries in order. Constructor file
+  parsing and the filter/assignment helpers use the same history. Includes are
+  represented by their enclosing call; file entries retain the supplied path,
+  not a copy of the file contents. Failed calls leave the AST and history intact.
+
+  ``copy.copy(parser)`` shares the immutable AST and history while copying the
+  mutable ``expand_defaults`` option. Each copy can then parse further inputs
+  independently, without replaying earlier steps. Parsing remains immediate;
+  history is a record of calls through ``Parser``, not a deferred recipe or a
+  reconstruction of an AST assigned directly by a caller.
+
 There are additional structures for ``ContentStep``, ``Label`` and even ``Lexer``
 and ``Reader`` as well as low level enums for ``Tokens`` and ``Filters`` but the
 above focuses on the highest level interface.

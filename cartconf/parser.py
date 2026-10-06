@@ -31,6 +31,11 @@ class Parser(object):
         """Return a detached root for inspecting the parsed snapshot."""
         return self.ast.node
 
+    @property
+    def steps(self) -> tuple[tuple[str, str], ...]:
+        """Return successful top-level parse calls as (kind, input) pairs."""
+        return self._steps
+
     def __init__(
         self,
         filename: str = None,
@@ -47,9 +52,10 @@ class Parser(object):
         :param debug: whether to enable debug logging
         """
         self.ast = Tree()
+        self._steps = ()
         self.debug = debug
         self.defaults = defaults
-        self.expand_defaults = expand_defaults or []
+        self.expand_defaults = list(expand_defaults or [])
 
         self.only_filters = []
         self.no_filters = []
@@ -58,6 +64,13 @@ class Parser(object):
         self.filename = filename
         if self.filename:
             self.parse_file(self.filename)
+
+    def __copy__(self) -> "Parser":
+        """Share immutable syntax and history, with independent parser options."""
+        new = object.__new__(type(self))
+        new.__dict__ = self.__dict__.copy()
+        new.expand_defaults = self.expand_defaults.copy()
+        return new
 
     def _debug(self, s, *args):
         if self.debug:
@@ -78,6 +91,7 @@ class Parser(object):
             expand_defaults=self.expand_defaults,
         )
         self.filename = cfgfile
+        self._steps += (("file", cfgfile),)
 
     def parse_string(self, cfgstr: str) -> None:
         """
@@ -90,6 +104,7 @@ class Parser(object):
             defaults=self.defaults,
             expand_defaults=self.expand_defaults,
         )
+        self._steps += (("string", cfgstr),)
 
     def only_filter(self, variant: str) -> None:
         """
