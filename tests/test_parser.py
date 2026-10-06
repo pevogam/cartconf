@@ -1406,6 +1406,96 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(self.parser.expand_defaults, [])
         self.assertIsNone(self.parser.filename)
 
+    def test_parsing_steps(self):
+        """Record successful inputs in order, including constructor and helpers."""
+        self.assertEqual(self.parser.steps, ())
+        with tempfile.TemporaryDirectory() as directory:
+            included = os.path.join(directory, "included.cfg")
+            filename = os.path.join(directory, "base.cfg")
+            with open(included, "w") as handle:
+                handle.write("variants:\n    - a:\n    - b:\n")
+            with open(filename, "w") as handle:
+                handle.write("include included.cfg\n")
+            parsed = parser.Parser(filename)
+        # Includes belong to the file step, not separate top-level calls.
+        parsed.parse_string("value = initial\n")
+        parsed.parse_dict({"value": "dictionary"})
+        parsed.only_filter("a")
+        parsed.no_filter("b")
+        parsed.assign("value", "final")
+        self.assertEqual(parsed.steps, (
+            ("file", filename),
+            ("string", "value = initial\n"),
+            ("dict", "value = dictionary\n"),
+            ("string", "only a"),
+            ("string", "no b"),
+            ("string", "value = final"),
+        ))
+        self.assertEqual(next(parsed.get_dicts_gen())["value"], "final")
+        with self.assertRaises(AttributeError):
+            parsed.steps = ()
+        with self.assertRaises(TypeError):
+            parsed.steps[0] = ("string", "value = replaced")
+
+    def test_copy(self):
+        """Copies share parsed state while options and further steps diverge."""
+        class DerivedParser(parser.Parser):
+            def __init__(self, filename, expand_defaults):
+                super().__init__(filename, expand_defaults=expand_defaults)
+                self.extra = "subclass state"
+
+        options = ["base"]
+        with tempfile.NamedTemporaryFile() as config:
+            config.write(b"variants:\n    - a:\n    - b:\n")
+            config.flush()
+            base = DerivedParser(config.name, options)
+        options.append("external")
+        self.assertEqual(base.expand_defaults, ["base"])
+        # Copying must preserve the subclass without running its constructor
+        # or rereading the file, which has already been removed.
+        left, right = copy.copy(base), copy.copy(base)
+        for branch in (left, right):
+            self.assertIsInstance(branch, DerivedParser)
+            self.assertEqual(branch.extra, base.extra)
+            self.assertEqual(branch.filename, base.filename)
+            self.assertIs(branch.ast, base.ast)
+            self.assertIs(branch.steps, base.steps)
+        left.expand_defaults.append("left")
+        self.assertEqual(base.expand_defaults, ["base"])
+        self.assertEqual(right.expand_defaults, ["base"])
+        left.only_filter("a")
+        right.only_filter("b")
+        self.assertEqual(left.steps, base.steps + (("string", "only a"),))
+        self.assertEqual(right.steps, base.steps + (("string", "only b"),))
+        self.assertEqual([d["name"] for d in base.get_dicts_gen()], ["a", "b"])
+        self.assertEqual([d["name"] for d in left.get_dicts_gen()], ["a"])
+        self.assertEqual([d["name"] for d in right.get_dicts_gen()], ["b"])
+
+    def test_failed_parse_preserves_steps(self):
+        """A failed extension leaves the snapshot, history and filename intact."""
+        with tempfile.NamedTemporaryFile() as config:
+            config.write(b"value = original\n")
+            config.flush()
+            parsed = parser.Parser(config.name)
+        snapshot, steps, filename = parsed.ast, parsed.steps, parsed.filename
+        invalid = "value = changed\nbroken ?! value\n"
+        with tempfile.NamedTemporaryFile() as config:
+            config.write(invalid.encode())
+            config.flush()
+            calls = (
+                (parsed.parse_file, config.name),
+                (parsed.parse_string, invalid),
+                (parsed.parse_dict, {"value": "changed\nbroken ?! value"}),
+            )
+            for parse, content in calls:
+                with self.subTest(parse=parse.__name__):
+                    with self.assertRaises(parser.ParserError):
+                        parse(content)
+                    self.assertIs(parsed.ast, snapshot)
+                    self.assertIs(parsed.steps, steps)
+                    self.assertEqual(parsed.filename, filename)
+                    self.assertEqual(next(parsed.get_dicts_gen())["value"], "original")
+
     def test_parse_file(self):
         with tempfile.NamedTemporaryFile() as temp_file:
             temp_file.write(b"variants:\n  - test:\n")
@@ -1432,6 +1522,63 @@ class ParserTest(unittest.TestCase):
         for content_stage in self.parser.node.get_children()[0].get_content():
             self.assertEqual(content_stage[0], "<string>")
         self.assertIsNone(self.parser.filename)
+
+    def test_parse_dict(self):
+        """Dictionary assignments override earlier inputs and preserve their order."""
+        with tempfile.NamedTemporaryFile(mode="w") as config:
+            config.write("value = file\nfile_only = retained\n")
+            config.flush()
+            parsed = parser.Parser(config.name)
+        parsed.parse_string("value = string\nstring_only = retained\n")
+        parameters = {
+            "value": "dictionary",
+            "reference": "${value}",
+            "quoted": "'hello world'",
+            "equals": "a=b",
+            "empty": "",
+        }
+        parsed.parse_dict(parameters)
+        parameters["value"] = "changed"
+        parameters["later"] = "unparsed"
+        result = next(parsed.get_dicts_gen())
+        self.assertEqual(result["value"], "dictionary")
+        self.assertEqual(result["reference"], "dictionary")
+        self.assertEqual(result["quoted"], "hello world")
+        self.assertEqual(result["equals"], "a=b")
+        self.assertEqual(result["empty"], "")
+        self.assertEqual(result["file_only"], "retained")
+        self.assertEqual(result["string_only"], "retained")
+        self.assertNotIn("later", result)
+        self.assertEqual(parsed.filename, config.name)
+        self.assertEqual(parsed.steps[-1], (
+            "dict",
+            "value = dictionary\nreference = ${value}\nquoted = 'hello world'\n"
+            "equals = a=b\nempty = \n",
+        ))
+
+    def test_parse_dict_snapshot_isolation(self):
+        """Dictionary parsing leaves copies and active iterators unchanged."""
+        self.parser.parse_string("variants:\n    - a:\n    - b:\nvalue = original\n")
+        branch = copy.copy(self.parser)
+        expected = list(self.parser.get_dicts_gen())
+        active = self.parser.get_dicts_gen()
+        self.assertEqual(next(active), expected[0])
+        self.parser.parse_dict({"value": "changed"})
+        self.assertEqual(list(active), expected[1:])
+        self.assertEqual(list(branch.get_dicts_gen()), expected)
+        self.assertTrue(all(d["value"] == "changed" for d in self.parser.get_dicts_gen()))
+        self.assertNotEqual(self.parser.steps, branch.steps)
+
+    def test_parse_empty_dict(self):
+        """Empty dictionaries are successful steps that leave parameters unchanged."""
+        self.parser.parse_dict({})
+        self.assertEqual(self.parser.steps, (("dict", ""),))
+        self.assertEqual(list(self.parser.get_dicts_gen()), [])
+        self.parser.parse_dict({"value": "original"})
+        expected = list(self.parser.get_dicts_gen())
+        self.parser.parse_dict({})
+        self.assertEqual(list(self.parser.get_dicts_gen()), expected)
+        self.assertEqual(self.parser.steps[-1], ("dict", ""))
 
     def test_get_dicts_gen(self):
         self.parser.parse_string("variants:\n  - test:\n    key = value\n")

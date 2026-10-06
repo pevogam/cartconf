@@ -31,6 +31,11 @@ class Parser(object):
         """Return a detached root for inspecting the parsed snapshot."""
         return self.ast.node
 
+    @property
+    def steps(self) -> tuple[tuple[str, str], ...]:
+        """Return successful top-level parse calls as (kind, input) pairs."""
+        return self._steps
+
     def __init__(
         self,
         filename: str = None,
@@ -47,13 +52,21 @@ class Parser(object):
         :param debug: whether to enable debug logging
         """
         self.ast = Tree()
+        self._steps = ()
         self.debug = debug
         self.defaults = defaults
-        self.expand_defaults = expand_defaults or []
+        self.expand_defaults = list(expand_defaults or [])
 
         self.filename = filename
         if self.filename:
             self.parse_file(self.filename)
+
+    def __copy__(self) -> "Parser":
+        """Share immutable syntax and history, with independent parser options."""
+        new = object.__new__(type(self))
+        new.__dict__ = self.__dict__.copy()
+        new.expand_defaults = self.expand_defaults.copy()
+        return new
 
     def _debug(self, s, *args):
         if self.debug:
@@ -68,12 +81,7 @@ class Parser(object):
 
         :param cfgfile: configuration file path to parse
         """
-        self.ast = self.ast.parse_file(
-            cfgfile,
-            defaults=self.defaults,
-            expand_defaults=self.expand_defaults,
-        )
-        self.filename = cfgfile
+        self._parse("file", cfgfile)
 
     def parse_string(self, cfgstr: str) -> None:
         """
@@ -81,11 +89,30 @@ class Parser(object):
 
         :param cfgstr: configuration string to parse
         """
-        self.ast = self.ast.parse_string(
-            cfgstr,
+        self._parse("string", cfgstr)
+
+    def parse_dict(self, cfgdict: dict[str, str]) -> None:
+        """
+        Parse dictionary entries as ordered configuration assignments.
+
+        :param cfgdict: parameters to add or overwrite
+
+        Values use the same quoting and substitution rules as parse_string().
+        The history retains assignment text independently of the input dictionary.
+        """
+        self._parse("dict", "".join("%s = %s\n" % item for item in cfgdict.items()))
+
+    def _parse(self, kind: str, content: str) -> None:
+        """Extend the snapshot and record an input only after successful parsing."""
+        parse = self.ast.parse_file if kind == "file" else self.ast.parse_string
+        self.ast = parse(
+            content,
             defaults=self.defaults,
             expand_defaults=self.expand_defaults,
         )
+        if kind == "file":
+            self.filename = content
+        self._steps += ((kind, content),)
 
     def only_filter(self, variant: str) -> None:
         """
