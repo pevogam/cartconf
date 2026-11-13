@@ -3,6 +3,8 @@ Module for readers, lexers, and parsers as well as their components.
 """
 
 import logging
+import os
+import threading
 from typing import Generator
 
 from .exceptions import *
@@ -26,6 +28,10 @@ PreDict = parser.PreDict
 
 class Parser(object):
 
+    # Cache parsing prefixes as {key: {"ast": Tree, "children": {...}}}.
+    # Rust Tree objects cannot be shared across threads.
+    _parse_cache = threading.local()
+
     @property
     def node(self):
         """Return a detached root for inspecting the parsed snapshot."""
@@ -42,6 +48,7 @@ class Parser(object):
         defaults: bool = False,
         expand_defaults: list[str] = None,
         debug: bool = False,
+        cache: bool = True,
     ) -> None:
         """
         Initialize the parser.
@@ -50,12 +57,16 @@ class Parser(object):
         :param defaults: whether to use default variants
         :param expand_defaults: list of default variants to expand
         :param debug: whether to enable debug logging
+        :param cache: whether to reuse and store ASTs for matching parsing prefixes
         """
         self.ast = Tree()
+        self._initial_ast = self.ast
+        self._cache_keys = ()
         self._steps = ()
         self.debug = debug
         self.defaults = defaults
         self.expand_defaults = list(expand_defaults or [])
+        self.cache = cache
 
         self.filename = filename
         if self.filename:
@@ -67,6 +78,26 @@ class Parser(object):
         new.__dict__ = self.__dict__.copy()
         new.expand_defaults = self.expand_defaults.copy()
         return new
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        """Discard this thread's cached ASTs, for example after editing configs."""
+        cls._parse_cache.entries = {}
+
+    def _get_cache(self) -> dict | None:
+        """Find cached children only when the prefix still identifies this AST."""
+        if not hasattr(self._parse_cache, "entries"):
+            self.clear_cache()
+        cache_ref = self._parse_cache.entries
+        cached_ast = self._initial_ast
+        for key in self._cache_keys:
+            entry = cache_ref.get(key)
+            if entry is None:
+                return None
+            cached_ast = entry["ast"]
+            cache_ref = entry["children"]
+        # Directly assigning ast must not reuse or populate another prefix.
+        return cache_ref if cached_ast is self.ast else None
 
     def _debug(self, s, *args):
         if self.debug:
@@ -104,15 +135,31 @@ class Parser(object):
 
     def _parse(self, kind: str, content: str) -> None:
         """Extend the snapshot and record an input only after successful parsing."""
-        parse = self.ast.parse_file if kind == "file" else self.ast.parse_string
-        self.ast = parse(
+        key = (
+            kind,
             content,
-            defaults=self.defaults,
-            expand_defaults=self.expand_defaults,
+            self.defaults,
+            tuple(self.expand_defaults),
+            os.getcwd(),
         )
+        cache_ref = self._get_cache() if self.cache else None
+        entry = cache_ref.get(key) if cache_ref is not None else None
+        if entry is None:
+            parse = self.ast.parse_file if kind == "file" else self.ast.parse_string
+            ast = parse(
+                content,
+                defaults=self.defaults,
+                expand_defaults=self.expand_defaults,
+            )
+            if cache_ref is not None:
+                cache_ref[key] = {"ast": ast, "children": {}}
+        else:
+            ast = entry["ast"]
+        self.ast = ast
         if kind == "file":
             self.filename = content
         self._steps += ((kind, content),)
+        self._cache_keys += (key,)
 
     def only_filter(self, variant: str) -> None:
         """

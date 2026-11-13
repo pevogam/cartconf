@@ -199,6 +199,22 @@ machine:
   history is a record of calls through ``Parser``, not a deferred recipe or a
   reconstruction of an AST assigned directly by a caller.
 
+  Parsers reuse AST snapshots for matching prefixes of parsing calls. The cache
+  is a nested tree with an AST and child entries at each step, shared between
+  parser instances in the same thread. Each step's key includes its input kind,
+  content, ``defaults``, a snapshot of ``expand_defaults`` and the working
+  directory used to resolve relative paths. Parser copies share immutable ASTs;
+  each dictionary iterator still owns its own evaluation state. Directly
+  assigning ``ast`` bypasses caching when it no longer matches the recorded
+  prefix.
+
+  Files and their includes are assumed unchanged while cached.
+  Call ``Parser.clear_cache()`` after editing configuration files,
+  then start a new parser, or use ``Parser(cache=False)`` to always parse fresh
+  inputs. Clearing the current thread's cache leaves existing parser snapshots
+  intact. A cleared prefix must be parsed by a new parser before it can be
+  reused again.
+
 There are additional structures for ``ContentStep``, ``Label`` and even ``Lexer``
 and ``Reader`` as well as low level enums for ``Tokens`` and ``Filters`` but the
 above focuses on the highest level interface.
