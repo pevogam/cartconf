@@ -6,8 +6,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::fmt::{Debug, Display};
 use std::rc::Rc;
 
+use crate::error::{Error, Result};
+
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
-use pyo3::exceptions::{PyException, PyRuntimeError, PyTypeError, PyValueError};
+#[cfg(feature = "python")]
+use pyo3::exceptions::{PyException, PyTypeError};
+#[cfg(feature = "python")]
 use pyo3::types::{PyAny};
 
 use crate::tokens::{ParamKey, ParamVal};
@@ -20,16 +25,18 @@ use crate::lexer::LexerError;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
-#[pyclass(extends=PyException)]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pyclass(extends=PyException))]
 #[derive(Debug)]
 pub struct ParserError {
-    lexer_error: LexerError,
+    pub(crate) lexer_error: LexerError,
 }
-#[pymethods]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pymethods)]
 impl ParserError {
-    #[new]
-    #[pyo3(signature = (msg, line=None, filename=None, linenum=None))]
-    fn new(msg: String, line: Option<String>, filename: Option<String>, linenum: Option<usize>) -> Self {
+    #[cfg_attr(feature = "python", new)]
+    #[cfg_attr(feature = "python", pyo3(signature = (msg, line=None, filename=None, linenum=None)))]
+    pub(crate) fn new(msg: String, line: Option<String>, filename: Option<String>, linenum: Option<usize>) -> Self {
         Self { lexer_error: LexerError::new(msg, line, filename, linenum) }
     }
 
@@ -38,18 +45,31 @@ impl ParserError {
     }
 }
 
-#[pyclass(from_py_object)]
+impl Display for ParserError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.lexer_error, f)
+    }
+}
+
+impl std::error::Error for ParserError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.lexer_error)
+    }
+}
+
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Eq)]
 pub struct Label {
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub name: String,
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub var_name: Option<String>,
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub long_name: String,
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub hash_val: i64,
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub hash_var: Option<i64>,
 }
 
@@ -83,10 +103,11 @@ impl Hash for Label {
     }
 }
 
-#[pymethods]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pymethods)]
 impl Label {
-    #[new]
-    #[pyo3(signature = (name, next_name=None))]
+    #[cfg_attr(feature = "python", new)]
+    #[cfg_attr(feature = "python", pyo3(signature = (name, next_name=None)))]
     pub fn new(name: String, next_name: Option<String>) -> Self {
         let actual_name = next_name.clone().unwrap_or_else(|| name.clone());
         let var_name = if next_name.is_some() { Some(name.clone()) } else { None };
@@ -114,6 +135,7 @@ impl Label {
         self.long_name.clone()
     }
 
+    #[cfg(feature = "python")]
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
         if let Ok(other_label) = other.extract::<Label>() {
             self.eq(&other_label)
@@ -122,6 +144,7 @@ impl Label {
         }
     }
 
+    #[cfg(feature = "python")]
     fn __ne__(&self, other: &Bound<'_, PyAny>) -> bool {
         if let Ok(other_label) = other.extract::<Label>() {
             if other_label.var_name.is_some() {
@@ -138,7 +161,7 @@ impl Label {
         self.hash_val
     }
 
-    #[staticmethod]
+    #[cfg_attr(feature = "python", staticmethod)]
     fn hash_internal(name: &str) -> i64 {
         name.chars()
             .enumerate()
@@ -154,12 +177,13 @@ pub enum ContentType {
     Node(Rc<Node>),
     String(String),
 }
+#[cfg(feature = "python")]
 impl<'py> IntoPyObject<'py> for ContentType {
     type Target = PyAny;
     type Output = Bound<'py, Self::Target>;
     type Error = PyErr;
 
-    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+    fn into_pyobject(self, py: Python<'py>) -> std::result::Result<Self::Output, Self::Error> {
         use pyo3::IntoPyObjectExt;
 
         match self {
@@ -170,10 +194,11 @@ impl<'py> IntoPyObject<'py> for ContentType {
         }
     }
 }
+#[cfg(feature = "python")]
 impl<'py> FromPyObject<'_, 'py> for ContentType {
     type Error = PyErr;
 
-    fn extract(object: Borrowed<'_, 'py, PyAny>) -> Result<Self, Self::Error> {
+    fn extract(object: Borrowed<'_, 'py, PyAny>) -> std::result::Result<Self, Self::Error> {
         if let Ok(tokens) = object.extract::<Tokens>() {
             Ok(ContentType::Tokens(tokens))
         }
@@ -196,21 +221,23 @@ pub struct ContentStep {
     linenum: Option<usize>,
     content_type: ContentType,
 }
+#[cfg(feature = "python")]
 impl<'py> IntoPyObject<'py> for ContentStep {
     type Target = PyAny;
     type Output = Bound<'py, Self::Target>;
     type Error = PyErr;
 
-    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+    fn into_pyobject(self, py: Python<'py>) -> std::result::Result<Self::Output, Self::Error> {
         use pyo3::IntoPyObjectExt;
 
         (self.filename, self.linenum, self.content_type).into_bound_py_any(py)
     }
 }
+#[cfg(feature = "python")]
 impl<'py> FromPyObject<'_, 'py> for ContentStep {
     type Error = PyErr;
 
-    fn extract(object: Borrowed<'_, 'py, PyAny>) -> Result<Self, Self::Error> {
+    fn extract(object: Borrowed<'_, 'py, PyAny>) -> std::result::Result<Self, Self::Error> {
         if let Ok((filename, linenum, content_type)) = object.extract::<(String, Option<usize>, ContentType)>() {
             return Ok(ContentStep { filename, linenum, content_type });
         }
@@ -220,29 +247,30 @@ impl<'py> FromPyObject<'_, 'py> for ContentStep {
     }
 }
 
-#[pyclass(from_py_object,unsendable)]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pyclass(from_py_object,unsendable))]
 #[derive(Debug, Clone)]
 pub struct Node {
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub var_name: Vec<Label>,
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub name: Vec<Label>,
-    #[pyo3(get)]
+    #[cfg_attr(feature = "python", pyo3(get))]
     pub labels: Vec<Label>,
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub filename: String,
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub dep: Vec<Vec<Vec<Label>>>,
     pub content: Vec<ContentStep>,
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub append_to_shortname: bool,
 
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub condition: Option<Filters>,
 
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub default: bool,
-    #[pyo3(get)]
+    #[cfg_attr(feature = "python", pyo3(get))]
     pub id: u64,
     children: VecDeque<Rc<Node>>,
 }
@@ -258,9 +286,10 @@ impl Default for Node {
     }
 }
 
-#[pymethods]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pymethods)]
 impl Node {
-    #[new]
+    #[cfg_attr(feature = "python", new)]
     pub fn new() -> Self {
         Node {
             var_name: Vec::new(),
@@ -277,6 +306,7 @@ impl Node {
         }
     }
 
+    #[cfg(feature = "python")]
     pub fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
         if let Ok(other_node) = other.extract::<Node>() {
             self.id == other_node.id
@@ -285,7 +315,7 @@ impl Node {
         }
     }
 
-    #[staticmethod]
+    #[cfg_attr(feature = "python", staticmethod)]
     pub fn join_names(n1: &str, n2: &str) -> String {
         // find the common prefix between the two names
         let common_prefix_len = n1
@@ -340,16 +370,17 @@ impl Node {
         self.content = new_content;
     }
 
-    #[pyo3(name = "process_content")]
+    #[cfg_attr(feature = "python", pyo3(name = "process_content"))]
+    #[cfg(feature = "python")]
     pub fn process_content_py(
         &self,
         ctx: Vec<Label>,
         labels: Vec<Label>
-    ) -> PyResult<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
+    ) -> Result<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
         self.process_content(&ctx, &labels)
     }
 
-    #[pyo3(signature = (indent, recurse=false))]
+    #[cfg_attr(feature = "python", pyo3(signature = (indent, recurse=false)))]
     pub fn dump(&self, indent: usize, recurse: bool) -> String {
         let mut dump_lines = vec![
             format!("{:indent$}name: {:?}", "", self.name, indent = indent),
@@ -388,7 +419,7 @@ impl Node {
         &self,
         ctx: &[Label],
         labels: &[Label]
-    ) -> PyResult<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
+    ) -> Result<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
         Self::process_content_steps(&self.content, ctx, labels)
     }
 
@@ -396,7 +427,7 @@ impl Node {
         content: impl IntoIterator<Item = &'a ContentStep>,
         ctx: &[Label],
         labels: &[Label],
-    ) -> PyResult<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
+    ) -> Result<(Vec<ContentStep>, Vec<ContentStep>, Vec<ContentStep>)> {
         let mut new_content: Vec<ContentStep> = Vec::new();
         let mut failed_filters: Vec<ContentStep> = Vec::new();
 
@@ -414,12 +445,12 @@ impl Node {
                         ContentType::Node(n) => {
                             match n.condition {
                                 Some(ref f) => f,
-                                None => return Err(PyTypeError::new_err(
+                                None => return Err(Error::type_error(
                                     format!("Empty conditional node in {:?}", step)
                                 ))
                             }
                         },
-                        _ => return Err(PyTypeError::new_err(
+                        _ => return Err(Error::type_error(
                             format!("Unexpected content type for {:?}", step.content_type)
                         )),
                     };
@@ -512,16 +543,16 @@ impl Node {
         token: Tokens,
         lexer: &mut Lexer,
         mut dict: HashMap<ParamKey, ParamVal>,
-    ) -> PyResult<HashMap<ParamKey, ParamVal>> {
+    ) -> Result<HashMap<ParamKey, ParamVal>> {
         // Build identifier_str
         let token_str = match token {
             Tokens::LIdentifier(s) => s.clone(),
-            _ => return Err(PyValueError::new_err(
+            _ => return Err(Error::value(
                 format!("Expected LIdentifier token but got {}", token)
             )),
         };
         let Some(op) = identifier.last() else {
-            return Err(PyValueError::new_err("Empty identifier"));
+            return Err(Error::value("Empty identifier"));
         };
         let identifier_str = if identifier.len() == 1 {
             token_str
@@ -534,7 +565,7 @@ impl Node {
             for t in &identifier[..identifier.len() - 1] {
                 parts.push(match t {
                     Tokens::LIdentifier(s) => s.clone(),
-                    _ => return Err(PyValueError::new_err(
+                    _ => return Err(Error::value(
                         format!("Expected LIdentifier token but got {}", t)
                     )),
                 });
@@ -600,7 +631,7 @@ impl Node {
         &mut self,
         lexer: &mut Lexer,
         dict: HashMap<ParamKey, ParamVal>,
-    ) -> PyResult<()> {
+    ) -> Result<()> {
         let lidentifier = TokenKind::LIdentifier;
         let lendl = TokenKind::LEndL;
         let to_del = lexer.get_next_token(Some(&[lidentifier]), Some(true))?;
@@ -627,7 +658,7 @@ impl Node {
         &mut self,
         lexer: &mut Lexer,
         dict: HashMap<ParamKey, ParamVal>,
-    ) -> PyResult<Node> {
+    ) -> Result<Node> {
         // Get path from rest of line
         let path = lexer.get_rest_line_as_string_token()?;
         let path_str: String = path.string()?;
@@ -650,7 +681,7 @@ impl Node {
 
         // Check file exists
         if !filepath.is_file() {
-            return Err(PyErr::new::<ParserError, _>((
+            return Err(Error::Parser(ParserError::new(
                 "file does not exist or it's not a regular file".to_string(),
                 lexer.line.clone(),
                 Some(lexer.filename.clone()),
@@ -662,7 +693,7 @@ impl Node {
         self.apply_dict(lexer, dict);
 
         let filepath_str = filepath.to_str()
-            .ok_or_else(|| PyErr::new::<PyValueError, _>("Invalid filepath"))?;
+            .ok_or_else(|| Error::value("Invalid filepath"))?;
         let mut new_lexer = Lexer::new(None, Some(filepath_str))?;
 
         // Parse with new lexer
@@ -680,7 +711,7 @@ impl Node {
         lexer: &mut Lexer,
         dict: HashMap<ParamKey, ParamVal>,
         indent: usize,
-    ) -> PyResult<()> {
+    ) -> Result<()> {
         // Build the full identifier list: [token] + identifier[:-1] + [LEndl]
         let mut tokens = vec![token];
         let identifier_len = identifier.len();
@@ -699,7 +730,7 @@ impl Node {
         let next_line = lexer.get_rest_line_as_string_token()?;
         let next_line_str: String = next_line.string()?;
         if !next_line_str.is_empty() {
-            let linenum = lexer.linenum.ok_or_else(|| PyValueError::new_err("Missing line number"))?;
+            let linenum = lexer.linenum.ok_or_else(|| Error::value("Missing line number"))?;
             lexer.set_next_line(next_line_str, indent + 1, linenum);
         }
 
@@ -730,7 +761,7 @@ impl Node {
         lexer: &mut Lexer,
         dict: HashMap<ParamKey, ParamVal>,
         indent: usize,
-    ) -> PyResult<()> {
+    ) -> Result<()> {
         // Build the full token list
         let lcolon = TokenKind::LColon;
         let lendl = TokenKind::LEndL;
@@ -757,7 +788,7 @@ impl Node {
         let next_line = lexer.get_rest_line_as_string_token()?;
         let next_line_str: String = next_line.string()?;
         if !next_line_str.is_empty() {
-            let linenum = lexer.linenum.ok_or_else(|| PyValueError::new_err("Missing line number"))?;
+            let linenum = lexer.linenum.ok_or_else(|| Error::value("Missing line number"))?;
             lexer.set_next_line(next_line_str, indent + 1, linenum);
         }
 
@@ -789,10 +820,10 @@ impl Node {
     pub fn apply_variants(
         &self,
         lexer: &mut Lexer,
-    ) -> PyResult<(String, HashMap<String, Vec<String>>)> {
+    ) -> Result<(String, HashMap<String, Vec<String>>)> {
         // Check if node has conditions
         if self.condition.is_some() {
-            return Err(PyErr::new::<ParserError, _>((
+            return Err(Error::Parser(ParserError::new(
                 "'variants' is not allowed inside a conditional block".to_string(),
                 lexer.line.clone(),
                 Some(lexer.filename.clone()),
@@ -811,7 +842,7 @@ impl Node {
         let mut vtoken: Tokens = match tokens.last() {
             Some(last_token) => last_token.clone(),
             None => {
-                return Err(PyValueError::new_err("Empty token list"));
+                return Err(Error::value("Empty token list"));
             }
         };
 
@@ -822,7 +853,7 @@ impl Node {
         while !matches!(vtoken, Tokens::LColon()) && !matches!(vtoken, Tokens::LEndL()) {
             if matches!(vtoken, Tokens::LIdentifier(_)) {
                 if !variant_name.is_empty() {
-                    return Err(PyErr::new::<ParserError, _>((
+                    return Err(Error::Parser(ParserError::new(
                         "Syntax ERROR expected '[' or ':'".to_string(),
                         lexer.line.clone(),
                         Some(lexer.filename.clone()),
@@ -864,7 +895,7 @@ impl Node {
                     let last_token: &Tokens = match tokens.last() {
                         Some(last_token) => last_token,
                         None => {
-                            return Err(PyValueError::new_err("Empty variants"));
+                            return Err(Error::value("Empty variants"));
                         }
                     };
 
@@ -878,7 +909,7 @@ impl Node {
                             .or_insert_with(Vec::new)
                             .push(values.join(" ").to_string());
                     } else {
-                        return Err(PyErr::new::<ParserError, _>((
+                        return Err(Error::Parser(ParserError::new(
                             "Syntax ERROR expected ']'".to_string(),
                             lexer.line.clone(),
                             Some(lexer.filename.clone()),
@@ -900,7 +931,7 @@ impl Node {
         if meta.contains_key("default") {
             for val in meta.get("default").unwrap_or(&Vec::new()) {
                 if val == "true" {
-                    return Err(PyErr::new::<ParserError, _>((
+                    return Err(Error::Parser(ParserError::new(
                         "Syntax ERROR expected [default=xxx]".to_string(),
                         lexer.line.clone(),
                         Some(lexer.filename.clone()),
@@ -912,7 +943,7 @@ impl Node {
 
         // Check for required colon
         if matches!(vtoken, Tokens::LEndL()) {
-            return Err(PyErr::new::<ParserError, _>((
+            return Err(Error::Parser(ParserError::new(
                 "Syntax ERROR expected ':'".to_string(),
                 lexer.line.clone(),
                 Some(lexer.filename.clone()),
@@ -947,7 +978,7 @@ impl Node {
         meta: &mut HashMap<String, Vec<String>>,
         defaults : bool,
         expand_defaults : Vec<String>,
-    ) -> PyResult<Node> {
+    ) -> Result<Node> {
         let mut already_default = false;
         let mut node4 = Node::new();
 
@@ -1153,7 +1184,7 @@ impl Node {
 
         // Check if all default variants were used
         if !meta_default_values.is_empty() {
-            return Err(PyErr::new::<ParserError, _>((
+            return Err(Error::Parser(ParserError::new(
                 format!("Missing default variant {:?}", meta_default_values),
                 lexer.line.clone(),
                 Some(lexer.filename.clone()),
@@ -1171,7 +1202,7 @@ pub fn parse(
     prev_indent: Option<usize>,
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
-) -> PyResult<Node> {
+) -> Result<Node> {
     // Allowed token types for different contexts
     let block_allowed = [
         TokenKind::LVariants,
@@ -1259,7 +1290,7 @@ pub fn parse(
                 let last_token: &Tokens = match identifier.last() {
                     Some(last_token) => last_token,
                     None => {
-                        return Err(PyValueError::new_err("Empty identifier"));
+                        return Err(Error::value("Empty identifier"));
                     }
                 };
 
@@ -1285,7 +1316,7 @@ pub fn parse(
                         dict,
                     )?;
                 } else {
-                    return Err(PyErr::new::<ParserError, _>((
+                    return Err(Error::Parser(ParserError::new(
                         "Syntax ERROR expected ':' or operand".to_string(),
                         lexer.line.clone(),
                         Some(lexer.filename.clone()),
@@ -1388,7 +1419,7 @@ pub fn parse(
             }
 
             _ => {
-                return Err(PyErr::new::<ParserError, _>((
+                return Err(Error::Parser(ParserError::new(
                     "Syntax ERROR expected".to_string(),
                     lexer.line.clone(),
                     Some(lexer.filename.clone()),
@@ -1399,48 +1430,52 @@ pub fn parse(
     }
 }
 
-#[pyfunction]
-#[pyo3(signature = (cfgstr, node, prev_indent=None, defaults=true, expand_defaults=None))]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pyfunction)]
+#[cfg_attr(feature = "python", pyo3(signature = (cfgstr, node, prev_indent=None, defaults=true, expand_defaults=None)))]
 pub fn parse_string(
     cfgstr: String,
     node: Node,
     prev_indent: Option<usize>,
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
-) -> PyResult<Node> {
+) -> Result<Node> {
     let mut new_lexer = Lexer::new(Some(&cfgstr), None)?;
     parse(&mut new_lexer, node, prev_indent, defaults, expand_defaults)
 }
 
-#[pyfunction]
-#[pyo3(signature = (cfgfile, node, prev_indent=None, defaults=true, expand_defaults=None))]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pyfunction)]
+#[cfg_attr(feature = "python", pyo3(signature = (cfgfile, node, prev_indent=None, defaults=true, expand_defaults=None)))]
 pub fn parse_file(
     cfgfile: String,
     node: Node,
     prev_indent: Option<usize>,
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
-) -> PyResult<Node> {
+) -> Result<Node> {
     let mut new_lexer = Lexer::new(None, Some(&cfgfile))?;
     parse(&mut new_lexer, node, prev_indent, defaults, expand_defaults)
 }
 
-#[pyclass(from_py_object, frozen, unsendable)]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pyclass(from_py_object, frozen, unsendable))]
 #[derive(Debug, Clone)]
 pub struct Tree {
     root: Rc<Node>,
 }
 
-#[pymethods]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pymethods)]
 impl Tree {
-    #[new]
-    #[pyo3(signature = (node=None))]
+    #[cfg_attr(feature = "python", new)]
+    #[cfg_attr(feature = "python", pyo3(signature = (node=None)))]
     pub fn new(node: Option<Node>) -> Self {
         Self { root: Rc::new(node.unwrap_or_default()) }
     }
 
     /// Return a detached root for the legacy Node inspection API.
-    #[getter]
+    #[cfg_attr(feature = "python", getter)]
     pub fn node(&self) -> Node {
         self.root.as_ref().clone()
     }
@@ -1449,15 +1484,15 @@ impl Tree {
         self.root.children.is_empty() && self.root.content.is_empty()
     }
 
-    #[pyo3(signature = (cfgstr, defaults=false, expand_defaults=None))]
-    pub fn parse_string(&self, cfgstr: String, defaults: bool, expand_defaults: Option<Vec<String>>) -> PyResult<Self> {
+    #[cfg_attr(feature = "python", pyo3(signature = (cfgstr, defaults=false, expand_defaults=None)))]
+    pub fn parse_string(&self, cfgstr: String, defaults: bool, expand_defaults: Option<Vec<String>>) -> Result<Self> {
         let mut node = self.root.as_ref().clone();
         node.filename = "<string>".to_string();
         Ok(Self { root: Rc::new(parse_string(cfgstr, node, None, defaults, expand_defaults)?) })
     }
 
-    #[pyo3(signature = (cfgfile, defaults=false, expand_defaults=None))]
-    pub fn parse_file(&self, cfgfile: String, defaults: bool, expand_defaults: Option<Vec<String>>) -> PyResult<Self> {
+    #[cfg_attr(feature = "python", pyo3(signature = (cfgfile, defaults=false, expand_defaults=None)))]
+    pub fn parse_file(&self, cfgfile: String, defaults: bool, expand_defaults: Option<Vec<String>>) -> Result<Self> {
         let mut node = self.root.as_ref().clone();
         node.filename = cfgfile.clone();
         Ok(Self { root: Rc::new(parse_file(cfgfile, node, None, defaults, expand_defaults)?) })
@@ -1472,7 +1507,8 @@ enum TraversalStep {
     Done,
 }
 
-#[pyclass(from_py_object,unsendable)]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pyclass(from_py_object,unsendable))]
 #[derive(Debug, Clone)]
 pub struct PreDict {
     _ctx: Vec<Vec<Label>>,
@@ -1488,25 +1524,25 @@ pub struct PreDict {
     processed_content: Vec<Option<Vec<ContentStep>>>,
     join_width: Vec<usize>,
     failed_cases: HashMap<u64, VecDeque<FailedCase>>,
-    #[pyo3(get)]
+    #[cfg_attr(feature = "python", pyo3(get))]
     pub route: Vec<Option<usize>>,
-    #[pyo3(get)]
+    #[cfg_attr(feature = "python", pyo3(get))]
     pub joins: Vec<Option<Vec<ContentStep>>>,
     // TODO: refactor as we expanded to double option to complete the migration more easily
     #[allow(clippy::type_complexity)]
-    #[pyo3(get)]
+    #[cfg_attr(feature = "python", pyo3(get))]
     pub join_dicts: Vec<Option<Vec<Option<HashMap<ParamKey, ParamVal>>>>>,
-    #[pyo3(get)]
+    #[cfg_attr(feature = "python", pyo3(get))]
     pub join_pre_dicts: Vec<Option<Vec<Option<PreDict>>>>,
 
     // whether to use default variants
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub defaults: bool,
     // list of default variants to expand
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub expand_defaults: Vec<String>,
     // supported number of failed filters for a node
-    #[pyo3(get)]
+    #[cfg_attr(feature = "python", pyo3(get))]
     pub num_failed_cases: usize,
 }
 
@@ -1516,40 +1552,45 @@ impl Default for PreDict {
     }
 }
 
-#[pymethods]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pymethods)]
 impl PreDict {
-    #[getter]
+    #[cfg_attr(feature = "python", getter)]
+    #[cfg(feature = "python")]
     fn branch(&self) -> Vec<Node> {
         self.branch.iter().map(|node| node.as_ref().clone()).collect()
     }
 
-    #[getter]
+    #[cfg_attr(feature = "python", getter)]
     fn ctx(&self) -> Vec<Label> {
         self._ctx.iter().flatten().cloned().collect()
     }
 
-    #[getter]
+    #[cfg_attr(feature = "python", getter)]
+    #[cfg(feature = "python")]
     fn shortname(&self) -> Vec<Label> {
         self._shortname.iter().flatten().cloned().collect()
     }
 
-    #[getter]
+    #[cfg_attr(feature = "python", getter)]
+    #[cfg(feature = "python")]
     fn content(&self) -> Vec<ContentStep> {
         self._content.iter().flatten().cloned().collect()
     }
 
-    #[getter]
+    #[cfg_attr(feature = "python", getter)]
+    #[cfg(feature = "python")]
     fn final_content(&self) -> Vec<ContentStep> {
         self.iter_final_content().cloned().collect()
     }
 
-    #[getter]
+    #[cfg_attr(feature = "python", getter)]
     fn dep(&self) -> Vec<String> {
         self._dep.iter().flatten().cloned().collect()
     }
 
-    #[new]
-    #[pyo3(signature = (ctx=None, content=None, shortname=None, dep=None, defaults=None, expand_defaults=None))]
+    #[cfg_attr(feature = "python", new)]
+    #[cfg_attr(feature = "python", pyo3(signature = (ctx=None, content=None, shortname=None, dep=None, defaults=None, expand_defaults=None)))]
     pub fn new(
         ctx: Option<Vec<Label>>,
         content: Option<Vec<ContentStep>>,
@@ -1584,6 +1625,7 @@ impl PreDict {
         }
     }
 
+    #[cfg(feature = "python")]
     fn __str__(&self) -> String {
         let ctx = self.ctx();
         let content = self.content();
@@ -1595,10 +1637,12 @@ impl PreDict {
         )
     }
 
+    #[cfg(feature = "python")]
     fn __copy__(&self) -> PreDict {
         self.clone()
     }
 
+    #[cfg(feature = "python")]
     fn shallow_copy(&self) -> PreDict {
         Self::from_frames(
             &self._ctx, &self._content, &self._ctx_content, &self._shortname,
@@ -1606,12 +1650,13 @@ impl PreDict {
         )
     }
 
-    #[pyo3(name = "update_from_node", signature = (node))]
-    pub fn update_from_node_py(&mut self, node: Node) -> PyResult<bool> {
+    #[cfg_attr(feature = "python", pyo3(name = "update_from_node", signature = (node)))]
+    #[cfg(feature = "python")]
+    pub fn update_from_node_py(&mut self, node: Node) -> Result<bool> {
         self.update_from_node(Rc::new(node), None)
     }
 
-    pub fn update_from_tree(&mut self, ast: &Tree) -> PyResult<bool> {
+    pub fn update_from_tree(&mut self, ast: &Tree) -> Result<bool> {
         self.update_from_node(Rc::clone(&ast.root), None)
     }
 
@@ -1634,7 +1679,7 @@ impl PreDict {
         self._dep.pop();
     }
 
-    pub fn get_dict(&self) -> PyResult<HashMap<ParamKey, ParamVal>> {
+    pub fn get_dict(&self) -> Result<HashMap<ParamKey, ParamVal>> {
         let mut dict: HashMap<ParamKey, ParamVal> = HashMap::new();
 
         let name = self._ctx.iter().flatten().map(|l| l.long_name.as_str()).collect::<Vec<_>>().join(".");
@@ -1652,7 +1697,7 @@ impl PreDict {
                     let _ = t.clone().apply_to_dict(&mut dict);
                 }
                 _ => {
-                    return Err(PyErr::new::<PyRuntimeError, _>("Unexpected content type"));
+                    return Err(Error::runtime("Unexpected content type"));
                 }
             }
         }
@@ -1684,8 +1729,8 @@ impl PreDict {
         Transforms into:
             join a a
     */
-    #[pyo3(signature = (dropsufs=false, skipdups=true))]
-    pub fn get_dicts(&mut self, dropsufs: bool, skipdups: bool) -> PyResult<Option<HashMap<ParamKey, ParamVal>>> {
+    #[cfg_attr(feature = "python", pyo3(signature = (dropsufs=false, skipdups=true)))]
+    pub fn get_dicts(&mut self, dropsufs: bool, skipdups: bool) -> Result<Option<HashMap<ParamKey, ParamVal>>> {
         let dn = self.next_dict()?;
         if dropsufs && let Some(d) = dn {
             return Ok(Some(match drop_suffixes(&d, skipdups)? {
@@ -1771,7 +1816,7 @@ impl PreDict {
         new
     }
 
-    pub fn update_from_node(&mut self, node: Rc<Node>, effective_content: Option<Vec<ContentStep>>) -> PyResult<bool> {
+    pub fn update_from_node(&mut self, node: Rc<Node>, effective_content: Option<Vec<ContentStep>>) -> Result<bool> {
         /* TODO: add optional logging
         if self.debug:    #Print dict on which is working now.
             print(node.dump(0))
@@ -1932,9 +1977,9 @@ impl PreDict {
 
     }
 
-    fn joined_dict(&self, depth: usize) -> PyResult<HashMap<ParamKey, ParamVal>> {
+    fn joined_dict(&self, depth: usize) -> Result<HashMap<ParamKey, ParamVal>> {
         let dicts = self.join_dicts.get(depth).and_then(Option::as_ref).ok_or_else(||
-            PyValueError::new_err(format!("Join dicts not initialized at depth {depth}")))?;
+            Error::value(format!("Join dicts not initialized at depth {depth}")))?;
         let mut d: HashMap<ParamKey, ParamVal> = HashMap::new();
         let mut name = String::new();
         let mut shortname = String::new();
@@ -1964,7 +2009,7 @@ impl PreDict {
     Advance across a plain branch of AST nodes up to a returned dictionary or
     up to a blocking request for another joined pre-dictionary or up to termination.
     */
-    fn advance(&mut self) -> PyResult<TraversalStep> {
+    fn advance(&mut self) -> Result<TraversalStep> {
         if self.joins.len() != self.branch.len()
             || self.join_dicts.len() != self.branch.len()
             || self.join_pre_dicts.len() != self.branch.len()
@@ -1977,33 +2022,33 @@ impl PreDict {
             || self._content.len().checked_sub(1) != Some(self.branch.len())
             || self._ctx_content.len().checked_sub(1) != Some(self.branch.len())
         {
-            return Err(PyValueError::new_err("Inconsistent pre-dictionary state"));
+            return Err(Error::value("Inconsistent pre-dictionary state"));
         }
         loop {
             let Some(depth) = self.branch.len().checked_sub(1) else {
-                return Err(PyRuntimeError::new_err("Pre-dictionary needs at least one node"));
+                return Err(Error::runtime("Pre-dictionary needs at least one node"));
             };
             if self.joins[depth].is_some() != self.join_dicts[depth].is_some()
                 || self.joins[depth].is_some() != self.join_pre_dicts[depth].is_some()
             {
-                return Err(PyValueError::new_err("Inconsistent pre-dictionary join state"));
+                return Err(Error::value("Inconsistent pre-dictionary join state"));
             }
             if self.route[depth].is_none() {
                 self.prepare_joins(depth);
             }
             if let Some(joins) = &self.joins[depth] {
                 let dicts = self.join_dicts.get(depth).ok_or_else(||
-                    PyValueError::new_err(format!("Join dicts index out of bounds: {depth}")))?.as_ref().ok_or_else(||
-                    PyValueError::new_err(format!("Join dicts not initialized at depth {depth}")))?;
+                    Error::value(format!("Join dicts index out of bounds: {depth}")))?.as_ref().ok_or_else(||
+                    Error::value(format!("Join dicts not initialized at depth {depth}")))?;
                 let pre_dicts = self.join_pre_dicts.get(depth).ok_or_else(||
-                    PyValueError::new_err(format!("Join pre-dicts index out of bounds: {depth}")))?.as_ref().ok_or_else(||
-                    PyValueError::new_err(format!("Join pre-dicts not initialized at depth {depth}")))?;
+                    Error::value(format!("Join pre-dicts index out of bounds: {depth}")))?.as_ref().ok_or_else(||
+                    Error::value(format!("Join pre-dicts not initialized at depth {depth}")))?;
                 if dicts.len() != joins.len() || pre_dicts.len() != joins.len() {
-                    return Err(PyValueError::new_err("Inconsistent pre-dictionary join state"));
+                    return Err(Error::value("Inconsistent pre-dictionary join state"));
                 }
                 let width = self.join_width[depth];
                 if width > joins.len() {
-                    return Err(PyValueError::new_err("Inconsistent pre-dictionary join state"));
+                    return Err(Error::value("Inconsistent pre-dictionary join state"));
                 }
                 if width < joins.len() {
                     return Ok(TraversalStep::Join(depth, width));
@@ -2020,7 +2065,7 @@ impl PreDict {
                 }
             }
             let Some(child_index) = self.route[depth] else {
-                return Err(PyValueError::new_err("Pre-dictionary route not initialized"));
+                return Err(Error::value("Pre-dictionary route not initialized"));
             };
             if child_index < self.branch[depth].children.len() {
                 let child = Rc::clone(&self.branch[depth].children[child_index]);
@@ -2042,10 +2087,10 @@ impl PreDict {
             }
             self.reset_from_last_node();
             let Some(child_index) = self.route.last_mut().and_then(Option::as_mut) else {
-                return Err(PyValueError::new_err("Pre-dictionary parent route not initialized"));
+                return Err(Error::value("Pre-dictionary parent route not initialized"));
             };
             *child_index = child_index.checked_add(1).ok_or_else(||
-                PyValueError::new_err("Pre-dictionary parent route out of bounds"))?;
+                Error::value("Pre-dictionary parent route out of bounds"))?;
         }
     }
 
@@ -2058,11 +2103,11 @@ impl PreDict {
     The extended in-line documentation within the driver is crucial to understand the
     complete routing and rellocation process.
     */
-    fn next_dict(&mut self) -> PyResult<Option<HashMap<ParamKey, ParamVal>>> {
+    fn next_dict(&mut self) -> Result<Option<HashMap<ParamKey, ParamVal>>> {
         // each stack entry owns a join pre-dict and its location (AST depth, join width) in its parent
         // which is in a previous stack frame (or self if outside the stack)
         let mut stack: Vec<(PreDict, usize, usize)> = Vec::new();
-        // the inferred type is Option<PyResult<Option<HashMap<ParamKey, ParamVal>>>> where:
+        // the inferred type is Option<Result<Option<HashMap<ParamKey, ParamVal>>>> where:
         // 1) None means advance the active evaluator (while Some carries a completion to its parent)
         // 2) Some(Ok(Some(dict))) delivers a dictionary
         // 3) Some(Ok(None)) delivers exhaustion or rejection
@@ -2077,12 +2122,12 @@ impl PreDict {
                     Ok(TraversalStep::Join(depth, width)) => {
                         let Some(join) = current.joins.get(depth).and_then(Option::as_ref)
                             .and_then(|joins| joins.get(width)) else {
-                            result = Some(Err(PyValueError::new_err("Inconsistent pre-dictionary join state")));
+                            result = Some(Err(Error::value("Inconsistent pre-dictionary join state")));
                             continue;
                         };
                         let Some(child_slot) = current.join_pre_dicts.get_mut(depth).and_then(Option::as_mut)
                             .and_then(|pre_dicts| pre_dicts.get_mut(width)) else {
-                            result = Some(Err(PyValueError::new_err("Inconsistent pre-dictionary join state")));
+                            result = Some(Err(Error::value("Inconsistent pre-dictionary join state")));
                             continue;
                         };
                         // take moves a saved evaluator out of its slot, temporarily leaving None without cloning it
@@ -2129,7 +2174,7 @@ impl PreDict {
             // result is always completed at this point - take() moves that completion out and clears result so
             // traversal can resume unless another result is queued (error or else)
             let completed = result.take().unwrap_or_else(||
-                Err(PyRuntimeError::new_err("Pre-dictionary traversal did not complete")));
+                Err(Error::runtime("Pre-dictionary traversal did not complete")));
             let Some((child, depth, width)) = stack.pop() else {
                 // no child remains on the temporary stack of nested joins so completion belongs to self and its caller
                 return completed;
@@ -2139,7 +2184,7 @@ impl PreDict {
             // restore the evaluator's ownership and continuation before processing its completion
             let Some(child_slot) = parent.join_pre_dicts.get_mut(depth).and_then(Option::as_mut)
                 .and_then(|pre_dicts| pre_dicts.get_mut(width)) else {
-                result = Some(Err(PyValueError::new_err("Inconsistent pre-dictionary join state")));
+                result = Some(Err(Error::value("Inconsistent pre-dictionary join state")));
                 continue;
             };
             let child = child_slot.insert(child);
@@ -2152,14 +2197,14 @@ impl PreDict {
                     let exhausted = dict.is_none();
                     // count refers to join operands and not the AST node's children
                     let Some(joins) = parent.joins.get(depth).and_then(Option::as_ref) else {
-                        result = Some(Err(PyValueError::new_err("Inconsistent pre-dictionary join state")));
+                        result = Some(Err(Error::value("Inconsistent pre-dictionary join state")));
                         continue;
                     };
                     let count = joins.len();
                     // here Some replaces the cached candidate while None clears it when that join pre-dict is exhausted
                     let Some(dict_slot) = parent.join_dicts.get_mut(depth).and_then(Option::as_mut)
                         .and_then(|dicts| dicts.get_mut(width)) else {
-                        result = Some(Err(PyValueError::new_err("Inconsistent pre-dictionary join state")));
+                        result = Some(Err(Error::value("Inconsistent pre-dictionary join state")));
                         continue;
                     };
                     *dict_slot = dict;
@@ -2257,8 +2302,7 @@ mod tests {
 
         let error = node.apply_operator(Vec::new(), token.clone(), &mut lexer, HashMap::new())
             .expect_err("Expected an empty identifier error");
-        Python::initialize();
-        Python::attach(|py| assert!(error.is_instance_of::<PyValueError>(py)));
+        assert!(matches!(error, Error::Value(_)));
 
         // apply_operator should add key2 to dict directly (optimized path)
         dict = node.apply_operator(identifier, token, &mut lexer, dict).expect("apply_operator failed");
@@ -2582,7 +2626,6 @@ mod tests {
 
     #[test]
     fn test_advance_propagates_errors() {
-        Python::initialize();
         // malformed content as "no condition" conditional node inside another
         let mut child = Node::new();
         child.add_content("<test>".to_string(), Some(1), ContentType::Node(Rc::new(Node::new())));
@@ -2602,14 +2645,12 @@ mod tests {
         for invalidate in invalidations {
             let mut invalid = pre_dict.clone();
             invalidate(&mut invalid);
-            Python::attach(|py| {
-                assert!(invalid.advance().is_err_and(|err| err.is_instance_of::<PyValueError>(py)));
-            });
+            assert!(invalid.advance().is_err_and(|err| matches!(err, Error::Value(_))));
         }
 
         // error raised by traversing into the invalid node must reach the caller
         let error = pre_dict.advance().err().expect("Expected a child-entry error");
-        Python::attach(|py| assert!(error.is_instance_of::<PyTypeError>(py)));
+        assert!(matches!(error, Error::Type(_)));
         // the unsuccessfully entered child was not appended to branch
         assert_eq!(pre_dict.branch.len(), 1);
         assert!(Rc::ptr_eq(&pre_dict.branch[0], &root));
@@ -2623,9 +2664,7 @@ mod tests {
         for route in [None, Some(usize::MAX)] {
             let mut invalid = pre_dict.clone();
             invalid.route[0] = route;
-            Python::attach(|py| {
-                assert!(invalid.advance().is_err_and(|err| err.is_instance_of::<PyValueError>(py)));
-            });
+            assert!(invalid.advance().is_err_and(|err| matches!(err, Error::Value(_))));
         }
     }
 
@@ -2668,13 +2707,12 @@ mod tests {
 
     #[test]
     fn test_next_dict_restores_predict_after_error() {
-        Python::initialize();
         // merging must report a missing or uninitialized join cache
         let mut pre_dict = PreDict::default();
         for dicts in [Vec::new(), vec![None]] {
             pre_dict.join_dicts = dicts;
             let error = pre_dict.joined_dict(0).expect_err("Expected an uninitialized join cache error");
-            Python::attach(|py| assert!(error.is_instance_of::<PyValueError>(py)));
+            assert!(matches!(error, Error::Value(_)));
         }
 
         // a missing condition fails during initialization; string content fails during dictionary evaluation
@@ -2700,13 +2738,11 @@ mod tests {
 
             // either error must reach the caller after the driver restores its evaluator
             let error = pre_dict.next_dict().expect_err("Expected a pre-dict initialization or evaluation error");
-            Python::attach(|py| {
-                if initialization_error {
-                    assert!(error.is_instance_of::<PyTypeError>(py));
-                } else {
-                    assert!(error.is_instance_of::<PyRuntimeError>(py));
-                }
-            });
+            if initialization_error {
+                assert!(matches!(error, Error::Type(_)));
+            } else {
+                assert!(matches!(error, Error::Runtime(_)));
+            }
 
             // the parent keeps its root and join position, with no pre-dict results cached
             assert_eq!(pre_dict.branch.len(), 1);

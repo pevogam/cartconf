@@ -5,24 +5,30 @@ use std::io::{self};
 use std::sync::LazyLock;
 use regex::Regex;
 
+use crate::error::{Error, Result};
+
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
 use pyo3::exceptions::PyException;
 
 use crate::tokens::{TokenKind, Tokens};
 
-#[pyclass]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pyclass)]
 pub struct Reader {
-    #[pyo3(get)]
+    #[cfg_attr(feature = "python", pyo3(get))]
     pub filename: String,
-    #[pyo3(get)]
+    #[cfg_attr(feature = "python", pyo3(get))]
     lines: Vec<(String, usize, usize)>,
     stored_line: Option<(String, usize, usize)>,
 }
 
-#[pymethods]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pymethods)]
 impl Reader {
-    #[new]
-    #[pyo3(signature = (content=None, filename=None))]
+    #[cfg_attr(feature = "python", new)]
+    #[cfg_attr(feature = "python", pyo3(signature = (content=None, filename=None)))]
     pub fn new(content: Option<&str>, filename: Option<&str>) -> io::Result<Self> {
         // Nice and tight closed block of code covering all cases instead of separate loosely
         // connected `if` statements spread out.
@@ -74,7 +80,7 @@ impl Reader {
         })
     }
 
-    #[pyo3(signature = (prev_indent=None))]
+    #[cfg_attr(feature = "python", pyo3(signature = (prev_indent=None)))]
     pub fn get_next_line(&mut self, prev_indent: Option<usize>) -> (Option<String>, Option<usize>, Option<usize>) {
         if let Some((line, indent, linenum)) = self.stored_line.take() {
             return (Some(line), Some(indent), Some(linenum));
@@ -97,7 +103,8 @@ impl Reader {
     }
 }
 
-#[pyclass(extends=PyException)]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pyclass(extends=PyException))]
 #[derive(Debug)]
 pub struct LexerError {
     msg: String,
@@ -105,10 +112,11 @@ pub struct LexerError {
     filename : Option<String>,
     linenum : Option<usize>,
 }
-#[pymethods]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pymethods)]
 impl LexerError {
-    #[new]
-    #[pyo3(signature = (msg, line=None, filename=None, linenum=None))]
+    #[cfg_attr(feature = "python", new)]
+    #[cfg_attr(feature = "python", pyo3(signature = (msg, line=None, filename=None, linenum=None)))]
     pub fn new(msg: String, line: Option<String>, filename: Option<String>, linenum: Option<usize>) -> Self {
         Self { msg, line, filename, linenum }
     }
@@ -132,6 +140,21 @@ impl LexerError {
     }
 }
 
+impl std::fmt::Display for LexerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.__str__())
+    }
+}
+
+impl std::error::Error for LexerError {}
+
+#[cfg(feature = "python")]
+impl LexerError {
+    pub(crate) fn into_parts(self) -> (String, Option<String>, Option<String>, Option<usize>) {
+        (self.msg, self.line, self.filename, self.linenum)
+    }
+}
+
 #[derive(PartialEq, Debug)]
 enum LineKind {
     Unknown,
@@ -151,34 +174,36 @@ static OPERATOR_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[^:\s]*\s*[\+<\~\?]*=.*").expect("Invalid OPERATOR_REGEX pattern")
 });
 
-#[pyclass]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pyclass)]
 pub struct Lexer {
     pub reader: Reader,
-    #[pyo3(get)]
+    #[cfg_attr(feature = "python", pyo3(get))]
     pub filename: String,
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub line: Option<String>,
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub linenum: Option<usize>,
-    #[pyo3(get)]
+    #[cfg_attr(feature = "python", pyo3(get))]
     pub ignore_white: bool,
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pub rest_as_string: bool,
-    #[pyo3(get)]
+    #[cfg_attr(feature = "python", pyo3(get))]
     pub prev_indent: Option<usize>,
     pub token_queue: VecDeque<Tokens>,
     // state machine parameters for the iterator
-    #[pyo3(get, set)]
+    #[cfg_attr(feature = "python", pyo3(get, set))]
     pos : usize,
     char_buffer : String,
     oper_buffer : String,
     kind : LineKind,
 }
 
-#[pymethods]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pymethods)]
 impl Lexer {
-    #[new]
-    #[pyo3(signature = (content=None, filename=None))]
+    #[cfg_attr(feature = "python", new)]
+    #[cfg_attr(feature = "python", pyo3(signature = (content=None, filename=None)))]
     pub fn new(content: Option<&str>, filename: Option<&str>) -> io::Result<Self> {
         let reader = Reader::new(content, filename)?;
         let filename = reader.filename.clone();
@@ -203,19 +228,19 @@ impl Lexer {
         self.pos = 0;
     }
 
-    #[pyo3(signature = (prev_indent=None))]
+    #[cfg_attr(feature = "python", pyo3(signature = (prev_indent=None)))]
     pub fn set_prev_indent(&mut self, prev_indent: Option<usize>) {
         self.prev_indent = prev_indent;
     }
 
     /// Tokenize a single line, starting at a desired position.
-    pub fn match_line(&mut self, line: &str, pos: usize) -> PyResult<Vec<Tokens>> {
+    pub fn match_line(&mut self, line: &str, pos: usize) -> Result<Vec<Tokens>> {
         let mut tokens = Vec::new();
         let chars: Vec<char> = line.chars().collect();
         let len = chars.len();
         let position = if self.kind == LineKind::Unknown { pos } else { self.pos };
         if position > len {
-            return Err(PyErr::new::<LexerError, _>((
+            return Err(Error::Lexer(LexerError::new(
                 format!("Position {position} out of bounds for line of length {len}"),
                 Some(line.to_string()),
                 Some(self.filename.clone()),
@@ -351,7 +376,7 @@ impl Lexer {
                         "?<" => tokens.push(Tokens::LRegExpPrepend("".to_string(), "".to_string())),
                         "del" => tokens.push(Tokens::LDel("".to_string(), "".to_string())),
                         _ => {
-                            return Err(PyErr::new::<LexerError, _>((
+                            return Err(Error::Lexer(LexerError::new(
                                 format!(
                                     "Unexpected operator '{}' at position {}",
                                     self.oper_buffer, self.pos,
@@ -465,7 +490,7 @@ impl Lexer {
                         self.pos += 1;
                     }
                     if self.pos == len {
-                        return Err(PyErr::new::<LexerError, _>((
+                        return Err(Error::Lexer(LexerError::new(
                             "Unterminated quoted string".to_string(),
                             Some(line.to_string()),
                             Some(self.filename.clone()),
@@ -480,7 +505,7 @@ impl Lexer {
                     break;
                 }
                 _ => {
-                    return Err(PyErr::new::<LexerError, _>((
+                    return Err(Error::Lexer(LexerError::new(
                         format!(
                             "Unexpected character '{}' at position {}",
                             c, self.pos,
@@ -503,7 +528,7 @@ impl Lexer {
     }
 
     /// Tokenize multiple lines.
-    pub fn match_multiline(&mut self) -> PyResult<Vec<Tokens>> {
+    pub fn match_multiline(&mut self) -> Result<Vec<Tokens>> {
         let mut token_queue = Vec::new();
         let (line_opt, indent, linenum) = self.reader.get_next_line(self.prev_indent);
         self.line = line_opt.clone();
@@ -535,8 +560,9 @@ impl Lexer {
     }
 
     /// Check that a token type is among the allowed token types.
-    #[pyo3(name = "check_token")]
-    #[pyo3(signature = (token, check_tokens))]
+    #[cfg_attr(feature = "python", pyo3(name = "check_token"))]
+    #[cfg_attr(feature = "python", pyo3(signature = (token, check_tokens)))]
+    #[cfg(feature = "python")]
     pub fn check_token_py(
         &self,
         token: Tokens,
@@ -554,43 +580,46 @@ impl Lexer {
     }
 
     /// Get the next token from one or more tokenized lines.
-    #[pyo3(name = "get_next_token", signature = (check_tokens=None, no_white=None))]
+    #[cfg_attr(feature = "python", pyo3(name = "get_next_token", signature = (check_tokens=None, no_white=None)))]
+    #[cfg(feature = "python")]
     pub fn get_next_token_py(
         &mut self,
         check_tokens: Option<Vec<Tokens>>,
         no_white: Option<bool>,
-    ) -> PyResult<Tokens> {
+    ) -> Result<Tokens> {
         let check_tokens = check_tokens.map(|tokens| tokens.iter().map(Tokens::kind).collect::<Vec<_>>());
         self.get_next_token(check_tokens.as_deref(), no_white)
     }
 
     /// Get all tokens until disallowed tokens or end tokens are found.
-    #[pyo3(name = "get_until", signature = (end_tokens, check_tokens=None, no_white=None))]
+    #[cfg_attr(feature = "python", pyo3(name = "get_until", signature = (end_tokens, check_tokens=None, no_white=None)))]
+    #[cfg(feature = "python")]
     pub fn get_until_py(
         &mut self,
         end_tokens: Vec<Tokens>,
         check_tokens: Option<Vec<Tokens>>,
         no_white: Option<bool>,
-    ) -> PyResult<Vec<Tokens>> {
+    ) -> Result<Vec<Tokens>> {
         let end_tokens: Vec<_> = end_tokens.iter().map(Tokens::kind).collect();
         let check_tokens = check_tokens.map(|tokens| tokens.iter().map(Tokens::kind).collect::<Vec<_>>());
         self.get_until(&end_tokens, check_tokens.as_deref(), no_white)
     }
 
     /// Skip all tokens until end tokens are found.
+    #[cfg(feature = "python")]
     pub fn flush_until(&mut self, end_tokens: Vec<Tokens>) -> PyResult<()> {
         let _ = self.get_until_py(end_tokens, None, None)?;
         Ok(())
     }
 
     /// Get all tokens from the rest of the line terminating only at an end-of-line token.
-    #[pyo3(signature = (no_white=None))]
-    pub fn get_rest_line(&mut self, no_white: Option<bool>) -> PyResult<Vec<Tokens>> {
+    #[cfg_attr(feature = "python", pyo3(signature = (no_white=None)))]
+    pub fn get_rest_line(&mut self, no_white: Option<bool>) -> Result<Vec<Tokens>> {
         self.get_until(&[], None, no_white)
     }
 
     /// Get a string token from the rest of the line.
-    pub fn get_rest_line_as_string_token(&mut self) -> PyResult<Tokens> {
+    pub fn get_rest_line_as_string_token(&mut self) -> Result<Tokens> {
         self.rest_as_string = true;
         let lstring: Tokens = {
             let remainder_str = self.get_next_token(Some(&[TokenKind::LString]), None)?;
@@ -612,7 +641,7 @@ impl Lexer {
         &mut self,
         check_tokens: Option<&[TokenKind]>,
         no_white: Option<bool>,
-    ) -> PyResult<Tokens> {
+    ) -> Result<Tokens> {
         let no_white = no_white.unwrap_or(false);
         if self.token_queue.is_empty() {
             let tokens = self.match_multiline()?;
@@ -624,17 +653,11 @@ impl Lexer {
                     return self.get_next_token(check_tokens, Some(no_white));
                 }
                 if let Some(check_tokens_some) = check_tokens {
-                    self.check_token(&token, check_tokens_some).map_err(|err|
-                        PyErr::new::<LexerError, _>((
-                            err.msg,
-                            err.line,
-                            err.filename,
-                            err.linenum,
-                    )))?;
+                    self.check_token(&token, check_tokens_some)?;
                 }
                 Ok(token)
             },
-            None => Err(PyErr::new::<LexerError, _>((
+            None => Err(Error::Lexer(LexerError::new(
                 format!(
                     "Lexer returned no token at position {}",
                     self.pos,
@@ -652,7 +675,7 @@ impl Lexer {
         end_tokens: &[TokenKind],
         check_tokens: Option<&[TokenKind]>,
         no_white: Option<bool>,
-    ) -> PyResult<Vec<Tokens>> {
+    ) -> Result<Vec<Tokens>> {
         let check_tokens = check_tokens.unwrap_or_default();
         let no_white = no_white.unwrap_or(false);
         let end_tokens = if end_tokens.is_empty() {
@@ -666,7 +689,7 @@ impl Lexer {
             let kind = next_token.kind();
             let is_end = end_tokens.contains(&kind);
             if !check_tokens.is_empty() && !check_tokens.contains(&kind) && !is_end {
-                return Err(PyErr::new::<LexerError, _>((
+                return Err(Error::Lexer(LexerError::new(
                     format!(
                         "Unexpected token '{:?}' not among expected ones {:?}",
                         next_token, check_tokens.iter().chain(end_tokens).collect::<Vec<_>>(),
@@ -692,7 +715,7 @@ impl Lexer {
         &self,
         token: &Tokens,
         check_tokens: &[TokenKind],
-    ) -> Result<(), LexerError> {
+    ) -> std::result::Result<(), LexerError> {
         if !check_tokens.is_empty() && !check_tokens.contains(&token.kind()) {
             return Err(LexerError {
                 msg: format!(

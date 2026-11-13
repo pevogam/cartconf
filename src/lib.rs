@@ -1,27 +1,29 @@
 use hashbrown::HashMap;
 use std::rc::Rc;
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
 
+mod error;
 mod tokens;
 mod lexer;
 mod filters;
 mod parser;
 
-pub use parser::{parse_file, parse_string, Label, Node, PreDict, Tree};
+pub use error::{Error, Result};
+pub use lexer::LexerError;
+pub use parser::{parse_file, parse_string, Label, Node, ParserError, PreDict, Tree};
 pub use tokens::{ParamKey, ParamKeyHashMapExt, ParamVal};
 
 /// Parse parametric dictionaries from a configuration file and/or string.
-#[pyfunction]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pyfunction)]
 pub fn parse_dicts(
     cfgfile: String,
     cfgstr: String,
     prev_indent: Option<usize>,
     defaults: bool,
     expand_defaults: Option<Vec<String>>,
-) -> PyResult<Vec<HashMap<tokens::ParamKey, tokens::ParamVal>>> {
-    use crate::parser::{Node, PreDict, parse_file, parse_string};
-    use crate::tokens::{ParamKey, ParamVal};
-
+) -> Result<Vec<HashMap<ParamKey, ParamVal>>> {
     let mut node = Node::default();
     if !cfgfile.is_empty() {
         node = parse_file(
@@ -35,11 +37,11 @@ pub fn parse_dicts(
     }
     let mut pre_dict = PreDict::default();
     if !pre_dict.update_from_node(Rc::new(node), None)? {
-        return Err(PyErr::new::<parser::ParserError, _>((
+        return Err(Error::Parser(parser::ParserError::new(
             "Failed to generate PreDict from Node".to_string(),
-            "",
+            Some(String::new()),
             Some("<string>".to_string()),
-            0,
+            Some(0),
         )));
     }
     let mut dicts = Vec::<HashMap<ParamKey, ParamVal>>::new();
@@ -50,6 +52,7 @@ pub fn parse_dicts(
 }
 
 /// A Python module implemented in Rust.
+#[cfg(feature = "python")]
 #[pymodule]
 fn cartconf(m: &Bound<'_, PyModule>) -> PyResult<()> {
 

@@ -1,6 +1,9 @@
 use std::iter::{Once, once, Chain};
 use std::vec::IntoIter;
 
+use crate::error::{Error, Result};
+
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
 
 use crate::tokens::Tokens;
@@ -8,7 +11,8 @@ use crate::parser::Label;
 use crate::parser::ParserError;
 
 // Define an enum for the different types of filters
-#[pyclass(from_py_object)]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Filters {
     /// Basic filter: stores a nested list of filter expressions.
@@ -51,7 +55,8 @@ pub enum Filters {
     },
 }
 
-#[pymethods]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pymethods)]
 impl Filters {
     pub fn __str__(&self) -> String {
         match self {
@@ -70,6 +75,7 @@ impl Filters {
         self.__str__()
     }
 
+    #[cfg(feature = "python")]
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
         match self {
             Filters::Filter { filter } | Filters::NoOnlyFilter { filter, .. } | Filters::OnlyFilter { filter, .. } | Filters::NoFilter { filter, .. } | Filters::JoinFilter { filter, .. } | Filters::Condition { filter, .. } | Filters::NegativeCondition { filter, .. } => {
@@ -85,42 +91,49 @@ impl Filters {
     }
 
     /// Try to match as many blocks as possible from context.
-    #[staticmethod]
-    #[pyo3(name = "match_adjacent")]
+    #[cfg_attr(feature = "python", staticmethod)]
+    #[cfg_attr(feature = "python", pyo3(name = "match_adjacent"))]
+    #[cfg(feature = "python")]
     fn match_adjacent_py(block: Vec<Label>, ctx: Vec<Label>) -> usize {
         Filters::match_adjacent(&block, &ctx)
     }
 
     /// Try to maybe match as many blocks as possible from context.
-    #[staticmethod]
-    #[pyo3(name = "might_match_adjacent")]
+    #[cfg_attr(feature = "python", staticmethod)]
+    #[cfg_attr(feature = "python", pyo3(name = "might_match_adjacent"))]
+    #[cfg(feature = "python")]
     fn might_match_adjacent_py(block: Vec<Label>, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> bool {
         Filters::might_match_adjacent(&block, &ctx, &descendant_labels)
     }
 
     /// Check if filter matches in context.
-    #[pyo3(name = "match_ctx")]
+    #[cfg_attr(feature = "python", pyo3(name = "match_ctx"))]
+    #[cfg(feature = "python")]
     pub fn match_ctx_py(&self, ctx: Vec<Label>) -> bool {
         Filters::match_ctx(self, &ctx)
     }
 
     /// Check if filter might match in context, considering descendant labels.
-    #[pyo3(name = "might_match")]
+    #[cfg_attr(feature = "python", pyo3(name = "might_match"))]
+    #[cfg(feature = "python")]
     pub fn might_match_py(&self, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> bool {
         Filters::might_match(self, &ctx, &descendant_labels)
     }
 
-    #[pyo3(name = "is_irrelevant")]
+    #[cfg_attr(feature = "python", pyo3(name = "is_irrelevant"))]
+    #[cfg(feature = "python")]
     pub fn is_irrelevant_py(&self, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> bool {
         Filters::is_irrelevant(self, &ctx, &descendant_labels)
     }
 
-    #[pyo3(name = "requires_action")]
+    #[cfg_attr(feature = "python", pyo3(name = "requires_action"))]
+    #[cfg(feature = "python")]
     pub fn requires_action_py(&self, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> bool {
         Filters::requires_action(self, &ctx, &descendant_labels)
     }
 
-    #[pyo3(name = "might_pass")]
+    #[cfg_attr(feature = "python", pyo3(name = "might_pass"))]
+    #[cfg(feature = "python")]
     pub fn might_pass_py(&self, failed_ctx: Vec<Label>, ctx: Vec<Label>, descendant_labels: Vec<Label>) -> bool {
         Filters::might_pass(self, &failed_ctx, &ctx, &descendant_labels)
     }
@@ -154,8 +167,8 @@ impl Filters {
     * ``qcow2..Fedora.14`` is not equivalent to ``qcow2..14.Fedora``.
     * ``ide, scsi`` is equivalent to ``scsi, ide``.
     */
-    #[staticmethod]
-    pub fn parse_filter(tokens: Vec<Tokens>, line: Option<&str>, filename: &str, linenum: Option<usize>) -> PyResult<Vec<Vec<Vec<Label>>>> {
+    #[cfg_attr(feature = "python", staticmethod)]
+    pub fn parse_filter(tokens: Vec<Tokens>, line: Option<&str>, filename: &str, linenum: Option<usize>) -> Result<Vec<Vec<Vec<Label>>>> {
         let mut or_filters = Vec::new();
         let mut and_filter = Vec::new();
         let mut con_filter = Vec::new();
@@ -183,7 +196,7 @@ impl Filters {
                         let identifier = if let Some(Tokens::LIdentifier(s)) = nw_token {
                             s
                         } else {
-                            return Err(PyErr::new::<ParserError, _>((
+                            return Err(Error::Parser(ParserError::new(
                                 "Expected identifier after '('".to_string(),
                                 Some(line.unwrap_or("<none>").to_string()),
                                 Some(filename.to_string()),
@@ -198,7 +211,7 @@ impl Filters {
                                 let value = match nw_token {
                                     Some(Tokens::LIdentifier(s)) | Some(Tokens::LString(s)) => s,
                                     _ => {
-                                        return Err(PyErr::new::<ParserError, _>((
+                                        return Err(Error::Parser(ParserError::new(
                                             "Expected value after '='".to_string(),
                                             Some(line.unwrap_or("<none>").to_string()),
                                             Some(filename.to_string()),
@@ -209,7 +222,7 @@ impl Filters {
                                 match next_nw(&mut tokens_iter) {
                                     Some(Tokens::LRRBracket()) => Label::new(identifier, Some(value)),
                                     _ => {
-                                        return Err(PyErr::new::<ParserError, _>((
+                                        return Err(Error::Parser(ParserError::new(
                                             "Expected ')' after value".to_string(),
                                             Some(line.unwrap_or("<none>").to_string()),
                                             Some(filename.to_string()),
@@ -223,7 +236,7 @@ impl Filters {
                                 Label::new(identifier, None)
                             }
                             _ => {
-                                return Err(PyErr::new::<ParserError, _>((
+                                return Err(Error::Parser(ParserError::new(
                                     "Expected '=' or ')' after '( with format like (xxx=yyy) or (xxx)'".to_string(),
                                     Some(line.unwrap_or("<none>").to_string()),
                                     Some(filename.to_string()),
@@ -235,7 +248,7 @@ impl Filters {
                         // Handle other cases
                         Label::new(s, None)
                     } else {
-                        return Err(PyErr::new::<ParserError, _>((
+                        return Err(Error::Parser(ParserError::new(
                             "Complex filter doesn't have format like (xxx=yyy) or (xxx)'".to_string(),
                             Some(line.unwrap_or("<none>").to_string()),
                             Some(filename.to_string()),
@@ -249,7 +262,7 @@ impl Filters {
                         and_filter.push(con_filter);
                         con_filter = vec![label];
                     } else if dots == 0 || dots > 2{
-                        return Err(PyErr::new::<ParserError, _>((
+                        return Err(Error::Parser(ParserError::new(
                             "Syntax Error: Expected '.' or '..' between identifiers".to_string(),
                             Some(line.unwrap_or("<none>").to_string()),
                             Some(filename.to_string()),
@@ -263,7 +276,7 @@ impl Filters {
                 Tokens::LDot() => {
                     // Handle xxx.xxxx or xxx..xxxx
                     if first_token {
-                        return Err(PyErr::new::<ParserError, _>((
+                        return Err(Error::Parser(ParserError::new(
                             "Syntax Error: Filter cannot start with '.'".to_string(),
                             Some(line.unwrap_or("<none>").to_string()),
                             Some(filename.to_string()),
@@ -278,7 +291,7 @@ impl Filters {
                 }
                 Tokens::LComa() | Tokens::LWhite(_) => {
                     if matches!(token, Tokens::LComa()) && first_token {
-                        return Err(PyErr::new::<ParserError, _>((
+                        return Err(Error::Parser(ParserError::new(
                             "Syntax Error: Filter cannot start with ','".to_string(),
                             Some(line.unwrap_or("<none>").to_string()),
                             Some(filename.to_string()),
@@ -286,7 +299,7 @@ impl Filters {
                         )));
                     }
                     if !white_after_comma && dots > 0 {
-                        return Err(PyErr::new::<ParserError, _>((
+                        return Err(Error::Parser(ParserError::new(
                             "Syntax Error: Expected identifier between '.' and ','".to_string(),
                             Some(line.unwrap_or("<none>").to_string()),
                             Some(filename.to_string()),
@@ -308,7 +321,7 @@ impl Filters {
                     break;
                 }
                 _ => {
-                    return Err(PyErr::new::<ParserError, _>((
+                    return Err(Error::Parser(ParserError::new(
                         "Unexpected token in filter".to_string(),
                         Some(line.unwrap_or("<none>").to_string()),
                         Some(filename.to_string()),

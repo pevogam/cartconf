@@ -10,9 +10,14 @@ use std::sync::LazyLock;
 use std::hash::Hash;
 use regex::Regex;
 
+use crate::error::{Error, Result};
+
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
 use pyo3::types::{PyDict, PyTuple};
-use pyo3::exceptions::{PyAttributeError, PyValueError};
+#[cfg(feature = "python")]
+use pyo3::exceptions::PyAttributeError;
 
 const RESERVED_KEYS: &[&str] = &[
     "name",
@@ -66,12 +71,13 @@ impl fmt::Debug for ParamKey {
         write!(f, "{}", self)
     }
 }
+#[cfg(feature = "python")]
 impl<'py> IntoPyObject<'py> for ParamKey {
     type Target = PyAny;
     type Output = Bound<'py, Self::Target>;
     type Error = PyErr;
 
-    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+    fn into_pyobject(self, py: Python<'py>) -> std::result::Result<Self::Output, Self::Error> {
         use pyo3::IntoPyObjectExt;
 
         match self {
@@ -83,10 +89,11 @@ impl<'py> IntoPyObject<'py> for ParamKey {
         }
     }
 }
+#[cfg(feature = "python")]
 impl<'py> FromPyObject<'_, 'py> for ParamKey {
     type Error = PyErr;
 
-    fn extract(object: Borrowed<'_, 'py, PyAny>) -> Result<Self, Self::Error> {
+    fn extract(object: Borrowed<'_, 'py, PyAny>) -> std::result::Result<Self, Self::Error> {
         if let Ok(s) = object.extract::<String>() {
             Ok(ParamKey::String(s))
         }
@@ -306,12 +313,13 @@ impl fmt::Debug for ParamVal {
         write!(f, "{}", self)
     }
 }
+#[cfg(feature = "python")]
 impl<'py> IntoPyObject<'py> for ParamVal {
     type Target = PyAny;
     type Output = Bound<'py, Self::Target>;
     type Error = PyErr;
 
-    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+    fn into_pyobject(self, py: Python<'py>) -> std::result::Result<Self::Output, Self::Error> {
         use pyo3::IntoPyObjectExt;
 
         match self {
@@ -321,10 +329,11 @@ impl<'py> IntoPyObject<'py> for ParamVal {
         }
     }
 }
+#[cfg(feature = "python")]
 impl<'py> FromPyObject<'_, 'py> for ParamVal {
     type Error = PyErr;
 
-    fn extract(object: Borrowed<'_, 'py, PyAny>) -> Result<Self, Self::Error> {
+    fn extract(object: Borrowed<'_, 'py, PyAny>) -> std::result::Result<Self, Self::Error> {
         if let Ok(s) = object.extract::<String>() {
             Ok(ParamVal::String(s))
         }
@@ -385,7 +394,8 @@ pub enum TokenKind {
 }
 
 // Token variants with payloads, exported as python classes.
-#[pyclass(from_py_object,eq)]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pyclass(from_py_object,eq))]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Tokens {
     LIndent(usize),
@@ -477,23 +487,27 @@ impl fmt::Display for Tokens {
     }
 }
 
-#[pymethods]
+#[cfg_attr(feature = "python", cfg_eval::cfg_eval)]
+#[cfg_attr(feature = "python", pymethods)]
 impl Tokens {
-    #[getter]
+    #[cfg_attr(feature = "python", getter)]
+    #[cfg(feature = "python")]
     fn identifier(&self) -> String {
         self.to_string()
     }
 
+    #[cfg(feature = "python")]
     fn __str__(&self) -> String {
         self.to_string()
     }
 
+    #[cfg(feature = "python")]
     fn __repr__(&self) -> String {
         let s = self.__str__();
         format!("'{s}'")
     }
 
-    #[staticmethod]
+    #[cfg_attr(feature = "python", staticmethod)]
     pub fn default(identifier: &str) -> Self {
         // Keep identifier-based construction for Python callers of the lexer.
         match identifier {
@@ -546,7 +560,7 @@ impl Tokens {
         }
     }
 
-    pub fn like(&self, name: String, value: String) -> PyResult<Self> {
+    pub fn like(&self, name: String, value: String) -> Result<Self> {
         match self {
             Tokens::LSet(_name, _value) => Ok(Tokens::LSet(name, value)),
             Tokens::LAppend(_name, _value) => Ok(Tokens::LAppend(name, value)),
@@ -556,31 +570,31 @@ impl Tokens {
             Tokens::LRegExpAppend(_name, _value) => Ok(Tokens::LRegExpAppend(name, value)),
             Tokens::LRegExpPrepend(_name, _value) => Ok(Tokens::LRegExpPrepend(name, value)),
             Tokens::LDel(_name, _value) => Ok(Tokens::LDel(name, value)),
-            _ => Err(PyAttributeError::new_err("like is not a valid attribute for this token")),
+            _ => Err(Error::attribute("like is not a valid attribute for this token")),
         }
     }
 
-    #[getter]
-    pub fn length(&self) -> PyResult<Option<usize>> {
+    #[cfg_attr(feature = "python", getter)]
+    pub fn length(&self) -> Result<Option<usize>> {
         match self {
             Tokens::LIndent(length) => Ok(Some(*length)),
             Tokens::LEndBlock(length) => Ok(*length),
-            _ => Err(PyAttributeError::new_err("length is not a valid attribute for this token")),
+            _ => Err(Error::attribute("length is not a valid attribute for this token")),
         }
     }
 
-    #[getter]
-    pub fn string(&self) -> PyResult<String> {
+    #[cfg_attr(feature = "python", getter)]
+    pub fn string(&self) -> Result<String> {
         match self {
             Tokens::LIdentifier(string) => Ok(string.clone()),
             Tokens::LWhite(string) => Ok(string.clone()),
             Tokens::LString(string) => Ok(string.clone()),
-            _ => Err(PyAttributeError::new_err("string is not a valid attribute for this token")),
+            _ => Err(Error::attribute("string is not a valid attribute for this token")),
         }
     }
 
-    #[getter]
-    pub fn name(&self) -> PyResult<String> {
+    #[cfg_attr(feature = "python", getter)]
+    pub fn name(&self) -> Result<String> {
         match self {
             Tokens::LSet(name, _value) => Ok(name.clone()),
             Tokens::LAppend(name, _value) => Ok(name.clone()),
@@ -593,11 +607,12 @@ impl Tokens {
             Tokens::LApplyDict(name, _value) => Ok(name.clone()),
             Tokens::LUpdateFileMap(_filename, name, _value) => Ok(name.clone()),
             Tokens::Suffix(name, _value) => Ok(name.clone()),
-            _ => Err(PyAttributeError::new_err("name is not a valid attribute for this token")),
+            _ => Err(Error::attribute("name is not a valid attribute for this token")),
         }
     }
 
-    #[getter]
+    #[cfg_attr(feature = "python", getter)]
+    #[cfg(feature = "python")]
     fn value(&self) -> PyResult<String> {
         match self {
             Tokens::LSet(_name, value) => Ok(value.clone()),
@@ -614,7 +629,8 @@ impl Tokens {
         }
     }
 
-    #[getter]
+    #[cfg_attr(feature = "python", getter)]
+    #[cfg(feature = "python")]
     fn filename(&self) -> PyResult<String> {
         match self {
             Tokens::LUpdateFileMap(filename, _name, _value) => Ok(filename.clone()),
@@ -622,7 +638,8 @@ impl Tokens {
         }
     }
 
-    #[pyo3(name = "apply_to_dict")]
+    #[cfg_attr(feature = "python", pyo3(name = "apply_to_dict"))]
+    #[cfg(feature = "python")]
     fn apply_to_pydict(&self, py_dict: &Bound<'_, PyDict>) -> PyResult<()> {
         let mut dict = py_dict.extract::<HashMap<ParamKey, ParamVal>>()?;
         self.clone().apply_to_dict(&mut dict)?;
@@ -680,7 +697,7 @@ impl Tokens {
         }
     }
 
-    pub fn apply_to_dict(self, dict: &mut HashMap<ParamKey, ParamVal>) -> PyResult<()> {
+    pub fn apply_to_dict(self, dict: &mut HashMap<ParamKey, ParamVal>) -> Result<()> {
         match self {
             Tokens::LSet(name, value) => {
                 if !RESERVED_KEYS.contains(&name.as_str()) {
@@ -840,12 +857,12 @@ impl Tokens {
                 }
                 Ok(())
             }
-            _ => Err(PyAttributeError::new_err("apply_to_dict is not a valid attribute for this token")),
+            _ => Err(Error::attribute("apply_to_dict is not a valid attribute for this token")),
         }
     }
 }
 
-fn convert_data_size(size: &str, default_suffix: &str) -> Result<i64, String> {
+fn convert_data_size(size: &str, default_suffix: &str) -> std::result::Result<i64, String> {
     let orders: HashMap<&str, i64> = [
         ("B", 1),
         ("K", 1024),
@@ -940,7 +957,7 @@ pub fn apply_suffix_bounds(dict: &mut HashMap<ParamKey, ParamVal>) {
     }
 }
 
-pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> PyResult<Cow<'_, HashMap<ParamKey, ParamVal>>> {
+pub fn drop_suffixes(dict: &HashMap<ParamKey, ParamVal>, skipdups: bool) -> Result<Cow<'_, HashMap<ParamKey, ParamVal>>> {
     if dict.keys().all(|key| matches!(key, ParamKey::String(_))) {
         return Ok(Cow::Borrowed(dict));
     }
@@ -1012,14 +1029,14 @@ thread_local! {
     static OPERATOR_REGEXES: RefCell<HashMap<String, Rc<Regex>>> = RefCell::new(HashMap::new());
 }
 
-fn operator_regex(name: &str) -> PyResult<Rc<Regex>> {
+fn operator_regex(name: &str) -> Result<Rc<Regex>> {
     OPERATOR_REGEXES.with_borrow_mut(|cache| {
         if let Some(exp) = cache.get(name) {
             return Ok(Rc::clone(exp));
         }
         // compile on first use preserving operator error timing and anchoring
         let exp = Rc::new(Regex::new(&format!(r"^{name}$"))
-            .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?);
+            .map_err(|e| Error::value(e.to_string()))?);
         if cache.len() >= 256 {
             cache.clear();
         }
@@ -1033,7 +1050,7 @@ static MATCH_SUBSTITUTE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("Invalid MATCH_SUBSTITUTE pattern")
 });
 
-pub fn substitution(value: String, dict: &HashMap<ParamKey, ParamVal>) -> PyResult<String> {
+pub fn substitution(value: String, dict: &HashMap<ParamKey, ParamVal>) -> Result<String> {
     if !value.contains('$') {
         return Ok(value);
     }

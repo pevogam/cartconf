@@ -108,7 +108,7 @@ which will result in a job with the following test parameters
 Rust library and command-line parser use
 ----------------------------------------
 
-The Rust library and its ``cartconf`` binary use the same parser implementation::
+The Rust library and its ``cartconf`` binary build without Python by default::
 
     cargo build
     cargo run -- tests/example1.cfg -- "no qemu_kvm_centos"
@@ -117,8 +117,7 @@ Rust consumers can use the public API directly::
 
     use cartconf::{parse_dicts, ParamKeyHashMapExt};
 
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
-        pyo3::Python::initialize();
+    fn main() -> cartconf::Result<()> {
         let dicts = parse_dicts(
             String::new(), "param = val\n".to_string(), None, false, None,
         )?;
@@ -129,12 +128,12 @@ Rust consumers can use the public API directly::
     }
 
 For incremental parsing and streaming dictionary generation, use ``Tree`` and
-``PreDict`` as described below.
+``PreDict`` as described below. Errors implement ``std::error::Error`` and can be
+matched using ``cartconf::Error``.
 
-PyO3 remains a required dependency. Standalone callers initialize Python to
-support the ``PyErr`` values returned by the Rust API. Of course, if there is
-ever higher interest for the rust crate equivalent we may make PyO3 optional
-and de-prioritize the python exports and python errors.
+The optional ``python`` Cargo feature enables the PyO3 bindings. Maturin enables
+this feature and ``pyo3/extension-module`` automatically through
+``pyproject.toml``, so the Python installation commands remain the same.
 
 Main Rust structures for parsing
 --------------------------------

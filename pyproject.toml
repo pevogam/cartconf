@@ -21,7 +21,7 @@ dynamic = ["version"]
 dependencies = ["avocado-framework==113.0", "setuptools<82"]
 
 [tool.maturin]
-features = ["pyo3/extension-module"]
+features = ["python", "pyo3/extension-module"]
 
 [project.entry-points."avocado.plugins.init"]
 cartconf = "cartconf.plugins.varianter:CartConfInit"
